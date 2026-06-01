@@ -607,6 +607,7 @@ with stable codes, source locations, rejected fragments, messages, and hints.
 Future resolver increments should stay small, tested, and fail-closed. Case
 pattern broadening, complex array support, broader supplement-backed source
 resolution, recursive functions, non-equivalent branch-defined functions,
-branch-dependent function returns, runtime-dispatch support, and runtime source
-discovery should not be added as one-off resolver patches; those belong in the
-evaluator/IR design.
+branch-dependent function returns, and runtime-dispatch support should not be
+added as one-off resolver patches; those belong in the evaluator/IR design.
+Runtime source discovery and observed supplement generation are scoped by
+[Runtime Source Discovery North Star](runtime-source-discovery.md).

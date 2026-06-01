@@ -429,6 +429,11 @@ surfaces a meaningful behavior gap:
 The corpus suite is a discovery tool. The synthetic suite remains the release
 gate for specific behavior.
 
+Runtime source discovery and observed supplement generation should follow
+[Runtime Source Discovery North Star](runtime-source-discovery.md). Real-world
+tracing belongs behind explicit opt-in workflows and reviewed observation
+artifacts, not inside normal corpus compilation.
+
 ## Initial Milestones
 
 1. Add the opt-in unittest harness and skip gate.
@@ -447,4 +452,4 @@ probes, explicit source-argument frame restoration fixtures, opt-in
 human-readable reports, and source-relevant control-flow boundary promotion are
 also implemented. Runtime-guarded static source fixtures are implemented for
 guarded `if` and `case` source lowering; broader runtime discovery and dynamic
-tracing remain deferred.
+tracing remain deferred to the north-star workflow.

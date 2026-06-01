@@ -394,3 +394,6 @@ The remaining source-resolution surface is narrower than general Bash support:
   [Source Supplements And Exact Helper Sources](source-supplements.md).
   Retained helper definitions that remain callable after merging are covered in
   [Retained Helper Dispatch](retained-helper-dispatch.md).
+- Runtime source discovery and observed supplement generation. The intended
+  observe-to-supplement-to-deterministic-compile workflow is captured in
+  [Runtime Source Discovery North Star](runtime-source-discovery.md).

@@ -51,6 +51,9 @@ keep only in code comments or tests.
 - [Real-World Internal Test Suite](real-world-test-suite.md):
   opt-in corpus, supplement fixture, artifact, and runtime parity probes
   workflow.
+- [Runtime Source Discovery North Star](runtime-source-discovery.md):
+  ultimate observe-to-supplement-to-deterministic-compile shape for xtrace /
+  runtime discovery.
 - [Next-Generation Evaluator And IR Plan](evaluator-ir-plan.md): Architecture
   notes and implementation history for the source-effect IR and evaluator.
 
@@ -80,3 +83,5 @@ The intended approach is captured in the
   deterministic pattern completion
 - Runtime-dynamic source dispatch, recursive source-bearing functions,
   non-equivalent branch-defined functions, and branch-dependent function returns
+- Runtime source discovery and supplement generation as described in
+  [Runtime Source Discovery North Star](runtime-source-discovery.md)
