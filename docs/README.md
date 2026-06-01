@@ -54,6 +54,9 @@ keep only in code comments or tests.
 - [Runtime Source Discovery North Star](runtime-source-discovery.md):
   ultimate observe-to-supplement-to-deterministic-compile shape for xtrace /
   runtime discovery.
+- [Runtime Source Discovery Foundation](runtime-source-discovery-foundation.md):
+  planned `v0.3.0` trace foundation iteration with tranche and commit
+  checkpoints.
 - [Next-Generation Evaluator And IR Plan](evaluator-ir-plan.md): Architecture
   notes and implementation history for the source-effect IR and evaluator.
 

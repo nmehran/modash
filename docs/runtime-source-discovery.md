@@ -156,6 +156,9 @@ runtime rules from one execution.
 
 ### v0.3.0: Trace Foundation
 
+Detailed iteration spec:
+[Runtime Source Discovery Foundation](runtime-source-discovery-foundation.md).
+
 - Add an explicit trace command or internal API.
 - Record observation JSON for direct `source`, dot source, function helpers,
   cwd changes, source arguments, and failed source statuses.
