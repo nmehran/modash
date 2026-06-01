@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 from methods.compile import compile_sources
+from methods.runtime_source_observations import load_observation, write_observation
 from methods.sources import get_sources
 
 
@@ -90,6 +91,15 @@ class ScriptProject:
         finally:
             os.chdir(original_cwd)
         return [Path(path) for path in discovered]
+
+    def observation_path(self, path=".modashc/observations/run.json"):
+        return self.path(path)
+
+    def write_observation(self, path, observation):
+        return write_observation(self.path(path), observation)
+
+    def load_observation(self, path):
+        return load_observation(self.path(path))
 
     def assert_compiled_matches(self, testcase, entry, cwd=None, env=None, mode="executable", source_supplement=None):
         expected = self.run(entry, cwd=cwd, env=env)
