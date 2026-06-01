@@ -5,6 +5,7 @@ from pathlib import Path
 
 from methods.compile import compile_sources
 from methods.runtime_source_observations import load_observation, write_observation
+from methods.runtime_source_trace import trace_sources
 from methods.sources import get_sources
 
 
@@ -100,6 +101,11 @@ class ScriptProject:
 
     def load_observation(self, path):
         return load_observation(self.path(path))
+
+    def trace(self, entry, argv=None, cwd=None, env=None):
+        entry_arg = self.path(entry)
+        cwd_arg = self.path(cwd) if cwd is not None else self.root
+        return trace_sources(entry_arg, argv=argv, cwd=cwd_arg, env=env)
 
     def assert_compiled_matches(self, testcase, entry, cwd=None, env=None, mode="executable", source_supplement=None):
         expected = self.run(entry, cwd=cwd, env=env)
