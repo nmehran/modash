@@ -7,7 +7,9 @@ first-class output modes:
 - **Executable mode**: a runnable output that preserves supported Bash
   `source` execution semantics.
 
-The compiler resolves dependencies without executing shell code.
+The compiler resolves dependencies without executing shell code. Runtime tracing
+is a separate explicit command that executes the target script and writes a
+source observation artifact for review.
 
 ## Output Modes
 
@@ -66,6 +68,7 @@ checked against real shell projects as well as synthetic regressions.
 
 ```sh
 python modashc.py <entrypoint> <output> [--mode context|executable] [--source-supplement FILE]
+python modashc.py trace <entrypoint> [--cwd DIR] [--env KEY=VALUE] [--output FILE] [--] [args...]
 ```
 
 Arguments:
@@ -77,17 +80,36 @@ Arguments:
 - `--source-supplement`: optional JSON file with exact source-relevant values
   for runtime-dynamic source sites.
 
+Trace command:
+
+- `trace`: executes the target script under controlled source tracing.
+- `--cwd`: optional working directory for the target script.
+- `--env`: environment overlay for the target script. May be repeated.
+- `--output`: exact observation JSON path. By default observations are written
+  under `.modashc/observations/`.
+- `[args...]`: script arguments after `--`.
+
+Trace forwards the target script stdout and stderr, writes the observation JSON,
+and reports the observation path on stderr. Trace observations are data for
+review and later supplement generation; they are not used automatically during
+compile.
+
 Examples:
 
 ```sh
 python modashc.py test/sample_dir/script_main.sh sample-context.sh
 python modashc.py test/sample_dir/script_main.sh sample-runnable.sh --mode executable
+python modashc.py trace test/sample_dir/script_main.sh --output observation.json
 ```
 
 ## Architecture
 
 - `modashc.py`: CLI entrypoint.
 - `methods/compile.py`: context and executable renderers.
+- `methods/runtime_source_trace.py`: explicit runtime source trace runner and
+  trace parser.
+- `methods/runtime_source_observations.py`: runtime source observation schema
+  and JSON validation helpers.
 - `methods/source_frontend.py`: parser frontend that emits source-effect IR.
 - `methods/source_evaluator.py`: abstract evaluator for cwd, variables, arrays,
   shell options, source events, and structured unsupported diagnostics.

@@ -123,16 +123,17 @@ Commit checkpoint: runner, parser, and synthetic tests.
 
 Expose tracing without changing compile behavior.
 
-Proposed CLI:
+CLI:
 
 ```sh
-modashc trace ENTRY [--cwd DIR] [--env KEY=VALUE ...] [--] [ARGS...]
+modashc trace ENTRY [--cwd DIR] [--env KEY=VALUE ...] [--output FILE | --output-dir DIR] [--] [ARGS...]
 ```
 
-Proposed API:
+API:
 
 ```python
-trace_sources(entrypoint, *, argv=None, cwd=None, env=None, output_dir=None)
+result = trace_sources(entrypoint, *, argv=None, cwd=None, env=None, bash="bash")
+write_trace_observation(result, output_path)
 ```
 
 Scope:

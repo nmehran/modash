@@ -4,6 +4,7 @@ import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from methods.runtime_source_observations import (
@@ -14,6 +15,7 @@ from methods.runtime_source_observations import (
     RuntimeSourceObservationError,
     SourceCallSite,
     TraceInfo,
+    write_observation,
 )
 
 TRACE_VERSION = "runtime-wrapper-v1"
@@ -115,11 +117,32 @@ def trace_sources(entrypoint: str | os.PathLike, *, argv=None, cwd=None, env=Non
         )
 
 
+def default_observation_path(entrypoint: str | os.PathLike, *, output_dir=None, run_id=None):
+    directory = Path(output_dir) if output_dir is not None else Path(".modashc") / "observations"
+    run_id = run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    return directory / f"{_artifact_stem(entrypoint)}-{run_id}.json"
+
+
+def write_trace_observation(result: RuntimeTraceResult, path: str | os.PathLike):
+    return write_observation(path, result.observation)
+
+
 def _trace_environment(env):
     run_env = os.environ.copy()
     if env:
         run_env.update({str(key): str(value) for key, value in env.items()})
     return run_env
+
+
+def _artifact_stem(entrypoint):
+    stem = Path(entrypoint).name or "trace"
+    safe = []
+    for character in stem:
+        if character.isalnum() or character in {".", "_", "-"}:
+            safe.append(character)
+        else:
+            safe.append("_")
+    return "".join(safe).strip("._-") or "trace"
 
 
 def _bash_version(bash):

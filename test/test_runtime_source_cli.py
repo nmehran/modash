@@ -1,0 +1,145 @@
+import json
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from test.support import ScriptProject  # noqa: E402
+
+
+class RuntimeSourceTraceCliTestCase(unittest.TestCase):
+    def test_trace_cli_writes_explicit_observation_file_and_forwards_output(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                'source ./dep.sh "$1"\nprintf "main:%s:%s\\n" "$1" "$TRACE_VALUE"\n',
+            )
+            dependency = project.write("dep.sh", 'printf "dep:%s\\n" "$1"\n')
+            output = project.observation_path("observations/trace.json")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modashc.py"),
+                    "trace",
+                    str(entrypoint),
+                    "--output",
+                    str(output),
+                    "--env",
+                    "TRACE_VALUE=ok",
+                    "--",
+                    "arg1",
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            output_exists = output.is_file()
+            data = json.loads(output.read_text())
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep:arg1\nmain:arg1:ok\n")
+        self.assertIn("modashc: trace observation:", result.stderr)
+        self.assertTrue(output_exists)
+        self.assertEqual(data["entrypoint"], str(entrypoint.resolve(strict=False)))
+        self.assertEqual(data["argv"], ["arg1"])
+        self.assertEqual(data["environment"]["recorded_keys"], ["TRACE_VALUE"])
+        self.assertEqual(data["sources"][0]["resolved_path"], str(dependency.resolve(strict=False)))
+        self.assertEqual(data["sources"][0]["arguments"], ["arg1"])
+
+    def test_trace_cli_writes_default_artifact_under_modashc_directory(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./dep.sh\n")
+            project.write("dep.sh", "echo dep\n")
+
+            result = subprocess.run(
+                [sys.executable, str(REPO_ROOT / "modashc.py"), "trace", str(entrypoint)],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            artifacts = sorted((project.root / ".modashc" / "observations").glob("*.json"))
+            artifact_paths = [str(path) for path in artifacts]
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(len(artifacts), 1)
+        self.assertIn(artifact_paths[0], result.stderr)
+
+    def test_trace_cli_writes_generated_artifact_under_output_dir(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./dep.sh\n")
+            project.write("dep.sh", "echo dep\n")
+            output_dir = project.path("trace-output")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modashc.py"),
+                    "trace",
+                    str(entrypoint),
+                    "--output-dir",
+                    str(output_dir),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            artifacts = sorted(output_dir.glob("*.json"))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(len(artifacts), 1)
+
+    def test_trace_cli_rejects_bad_environment_overlay(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "echo main\n")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modashc.py"),
+                    "trace",
+                    str(entrypoint),
+                    "--env",
+                    "BAD",
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("invalid --env value", result.stderr)
+
+    def test_existing_compile_cli_still_uses_original_positional_form(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./dep.sh\n")
+            project.write("dep.sh", "echo dep\n")
+            output = project.path("merged.sh")
+
+            result = subprocess.run(
+                [sys.executable, str(REPO_ROOT / "modashc.py"), str(entrypoint), str(output)],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            output_exists = output.is_file()
+            output_content = output.read_text() if output_exists else ""
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output_exists)
+        self.assertIn("dep.sh", output_content)
+
+
+if __name__ == "__main__":
+    unittest.main()
