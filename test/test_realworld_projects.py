@@ -56,6 +56,10 @@ def runtime_enabled():
     return os.environ.get("MODASHC_REALWORLD_RUNTIME") == "1"
 
 
+def trace_enabled():
+    return os.environ.get("MODASHC_REALWORLD_TRACE") == "1"
+
+
 def report_enabled():
     return os.environ.get("MODASHC_REALWORLD_REPORT") == "1"
 
@@ -896,6 +900,12 @@ def output_artifact_path(project, entrypoint_path, mode):
     return output_path.with_name(f"{output_path.name}.{mode}.sh")
 
 
+def trace_artifact_path(project, entrypoint_path):
+    relative_path = Path(entrypoint_path)
+    output_path = OUTPUTS_DIR / pinned_project_key(project) / "trace" / relative_path
+    return output_path.with_name(f"{output_path.name}.trace.json")
+
+
 def clear_project_outputs(project):
     shutil.rmtree(OUTPUTS_DIR / pinned_project_key(project), ignore_errors=True)
 
@@ -976,6 +986,36 @@ def run_runtime_parity_probe(entrypoint_path, compiled_path, cwd, environment, t
         "duration_seconds": elapsed_seconds(started_at),
         "original": original,
         "compiled": compiled,
+    }
+
+
+def run_runtime_trace_probe(entrypoint_path, cwd, environment, output_path):
+    from methods.runtime_source_trace import trace_sources, write_trace_observation
+
+    started_at = time.perf_counter()
+    try:
+        result = trace_sources(entrypoint_path, cwd=cwd, env=environment)
+        write_trace_observation(result, output_path)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "duration_seconds": elapsed_seconds(started_at),
+            "exception": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+
+    observation = result.observation
+    return {
+        "status": "success" if result.returncode == 0 else "target-nonzero",
+        "duration_seconds": elapsed_seconds(started_at),
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "source_events": len(observation.sources),
+        "source_paths": [event.resolved_path for event in observation.sources],
+        "output_path": str(output_path),
     }
 
 
@@ -1329,6 +1369,91 @@ class RealWorldProjectTestCase(unittest.TestCase):
             self.fail(
                 "runtime parity failures:\n"
                 + "\n".join(runtime_failure_message(record) for record in failures)
+            )
+
+    @unittest.skipUnless(
+        trace_enabled(),
+        "set MODASHC_REALWORLD_TRACE=1 to run runtime trace smoke probes",
+    )
+    def test_pinned_runtime_trace_smoke_probe(self):
+        manifest = load_manifest()
+        setup_records = []
+        records = []
+        failures = []
+
+        for project in manifest["projects"]:
+            root, setup_status, reason = ensure_pinned_project(project)
+            setup_record = {
+                "project": project["name"],
+                "version": project["version"],
+                "status": setup_status,
+            }
+            if reason:
+                setup_record["reason"] = reason
+            setup_records.append(setup_record)
+            if root is None or project["name"] != "pacman":
+                continue
+
+            environment = project_environment(project, root)
+            entrypoint = next(
+                (
+                    candidate
+                    for candidate in project["entrypoints"]
+                    if candidate["path"] == ".modashc-fixtures/source-safe-wrapper.sh"
+                ),
+                None,
+            )
+            if entrypoint is None:
+                continue
+
+            entrypoint_path = root / entrypoint["path"]
+            output_path = trace_artifact_path(project, entrypoint["path"])
+            remove_output_artifact(output_path)
+            probe = run_runtime_trace_probe(
+                entrypoint_path,
+                runtime_cwd(root, entrypoint["runtime"]),
+                environment,
+                output_path,
+            )
+            record = normalize_record_paths({
+                "project": project["name"],
+                "version": project["version"],
+                "kind": "runtime-trace",
+                "entrypoint": str(entrypoint_path),
+                **probe,
+            }, root)
+            if record.get("output_path"):
+                record["output_path"] = Path(record["output_path"]).relative_to(REPO_ROOT).as_posix()
+            if record.get("source_paths"):
+                record["source_paths"] = [
+                    relative_to_root(source_path, root)
+                    for source_path in record["source_paths"]
+                ]
+            record["expected_status"] = "success"
+            record["matched_expectation"] = (
+                record["status"] == "success"
+                and record.get("source_events", 0) >= 2
+                and "MODASHC_SOURCE_EVENT" not in record.get("stdout", "")
+                and "MODASHC_SOURCE_EVENT" not in record.get("stderr", "")
+            )
+            records.append(record)
+            if not record["matched_expectation"]:
+                failures.append(record)
+
+        write_result_file("runtime-trace.json", {
+            "suite": "runtime-trace",
+            "trace_enabled": trace_enabled(),
+            "summary": result_summary(records),
+            "setup": setup_records,
+            "records": records,
+        })
+
+        if not records:
+            self.skipTest("no runtime trace smoke project is cached")
+        if failures:
+            self.fail(
+                "runtime trace smoke failures:\n"
+                + "\n".join(record_summary(record) + record_details(record) for record in failures)
             )
 
 

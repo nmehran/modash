@@ -98,9 +98,8 @@ Add the smallest useful tracing path.
 Scope:
 
 - Add an explicit trace runner that executes Bash under user request.
-- Prefer `BASH_XTRACEFD` with a controlled `PS4` probe if the synthetic
-  evidence is strong enough; otherwise isolate the runner behind an interface
-  that lets the parser evolve.
+- Use a generated Bash prelude that wraps `source` and aliases dot-source so
+  the runner can record expanded source argv and return status directly.
 - Capture trace output separately from the target program output.
 - Parse source events into observation records.
 - Record direct `source`, dot source, source arguments, failed source status,
@@ -118,6 +117,18 @@ Acceptance:
 - Parser failures produce diagnostics instead of partial trusted observations.
 
 Commit checkpoint: runner, parser, and synthetic tests.
+
+Current foundation limitations:
+
+- `builtin source` and `builtin .` bypass the wrapper.
+- Scripts that unset or replace the tracing wrapper can hide later source
+  events.
+- Child Bash processes are not traced by default; the prelude unsets
+  `BASH_ENV` after installing current-shell wrappers.
+- Dynamically redefined functions that reuse the same relative source token from
+  different directories can still make call-site attribution ambiguous.
+- This is still observation, not supplement generation or deterministic
+  compile replay.
 
 ## Tranche 3: CLI/API And Artifact Plumbing
 
@@ -176,7 +187,8 @@ Acceptance:
 
 - Synthetic trace suite is green.
 - Existing compile and real-world suite tests remain green.
-- One real-world smoke observation is reviewed and understandable.
+- One pacman/makepkg-style `source_safe` smoke observation is reviewed and
+  understandable.
 - Generated observation JSON contains no shell code that would be executed by
   later stages.
 - The branch has clear remaining-work notes for supplement generation.

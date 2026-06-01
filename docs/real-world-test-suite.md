@@ -75,13 +75,14 @@ Additional environment switches:
 MODASHC_REALWORLD_TIMEOUT=3
 MODASHC_REALWORLD_FETCH=1
 MODASHC_REALWORLD_RUNTIME=1
+MODASHC_REALWORLD_TRACE=1
 MODASHC_REALWORLD_REPORT=1
 MODASHC_REALWORLD_UPDATE_SNAPSHOTS=1
 ```
 
-Timeout control, fetching, runtime parity checks, human-readable report output,
-and snapshot updates are separate operations so a normal internal corpus run
-stays deterministic.
+Timeout control, fetching, runtime parity checks, runtime trace smoke probes,
+human-readable report output, and snapshot updates are separate operations so a
+normal internal corpus run stays deterministic.
 
 ## Test Tiers
 
@@ -195,6 +196,21 @@ Pinned mode expectations may declare a `source_supplement` fixture. The harness
 loads the fixture from `test/realworld/fixtures/`, expands `{root}` to the
 extracted corpus root, writes a generated supplement inside the ignored corpus
 cache, and passes it to `modashc` for that mode only.
+
+### Runtime Trace Smoke Probes
+
+Runtime trace smoke probes are separately opt-in with
+`MODASHC_REALWORLD_TRACE=1`. They execute a small pinned pacman/makepkg-style
+fixture through the explicit `modashc trace` workflow, validate that source
+events were observed, and write observation artifacts under:
+
+```text
+.realworld/outputs/<project-version>/trace/<entrypoint>.trace.json
+```
+
+These probes are not supplement generation and do not prove all branch paths.
+They exist to spot-check that the runtime observation workflow produces
+reviewable data against a real helper implementation.
 
 ### Manual Artifact Review
 

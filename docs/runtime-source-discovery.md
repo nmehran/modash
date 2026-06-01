@@ -194,6 +194,11 @@ Runtime discovery should not claim to:
 - compile from unreviewed observations as if they were static proof
 - make unsupported parser or evaluator behavior disappear
 
+The `v0.3.0` foundation uses an explicit Bash prelude to wrap `source` and
+dot-source in the traced shell. That is intentionally narrower than full xtrace
+compatibility: `builtin source`, wrapper removal, and child Bash processes are
+not treated as complete coverage until later runtime-discovery tranches.
+
 ## Relationship To Static Resolution
 
 Runtime discovery does not replace static resolution. It complements it:

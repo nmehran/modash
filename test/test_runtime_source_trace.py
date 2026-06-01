@@ -118,6 +118,32 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
             [str(first.resolve(strict=False)), str(second.resolve(strict=False))],
         )
 
+    def test_trace_uses_sourced_function_definition_file_after_source_returns(self):
+        with ScriptProject() as project:
+            library = project.write(
+                "lib.sh",
+                "\n".join([
+                    "source_safe() {",
+                    '  source "$@"',
+                    "}",
+                    "",
+                ]),
+            )
+            dependency = project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write("main.sh", 'source ./lib.sh\nsource_safe ./dep.sh\n')
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            [event.resolved_path for event in result.observation.sources],
+            [str(library.resolve(strict=False)), str(dependency.resolve(strict=False))],
+        )
+        helper_event = result.observation.sources[1]
+        self.assertEqual(helper_event.call_site.file, str(library.resolve(strict=False)))
+        self.assertEqual(helper_event.call_site.line, 2)
+        self.assertEqual(helper_event.call_site.command, 'source "$@"')
+
     def test_trace_rejects_missing_entrypoint(self):
         with ScriptProject() as project:
             with self.assertRaises(RuntimeSourceTraceError) as context:

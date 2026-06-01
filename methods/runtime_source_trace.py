@@ -79,6 +79,7 @@ def trace_sources(entrypoint: str | os.PathLike, *, argv=None, cwd=None, env=Non
         run_env.update({
             "BASH_ENV": str(prelude_path),
             "MODASHC_TRACE_ENTRYPOINT": str(entrypoint_path),
+            "MODASHC_TRACE_INITIAL_CWD": str(cwd_path),
             "MODASHC_TRACE_FILE": str(trace_path),
         })
 
@@ -260,6 +261,7 @@ unset BASH_ENV
 
 __modashc_source_stack=()
 __modashc_source_index=0
+declare -A __modashc_source_file_map=()
 
 __modashc_emit_source_event() {
   local index=$1 kind=$2 caller_file=$3 caller_line=$4 cwd=$5 source_path=$6 resolved_path=$7 status=$8
@@ -317,9 +319,16 @@ __modashc_resolve_source_path() {
 }
 
 __modashc_current_source_file() {
+  local bash_source=${1-}
   local depth=${#__modashc_source_stack[@]}
   if (( depth > 0 )); then
     printf '%s' "${__modashc_source_stack[$((depth - 1))]}"
+  elif [[ -n $bash_source && -n ${__modashc_source_file_map[$bash_source]+set} ]]; then
+    printf '%s' "${__modashc_source_file_map[$bash_source]}"
+  elif [[ -n $bash_source && $bash_source == /* ]]; then
+    printf '%s' "$bash_source"
+  elif [[ -n $bash_source && $bash_source != "$0" ]]; then
+    printf '%s/%s' "$MODASHC_TRACE_INITIAL_CWD" "$bash_source"
   else
     printf '%s' "$MODASHC_TRACE_ENTRYPOINT"
   fi
@@ -333,13 +342,15 @@ __modashc_trace_source_common() {
   __modashc_source_index=$((__modashc_source_index + 1))
 
   local caller_file caller_line cwd source_path resolved_path status
-  caller_file=$(__modashc_current_source_file)
+  caller_file=$(__modashc_current_source_file "${BASH_SOURCE[2]:-}")
   caller_line=${BASH_LINENO[1]:-1}
   cwd=$PWD
   source_path=${1-}
   resolved_path=$(__modashc_resolve_source_path "$source_path")
 
   if [[ -n $source_path ]]; then
+    __modashc_source_file_map["$source_path"]=$resolved_path
+    __modashc_source_file_map["$resolved_path"]=$resolved_path
     __modashc_source_stack+=("$resolved_path")
   fi
 
