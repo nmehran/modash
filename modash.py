@@ -137,21 +137,23 @@ def supplement_cli(argv):
     supplement_main(args.entrypoint, observation=args.from_observation, output=args.output)
 
 
-if __name__ == '__main__':
-    if len(sys.argv) > 1 and sys.argv[1] == "trace":
+def cli_main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    if len(argv) > 0 and argv[0] == "trace":
         try:
-            sys.exit(trace_cli(sys.argv[2:]))
+            return trace_cli(argv[1:])
         except (RuntimeSourceTraceError, RuntimeSourceObservationError) as exc:
             print(f"modash: {exc}", file=sys.stderr)
-            sys.exit(1)
+            return 1
 
-    if len(sys.argv) > 1 and sys.argv[1] == "supplement":
+    if len(argv) > 0 and argv[0] == "supplement":
         try:
-            supplement_cli(sys.argv[2:])
+            supplement_cli(argv[1:])
         except (RuntimeSupplementGenerationError, RuntimeSourceObservationError) as exc:
             print(f"modash: {exc}", file=sys.stderr)
-            sys.exit(1)
-        sys.exit(0)
+            return 1
+        return 0
 
     parser = argparse.ArgumentParser(description='Merge Bash scripts into a single script.')
     parser.add_argument('entrypoint', type=str, help='The entry-point Bash script that initiates the merging process.')
@@ -181,4 +183,9 @@ if __name__ == '__main__':
         if skeleton:
             print("modash: source supplement skeleton:", file=sys.stderr)
             print(json.dumps(skeleton, indent=2, sort_keys=True), file=sys.stderr)
-        sys.exit(1)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(cli_main())

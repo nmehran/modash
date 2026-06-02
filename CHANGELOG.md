@@ -6,20 +6,22 @@ Runtime source discovery and supplement replay release.
 
 ### Added
 
-- Explicit `modash.py trace` workflow that executes a target Bash script under
+- Explicit `modash trace` workflow that executes a target Bash script under
   controlled source tracing and writes reviewed observation JSON.
 - Runtime source observation schema with validation for entrypoint, cwd, argv,
   Bash/trace metadata, environment policy, source call sites, resolved paths,
   source arguments, and source status.
 - Bounded trace execution with `--timeout`, stable timeout diagnostics, and
   fail-closed behavior before writing observations on timeout.
-- `modash.py supplement` workflow that converts reviewed observations into
+- `modash supplement` workflow that converts reviewed observations into
   declarative source supplement candidates.
 - Observation-to-supplement inference for exact variable-prefix source paths and
   makepkg-style helper source calls such as `source_safe() { source "$@"; }`.
 - Synthetic observe -> supplement -> executable compile -> run replay tests.
 - Opt-in real-world trace and generated-supplement replay probes for the pinned
   pacman/makepkg `source_safe` fixture.
+- PyPI packaging metadata, installed `modash` console script, and trusted
+  publishing workflow for GitHub release publishing.
 
 ### Changed
 
@@ -41,6 +43,8 @@ Runtime source discovery and supplement replay release.
 - Opt-in runtime supplement replay probe: generated a supplement candidate,
   compiled with it, and matched Bash output/status.
 - Generated replay artifact scan: no live unresolved `source` sites.
+- PyPI distribution build: sdist and wheel passed `twine check`, and the built
+  wheel installed a working `modash` console script.
 
 ### Notes
 

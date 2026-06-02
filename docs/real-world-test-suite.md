@@ -204,8 +204,8 @@ cache, and passes it to `modash` for that mode only.
 
 Runtime trace smoke probes are separately opt-in with
 `MODASH_REALWORLD_TRACE=1`. They execute a small pinned pacman/makepkg-style
-fixture through the explicit `python modash.py trace` workflow, validate that
-source events were observed, and write observation artifacts under:
+fixture through the explicit `modash trace` workflow, validate that source
+events were observed, and write observation artifacts under:
 
 ```text
 .realworld/outputs/<project-version>/trace/<entrypoint>.trace.json

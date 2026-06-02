@@ -18,7 +18,7 @@ source observation artifact for review.
 Context mode is the default:
 
 ```sh
-python modash.py scripts/main.sh merged-context.sh
+modash scripts/main.sh merged-context.sh
 ```
 
 It renders one section per discovered file, dependency-first with the entrypoint
@@ -39,7 +39,7 @@ parity mode.
 Executable mode must be requested explicitly:
 
 ```sh
-python modash.py scripts/main.sh merged-runnable.sh --mode executable
+modash scripts/main.sh merged-runnable.sh --mode executable
 ```
 
 It inlines sourced files at their source sites so parent variables, `set` state,
@@ -67,9 +67,9 @@ checked against real shell projects as well as synthetic regressions.
 ## Usage
 
 ```sh
-python modash.py <entrypoint> <output> [--mode context|executable] [--source-supplement FILE]
-python modash.py trace <entrypoint> [--cwd DIR] [--env KEY=VALUE] [--output FILE] [--timeout SECONDS] [--] [args...]
-python modash.py supplement <entrypoint> --from-observation observation.json --output source-supplement.json
+modash <entrypoint> <output> [--mode context|executable] [--source-supplement FILE]
+modash trace <entrypoint> [--cwd DIR] [--env KEY=VALUE] [--output FILE] [--timeout SECONDS] [--] [args...]
+modash supplement <entrypoint> --from-observation observation.json --output source-supplement.json
 ```
 
 Arguments:
@@ -110,15 +110,15 @@ using them with `--source-supplement`.
 Examples:
 
 ```sh
-python modash.py test/sample_dir/script_main.sh sample-context.sh
-python modash.py test/sample_dir/script_main.sh sample-runnable.sh --mode executable
-python modash.py trace test/sample_dir/script_main.sh --output observation.json
-python modash.py supplement test/sample_dir/script_main.sh --from-observation observation.json --output source-supplement.json
+modash test/sample_dir/script_main.sh sample-context.sh
+modash test/sample_dir/script_main.sh sample-runnable.sh --mode executable
+modash trace test/sample_dir/script_main.sh --output observation.json
+modash supplement test/sample_dir/script_main.sh --from-observation observation.json --output source-supplement.json
 ```
 
 ## Architecture
 
-- `modash.py`: CLI entrypoint.
+- `modash.py`: CLI module and source-tree entrypoint.
 - `methods/compile.py`: context and executable renderers.
 - `methods/runtime_source_trace.py`: explicit runtime source trace runner and
   trace parser.
@@ -150,6 +150,8 @@ python -m unittest discover -s ./ -p 'test_*.py' -v
 python -m py_compile modash.py methods/*.py methods/regex/*.py test/*.py
 bash -n setup/modash_shell.sh setup/run_modash_shell.sh
 shellcheck setup/modash_shell.sh setup/run_modash_shell.sh
+python -m build --sdist --wheel --outdir dist
+python -m twine check dist/*
 git diff --check
 ```
 
@@ -158,11 +160,18 @@ Design notes live in [docs](docs/README.md).
 ## Installation
 
 ```sh
-git clone https://github.com/nmehran/modash.git
-cd modash
+python -m pip install modash
 ```
 
-No external Python package dependencies are required for the current test suite.
+For source-tree development:
+
+```sh
+git clone https://github.com/nmehran/modash.git
+cd modash
+python -m pip install -e .
+```
+
+No external runtime dependencies are required.
 
 ## License
 
