@@ -28,6 +28,13 @@ modash supplement ./entry.sh --from-graph runtime-graph.json --output source-sup
 modash ./entry.sh merged.sh --mode executable --source-supplement source-supplement.json
 ```
 
+After graph review, `compile-observed` can skip the intermediate supplement
+file and generate the same deterministic supplement in memory:
+
+```sh
+modash compile-observed ./entry.sh merged.sh --from-graph runtime-graph.json
+```
+
 The separation matters:
 
 1. `trace` runs the original program and records what happened.
@@ -36,6 +43,8 @@ The separation matters:
 3. `supplement` turns reviewed observations or graphs into explicit compiler
    input.
 4. normal executable compile consumes only deterministic supplement data.
+5. `compile-observed` is a shortcut for step 3 plus executable compile from an
+   already reviewed graph; it does not run tracing.
 
 ## Observation Schema
 
@@ -185,6 +194,7 @@ provenance records columns or stronger command identity.
 - schema `4` file fingerprints and stale observation rejection
 - trusted runtime source graph construction
 - source supplement generation from trusted graphs
+- explicit self-supplemented executable compile from a trusted graph
 - review reports for unobserved source-capable file-backed sites
 - real-world replay probes against pinned pacman fixtures
 
@@ -196,8 +206,7 @@ Useful remaining steps are:
 - clearer environment/run metadata for reproducibility
 - supplement generation for a broader but still finite set of runtime-dynamic
   source helpers
-- direct compile from a reviewed trusted graph without an intermediate
-  supplement file
+- automatic compile from a newly run trace without explicit graph review
 
 Do not frame runtime discovery as solving arbitrary Bash semantics. The compiler
 still needs a deterministic, reviewable source graph before it can merge scripts

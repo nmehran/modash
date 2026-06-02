@@ -80,6 +80,13 @@ modash supplement scripts/main.sh --from-graph runtime-graph.json --output sourc
 modash scripts/main.sh merged.sh --mode executable --source-supplement source-supplement.json
 ```
 
+After reviewing a trusted graph, the compile step can self-supplement without
+writing the intermediate supplement file:
+
+```sh
+modash compile-observed scripts/main.sh merged.sh --from-graph runtime-graph.json
+```
+
 `modash trace` writes an observation JSON artifact. Current observations include
 process provenance, resolved source events, linked xtrace source provenance, and
 schema `4` file fingerprints for stale-observation detection.
@@ -99,7 +106,7 @@ Observation reports can warn about unobserved source-capable sites, but one
 traced run is not proof of every branch.
 
 Automatic compile-from-trace remains future work. Runtime discovery still feeds
-deterministic compilation only after the supplement is made explicit.
+deterministic compilation only after the trusted graph is made explicit.
 
 ## Commands
 
@@ -108,6 +115,7 @@ modash <entrypoint> <output> [--mode context|executable] [--source-supplement FI
 modash trace <entrypoint> [--cwd DIR] [--env KEY=VALUE] [--output FILE] [--timeout SECONDS] [--] [args...]
 modash graph <entrypoint> --from-observation observation.json --output runtime-graph.json
 modash supplement <entrypoint> (--from-observation observation.json [--report report.json] | --from-graph runtime-graph.json) --output source-supplement.json
+modash compile-observed <entrypoint> <output> --from-graph runtime-graph.json
 ```
 
 Useful options:
@@ -120,6 +128,8 @@ Useful options:
 - `trace --timeout SECONDS`: bound target execution. Default: `30`.
 - `graph --from-observation FILE`: build a trusted source graph from a trace
   observation.
+- `compile-observed --from-graph FILE`: compile executable output using a
+  trusted graph and an in-memory generated supplement.
 - `supplement --report FILE`: choose the review report path.
 
 ## Development

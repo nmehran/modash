@@ -19,7 +19,7 @@ from methods.runtime_source_graph import (
     validate_observed_source_graph,
 )
 from methods.source_resolver import parse_shell_words_preserving_quotes, strip_shell_word_quotes
-from methods.source_supplements import SUPPLEMENT_VERSION, load_source_supplement
+from methods.source_supplements import SUPPLEMENT_VERSION, source_supplement_from_payload
 
 SOURCE_COMMANDS = frozenset({"source", "."})
 VARIABLE_REFERENCE_PATTERN = re.compile(r'\$(?:{([a-zA-Z_]\w*)(?::?-[^}]*)?}|([a-zA-Z_]\w*))')
@@ -167,8 +167,7 @@ def write_generated_supplement(supplement: GeneratedSourceSupplement | dict, pat
 
 
 def load_source_supplement_from_payload(payload: dict, entrypoint_directory: str | os.PathLike):
-    with _TemporarySupplementFile(payload) as path:
-        return load_source_supplement(path, entrypoint_directory)
+    return source_supplement_from_payload(payload, entrypoint_directory)
 
 
 def _coerce_observation(observation):
@@ -317,23 +316,3 @@ def _review_path(path: str, entrypoint_directory: Path):
     except ValueError:
         return str(candidate)
     return relative if len(relative) < len(str(candidate)) else str(candidate)
-
-
-class _TemporarySupplementFile:
-    def __init__(self, payload: dict):
-        self.payload = payload
-        self._path = None
-
-    def __enter__(self):
-        import tempfile
-
-        handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False)
-        with handle:
-            json.dump(self.payload, handle, indent=2)
-            handle.write("\n")
-        self._path = Path(handle.name)
-        return self._path
-
-    def __exit__(self, exc_type, exc, traceback):
-        if self._path is not None:
-            self._path.unlink(missing_ok=True)

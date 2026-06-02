@@ -10,6 +10,8 @@
   observations.
 - `modash supplement` can now generate deterministic source supplements from a
   trusted runtime graph.
+- Added `modash compile-observed` to compile executable output from a trusted
+  graph with an in-memory generated supplement.
 
 ## v0.4.5 - 2026-06-02
 

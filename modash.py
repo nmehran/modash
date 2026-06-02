@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import sys
+from pathlib import Path
 from methods.compile import compile_sources
 from methods.runtime_source_trace import (
     DEFAULT_TRACE_TIMEOUT_SECONDS,
@@ -26,6 +27,7 @@ from methods.runtime_source_supplements import (
     RuntimeSupplementGenerationError,
     generate_source_supplement,
     generate_source_supplement_from_graph,
+    load_source_supplement_from_payload,
     write_generated_supplement,
 )
 from methods.source_resolver import UnsupportedSourceError
@@ -83,6 +85,21 @@ def supplement_from_graph_main(entrypoint, *, graph, output):
     supplement = generate_source_supplement_from_graph(entrypoint, graph_payload)
     supplement_path = write_generated_supplement(supplement, output)
     print(f"modash: source supplement: {supplement_path.resolve(strict=False)}", file=sys.stderr)
+
+
+def compile_observed_main(entrypoint, output, *, graph):
+    graph_payload = load_observed_source_graph(graph)
+    generated_supplement = generate_source_supplement_from_graph(entrypoint, graph_payload)
+    source_supplement = load_source_supplement_from_payload(
+        generated_supplement.to_dict(),
+        _entrypoint_directory(entrypoint),
+    )
+    compile_sources(entrypoint, output, mode="executable", source_supplement=source_supplement)
+    print(f"modash: compiled from trusted runtime graph: {output}", file=sys.stderr)
+
+
+def _entrypoint_directory(entrypoint):
+    return str(Path(entrypoint).resolve(strict=False).parent)
 
 
 def parse_env_overlay(values):
@@ -201,6 +218,19 @@ def graph_cli(argv):
     graph_main(args.entrypoint, observation=args.from_observation, output=args.output)
 
 
+def compile_observed_cli(argv):
+    parser = argparse.ArgumentParser(description='Compile executable output using a trusted runtime source graph.')
+    parser.add_argument('entrypoint', type=str, help='The Bash script that was traced.')
+    parser.add_argument('output', type=str, help='Executable merged script to write.')
+    parser.add_argument(
+        '--from-graph',
+        required=True,
+        help='Trusted runtime source graph JSON produced by the graph command.',
+    )
+    args = parser.parse_args(argv)
+    compile_observed_main(args.entrypoint, args.output, graph=args.from_graph)
+
+
 def cli_main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
 
@@ -228,6 +258,20 @@ def cli_main(argv=None):
         try:
             graph_cli(argv[1:])
         except (RuntimeSourceGraphError, RuntimeSourceObservationError) as exc:
+            print(f"modash: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    if len(argv) > 0 and argv[0] == "compile-observed":
+        try:
+            compile_observed_cli(argv[1:])
+        except (
+            RuntimeSupplementGenerationError,
+            RuntimeSourceGraphError,
+            RuntimeSourceObservationError,
+            UnsupportedSourceError,
+            OSError,
+        ) as exc:
             print(f"modash: {exc}", file=sys.stderr)
             return 1
         return 0

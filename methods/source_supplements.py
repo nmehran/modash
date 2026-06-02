@@ -28,11 +28,15 @@ def empty_source_supplement():
     return SourceSupplement()
 
 
-def load_source_supplement(path: str | os.PathLike | None, entrypoint_directory: str | os.PathLike):
-    if path is None:
+def load_source_supplement(value: str | os.PathLike | SourceSupplement | dict | None, entrypoint_directory: str | os.PathLike):
+    if value is None:
         return empty_source_supplement()
+    if isinstance(value, SourceSupplement):
+        return value
+    if isinstance(value, dict):
+        return source_supplement_from_payload(value, entrypoint_directory)
 
-    supplement_path = Path(path)
+    supplement_path = Path(value)
     if not supplement_path.is_file():
         raise _supplement_error(
             f"source supplement file does not exist: {supplement_path}",
@@ -47,6 +51,10 @@ def load_source_supplement(path: str | os.PathLike | None, entrypoint_directory:
             "Use a JSON object with version 1, variables, and functions.",
         ) from exc
 
+    return source_supplement_from_payload(data, entrypoint_directory)
+
+
+def source_supplement_from_payload(data: dict, entrypoint_directory: str | os.PathLike):
     if not isinstance(data, dict):
         raise _supplement_error("invalid source supplement: top-level value must be an object")
 

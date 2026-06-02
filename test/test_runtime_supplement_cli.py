@@ -175,6 +175,110 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             "functions": {},
         })
 
+    def test_compile_observed_cli_compiles_with_in_memory_graph_supplement(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source "$LIB_DIR/dep.sh"\n')
+            project.write("lib/dep.sh", "echo dep\n")
+            observation = trace_sources(entrypoint, env={"LIB_DIR": str(project.path("lib"))})
+            observation_path = project.path("observation.json")
+            graph_path = project.path("runtime-graph.json")
+            output_path = project.path("compiled.sh")
+            write_trace_observation(observation, observation_path)
+
+            graph_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "graph",
+                    str(entrypoint),
+                    "--from-observation",
+                    str(observation_path),
+                    "--output",
+                    str(graph_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            compile_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "compile-observed",
+                    str(entrypoint),
+                    str(output_path),
+                    "--from-graph",
+                    str(graph_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            run_result = subprocess.run(
+                ["bash", str(output_path)],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+        self.assertEqual(graph_result.returncode, 0, graph_result.stderr)
+        self.assertEqual(compile_result.returncode, 0, compile_result.stderr)
+        self.assertEqual(compile_result.stdout, "")
+        self.assertIn("modash: compiled from trusted runtime graph:", compile_result.stderr)
+        self.assertEqual(run_result.returncode, 0, run_result.stderr)
+        self.assertEqual(run_result.stdout, "dep\n")
+
+    def test_compile_observed_cli_rejects_stale_graph_before_output(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source "$LIB_DIR/dep.sh"\n')
+            dependency = project.write("lib/dep.sh", "echo dep\n")
+            observation = trace_sources(entrypoint, env={"LIB_DIR": str(project.path("lib"))})
+            observation_path = project.path("observation.json")
+            graph_path = project.path("runtime-graph.json")
+            output_path = project.path("compiled.sh")
+            write_trace_observation(observation, observation_path)
+
+            graph_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "graph",
+                    str(entrypoint),
+                    "--from-observation",
+                    str(observation_path),
+                    "--output",
+                    str(graph_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            dependency.write_text("echo changed\n", encoding="utf-8")
+            compile_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "compile-observed",
+                    str(entrypoint),
+                    str(output_path),
+                    "--from-graph",
+                    str(graph_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+        self.assertEqual(graph_result.returncode, 0, graph_result.stderr)
+        self.assertEqual(compile_result.returncode, 1)
+        self.assertIn("stale", compile_result.stderr)
+        self.assertFalse(output_path.exists())
+
     def test_supplement_cli_writes_explicit_report_path(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", "source ./dep.sh\n")
