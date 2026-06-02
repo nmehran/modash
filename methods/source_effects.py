@@ -202,6 +202,7 @@ class CaseBlock(IRNode):
 class SourceSite(IRNode):
     command_name: str
     source_expression: str
+    source_site: str = ""
     separator: str = ""
     is_control_flow: bool = False
     is_condition_source: bool = False

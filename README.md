@@ -1,163 +1,12 @@
 # modash
 
-`modash` merges Bash script projects into a single output file. It has two
-first-class output modes:
+`modash` merges Bash script projects into one file.
 
-- **Context mode**: the default readable output for human and LLM review.
-- **Executable mode**: a runnable output that preserves supported Bash
-  `source` execution semantics.
+It resolves `source` dependencies without executing shell code during normal
+compile. When a source path is genuinely runtime-dependent, `modash` also
+provides an explicit observe -> review -> supplement workflow.
 
-The compiler resolves dependencies without executing shell code. Runtime tracing
-is a separate explicit command that executes the target script and writes a
-source observation artifact for review.
-
-## Output Modes
-
-### Context Mode
-
-Context mode is the default:
-
-```sh
-modash scripts/main.sh merged-context.sh
-```
-
-It renders one section per discovered file, dependency-first with the entrypoint
-last. File bodies are deduplicated, original source lines are preserved, and
-resolved relationships are annotated directly above the source site:
-
-```bash
-# modash: source ./dep.sh -> dep.sh
-source ./dep.sh
-```
-
-Context mode is readable-first. It is intended for review, debugging, and
-feeding complete shell-project context to another tool. It is not a runtime
-parity mode.
-
-### Executable Mode
-
-Executable mode must be requested explicitly:
-
-```sh
-modash scripts/main.sh merged-runnable.sh --mode executable
-```
-
-It inlines sourced files at their source sites so parent variables, `set` state,
-current directory state, duplicate source execution, and function-scoped sources
-match supported Bash behavior. If executable mode cannot prove a source site is
-safe to lower, compilation fails before writing or overwriting the output file.
-
-## Supported Source Resolution
-
-`modash` supports static source paths, exact variables, safe path command
-substitutions, safe file/command producers, arrays, finite loops, modeled read
-loops, branch-aware `if` and `case` source sites, and bounded source-bearing
-function calls.
-
-For the full current support matrix, examples, fail-closed behavior, and
-practical remaining source-resolution gaps, see
-[Supported Source Resolution](docs/supported-source-resolution.md).
-
-For runtime-dynamic values that cannot be inferred statically, executable mode
-can ingest validated JSON source supplements instead of guessing. The internal
-real-world suite pins `bash-completion` and `pacman` corpora, generated
-artifacts, and runtime parity probes so supported source-resolution behavior is
-checked against real shell projects as well as synthetic regressions.
-
-## Usage
-
-```sh
-modash <entrypoint> <output> [--mode context|executable] [--source-supplement FILE]
-modash trace <entrypoint> [--cwd DIR] [--env KEY=VALUE] [--output FILE] [--timeout SECONDS] [--] [args...]
-modash supplement <entrypoint> --from-observation observation.json --output source-supplement.json
-```
-
-Arguments:
-
-- `<entrypoint>`: the Bash script that starts the source graph.
-- `<output>`: the file to write.
-- `--mode`: `context` by default, or `executable` for runtime parity over the
-  supported subset.
-- `--source-supplement`: optional JSON file with exact source-relevant values
-  for runtime-dynamic source sites.
-
-Trace command:
-
-- `trace`: executes the target script under controlled source tracing.
-- `--cwd`: optional working directory for the target script.
-- `--env`: environment overlay for the target script. May be repeated.
-- `--output`: exact observation JSON path. By default observations are written
-  under `.modash/observations/`.
-- `--timeout`: maximum seconds to let the traced script run. Default: `30`.
-- `[args...]`: script arguments after `--`.
-
-Trace forwards the target script stdout and stderr, writes the observation JSON,
-and reports the observation path on stderr. Trace observations are data for
-review and later supplement generation; they are not used automatically during
-compile. If the traced script exceeds the timeout, trace exits non-zero and does
-not write an observation.
-
-Supplement command:
-
-- `supplement`: reads a trace observation and writes a source supplement
-  candidate.
-- `--from-observation`: observation JSON produced by `trace`.
-- `--output`: source supplement JSON to review and pass to executable compile.
-
-Generated supplements are candidates from one observed run. Review them before
-using them with `--source-supplement`.
-
-Examples:
-
-```sh
-modash test/sample_dir/script_main.sh sample-context.sh
-modash test/sample_dir/script_main.sh sample-runnable.sh --mode executable
-modash trace test/sample_dir/script_main.sh --output observation.json
-modash supplement test/sample_dir/script_main.sh --from-observation observation.json --output source-supplement.json
-```
-
-## Architecture
-
-- `modash.py`: CLI module and source-tree entrypoint.
-- `methods/compile.py`: context and executable renderers.
-- `methods/runtime_source_trace.py`: explicit runtime source trace runner and
-  trace parser.
-- `methods/runtime_source_observations.py`: runtime source observation schema
-  and JSON validation helpers.
-- `methods/runtime_source_supplements.py`: observation-to-source-supplement
-  candidate generator.
-- `methods/source_frontend.py`: parser frontend that emits source-effect IR.
-- `methods/source_evaluator.py`: abstract evaluator for cwd, variables, arrays,
-  shell options, source events, and structured unsupported diagnostics.
-- `methods/source_resolver.py`: source command detection, heredoc guards, safe
-  dynamic source resolvers, and unsupported-source classification.
-- `methods/sources.py`: path-resolution helpers and the `get_sources()`
-  compatibility wrapper over source-effect evaluation.
-- `methods/functions.py`: function-call extraction utility.
-- `test/support.py`: real temporary shell-project harness used by regression
-  tests.
-
-The scripts under `setup/` are optional operational helpers for running commands
-through a restricted `modash` user. They are not part of dependency discovery
-or compilation.
-
-## Development
-
-Run the full local verification suite:
-
-```sh
-python -m unittest discover -s ./ -p 'test_*.py' -v
-python -m py_compile modash.py methods/*.py methods/regex/*.py test/*.py
-bash -n setup/modash_shell.sh setup/run_modash_shell.sh
-shellcheck setup/modash_shell.sh setup/run_modash_shell.sh
-python -m build --sdist --wheel --outdir dist
-python -m twine check dist/*
-git diff --check
-```
-
-Design notes live in [docs](docs/README.md).
-
-## Installation
+## Install
 
 ```sh
 python -m pip install modash
@@ -172,6 +21,118 @@ python -m pip install -e .
 ```
 
 No external runtime dependencies are required.
+
+## Quick Start
+
+Readable review output:
+
+```sh
+modash scripts/main.sh merged-context.sh
+```
+
+Runnable output for the supported Bash subset:
+
+```sh
+modash scripts/main.sh merged.sh --mode executable
+```
+
+If executable mode cannot prove a `source` site is safe to lower, it fails
+before writing or overwriting the output file.
+
+## Output Modes
+
+### Context Mode
+
+Context mode is the default. It writes dependency-first sections for the files
+`modash` can resolve, preserves original source lines, and annotates resolved
+relationships:
+
+```bash
+# modash: source ./dep.sh -> dep.sh
+source ./dep.sh
+```
+
+Use context mode for review, debugging, and collecting complete shell-project
+context for another tool. It is not a runtime parity mode.
+
+### Executable Mode
+
+Executable mode inlines sourced files at their source sites so supported parent
+shell state remains Bash-equivalent: variables, functions, `set` state, current
+directory, source arguments, repeated sources, and function-scoped sources.
+
+The supported static subset includes exact paths, exact variables, safe path
+commands and file producers, arrays, finite loops, modeled read loops,
+branch-aware `if` and `case` source sites, child-shell source contexts, and
+bounded source-bearing function calls.
+
+See [Supported Source Resolution](docs/supported-source-resolution.md) for the
+current support matrix and fail-closed boundaries.
+
+## Runtime Observations
+
+Runtime tracing is explicit because it runs the target script.
+
+```sh
+modash trace scripts/main.sh --output observation.json -- --flag
+modash supplement scripts/main.sh --from-observation observation.json --output source-supplement.json
+modash scripts/main.sh merged.sh --mode executable --source-supplement source-supplement.json
+```
+
+`modash trace` writes an observation JSON artifact. Current observations include
+process provenance, resolved source events, and schema `3` file fingerprints for
+stale-observation detection.
+
+`modash supplement` writes:
+
+- a schema `1` JSON source supplement candidate
+- an observation review report, defaulting to `OUTPUT.report.json`
+
+Generated supplements are exact data, not shell code. Review the supplement and
+report before compiling with `--source-supplement`. Observation reports can warn
+about unobserved source-capable sites, but one traced run is not proof of every
+branch.
+
+Trusted xtrace graph construction and automatic compile-from-trace remain future
+work. Today, runtime discovery is a review aid that feeds deterministic
+compilation only after the supplement is made explicit.
+
+## Commands
+
+```sh
+modash <entrypoint> <output> [--mode context|executable] [--source-supplement FILE]
+modash trace <entrypoint> [--cwd DIR] [--env KEY=VALUE] [--output FILE] [--timeout SECONDS] [--] [args...]
+modash supplement <entrypoint> --from-observation observation.json --output source-supplement.json [--report report.json]
+```
+
+Useful options:
+
+- `--mode executable`: write runnable output for the supported subset.
+- `--source-supplement FILE`: provide exact values for runtime-dynamic source
+  sites.
+- `trace --cwd DIR`: run the target script from a specific directory.
+- `trace --env KEY=VALUE`: add an environment overlay for the traced run.
+- `trace --timeout SECONDS`: bound target execution. Default: `30`.
+- `supplement --report FILE`: choose the review report path.
+
+## Development
+
+Run the local verification suite:
+
+```sh
+python -m unittest
+python -m py_compile modash.py methods/*.py methods/regex/*.py test/*.py
+git diff --check
+```
+
+Optional packaging checks:
+
+```sh
+python -m build --sdist --wheel --outdir dist
+python -m twine check dist/*
+```
+
+Design notes live in [docs](docs/README.md).
 
 ## License
 

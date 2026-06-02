@@ -64,6 +64,7 @@ from methods.source_resolver import (
     parse_shell_words_preserving_quotes,
     source_expansion_failure_result,
     source_command_index,
+    source_command_invocation,
     strip_shell_word_quotes,
 )
 from methods.source_supplements import SourceSupplement, empty_source_supplement, supplement_skeleton
@@ -976,7 +977,7 @@ class SourceEvaluator:
                         site_specs.append((
                             node.location,
                             source_expression,
-                            f"{node.command_name} {source_expression}".strip(),
+                            self._source_site_text(node),
                             node.text,
                         ))
                     continue
@@ -4289,7 +4290,7 @@ class SourceEvaluator:
                 return
             raise
 
-        source_site = f"{node.command_name} {node.source_expression.strip()}"
+        source_site = self._source_site_text(node)
         resolved_source = invocation.source
         source_arguments = invocation.source_arguments
 
@@ -4423,7 +4424,7 @@ class SourceEvaluator:
         if self._source_expression_needs_word_expansion(resolved_expression):
             return self._resolve_expanded_source_invocation(resolved_expression, node, state)
 
-        source_site = f"{node.command_name} {node.source_expression.strip()}"
+        source_site = self._source_site_text(node)
         path_expression, source_arguments = self._split_source_expression_arguments(
             resolved_expression,
             node,
@@ -4468,7 +4469,7 @@ class SourceEvaluator:
         node: SourceSite,
         state: EvaluationState,
     ):
-        source_site = f"{node.command_name} {node.source_expression.strip()}"
+        source_site = self._source_site_text(node)
         resolver_context = state.resolver_context()
         try:
             expanded_words = self._expand_source_command_words(source_expression, node, state, resolver_context)
@@ -4811,7 +4812,7 @@ class SourceEvaluator:
                 "Quoted $* helper sources must bind to exactly one source path argument.",
             )
 
-        source_site = f"{node.command_name} {node.source_expression.strip()}"
+        source_site = self._source_site_text(node)
         quoted_argument = self._shell_quote(arguments[0])
         try:
             resolved_source = SOURCE_RESOLVER.resolve_source_expression(
@@ -4864,6 +4865,10 @@ class SourceEvaluator:
         ):
             return "retained-source"
         return "source"
+
+    @staticmethod
+    def _source_site_text(node: SourceSite):
+        return node.source_site.strip() or f"{node.command_name} {node.source_expression.strip()}".strip()
 
     @staticmethod
     def _is_missing_source(resolved_source: ResolvedSource):
@@ -5084,6 +5089,7 @@ class SourceEvaluator:
                 text=source_command.resolve_source_site or source_command.source_site,
                 command_name=source_command.command_name,
                 source_expression=source_command.source_expression,
+                source_site=source_command.source_site,
             )
             source_path, source_value, source_arguments = self._resolve_child_shell_source(
                 source_node,
@@ -5510,36 +5516,25 @@ class SourceEvaluator:
 
     @staticmethod
     def _direct_source_command(command: str, command_start: int, context_id: tuple[str, int]):
-        try:
-            words = parse_shell_words_preserving_quotes(command)
-        except UnsupportedSourceError:
+        invocation = source_command_invocation(command)
+        if invocation is None:
             return None
-        if not words:
+        if invocation.command_start_index != 0:
             return None
+        if invocation.wrapped:
+            words = [strip_shell_word_quotes(word) for word in parse_shell_words_preserving_quotes(command)]
+            if not words or words[0] not in {"builtin", "command"}:
+                return None
 
-        source_index = source_command_index(command)
-        if source_index is None:
-            return None
-        if source_index != 0:
-            return None
-
-        command_name = strip_shell_word_quotes(words[source_index])
-        if command_name not in {"source", "."}:
-            return None
-
-        token_start = command.find(words[source_index])
-        if token_start < 0:
-            return None
-        source_expression = command[token_start + len(words[source_index]):].strip()
+        source_expression = invocation.source_expression
         if not source_expression:
             return None
-        source_site = f"{command_name} {source_expression}".strip()
         return ChildShellSourceCommand(
             context_id=context_id,
-            command_name=command_name,
+            command_name=invocation.command_name,
             source_expression=source_expression,
-            source_site=source_site,
-            column=command_start + token_start + 1,
+            source_site=invocation.source_site,
+            column=command_start + invocation.source_site_column_offset + 1,
         )
 
     @staticmethod
@@ -6675,7 +6670,7 @@ class SourceEvaluator:
                 self.disabled_sources.append(DisabledSourceSite(
                     location=node.location,
                     source_expression=node.source_expression.strip(),
-                    source_site=f"{node.command_name} {node.source_expression.strip()}".strip(),
+                    source_site=self._source_site_text(node),
                     replacement_kind="source",
                     condition=condition,
                 ))
@@ -6966,6 +6961,14 @@ class SourceEvaluator:
             if stripped_text.startswith(separator):
                 stripped_text = stripped_text[len(separator):].strip()
                 break
+        invocation = source_command_invocation(stripped_text)
+        if invocation is not None:
+            if invocation.command_start_index != 0:
+                return False
+            if not invocation.wrapped:
+                return True
+            words = [strip_shell_word_quotes(word) for word in parse_shell_words_preserving_quotes(stripped_text)]
+            return words[0] in {"builtin", "command"}
         return (
             stripped_text.startswith("source ")
             or stripped_text.startswith(". ")

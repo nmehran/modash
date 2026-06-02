@@ -204,8 +204,9 @@ cache, and passes it to `modash` for that mode only.
 
 Runtime trace smoke probes are separately opt-in with
 `MODASH_REALWORLD_TRACE=1`. They execute a small pinned pacman/makepkg-style
-fixture through the explicit `modash trace` workflow, validate that source
-events were observed, and write observation artifacts under:
+fixture, a harness-owned `builtin` / `command` source invocation fixture, and a
+child Bash fixture through the explicit `modash trace` workflow. The probes
+validate that source events were observed and write observation artifacts under:
 
 ```text
 .realworld/outputs/<project-version>/trace/<entrypoint>.trace.json
@@ -220,7 +221,7 @@ same `MODASH_REALWORLD_TIMEOUT` budget as compile and runtime parity probes.
 
 Runtime supplement replay probes are separately opt-in with
 `MODASH_REALWORLD_SUPPLEMENT=1`. They execute the observed workflow end to end
-against a small pinned pacman/makepkg-style fixture:
+against small pinned pacman/makepkg-style and child Bash fixtures:
 
 1. trace the original with the required runtime environment
 2. write an observation artifact
@@ -290,6 +291,8 @@ Runtime parity compares:
 The runtime probe set starts with controlled pacman fixtures:
 
 - real `source_safe` helper dispatch
+- context, executable, runtime parity, and trace observation coverage for
+  `builtin source`, `builtin .`, `command source`, and `command .`
 - real `source_safe` helper dispatch with exact source arguments
 - direct multi-match source glob arguments
 - sourced variable, export, and function availability
@@ -479,7 +482,7 @@ The corpus suite is a discovery tool. The synthetic suite remains the release
 gate for specific behavior.
 
 Runtime source discovery and observed supplement generation should follow
-[Runtime Source Discovery North Star](runtime-source-discovery.md). Real-world
+[Runtime Source Discovery](runtime-source-discovery.md). Real-world
 tracing belongs behind explicit opt-in workflows and reviewed observation
 artifacts, not inside normal corpus compilation.
 

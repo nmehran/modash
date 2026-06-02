@@ -63,6 +63,53 @@ class CompileRegressionTestCase(unittest.TestCase):
 
                 project.assert_compiled_matches(self, entry_path, cwd=cwd)
 
+    def test_builtin_and_command_source_invocations_match_bash(self):
+        cases = {
+            "builtin source": 'builtin source ./dep.sh builtin-source "two words"\n',
+            "builtin dot": 'builtin . ./dep.sh builtin-dot\n',
+            "command source": 'command source ./dep.sh command-source\n',
+            "command dot": 'command . ./dep.sh command-dot\n',
+            "command path source": 'command -p source ./dep.sh command-path\n',
+            "command delimiter source": 'command -- source ./dep.sh command-delimiter\n',
+        }
+
+        for name, main_content in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write(
+                    "dep.sh",
+                    'VALUE="${1-default}:${2-none}"\nprintf "dep:%s\\n" "$VALUE"\n',
+                )
+                project.write("main.sh", main_content + 'printf "main:%s\\n" "$VALUE"\n')
+
+                project.assert_compiled_matches(self, "main.sh")
+                compiled = project.path("compiled.sh").read_text()
+                self.assertNotIn("builtin source ./dep.sh", compiled)
+                self.assertNotIn("builtin . ./dep.sh", compiled)
+                self.assertNotIn("command source ./dep.sh", compiled)
+                self.assertNotIn("command . ./dep.sh", compiled)
+                self.assertNotIn("command -p source ./dep.sh", compiled)
+                self.assertNotIn("command -- source ./dep.sh", compiled)
+
+    def test_builtin_and_command_source_child_shell_invocations_match_bash(self):
+        cases = {
+            "subshell": '( command source ./dep.sh subshell; printf "child:%s\\n" "$VALUE" )\nprintf "parent:%s\\n" "${VALUE-unset}"\n',
+            "pipeline": 'builtin source ./dep.sh pipeline | sed "s/^/pipe:/"\nprintf "parent:%s\\n" "${VALUE-unset}"\n',
+            "command substitution": 'value="$(command . ./dep.sh substitution; printf "child:%s" "$VALUE")"\nprintf "[%s]\\n" "$value"\nprintf "parent:%s\\n" "${VALUE-unset}"\n',
+            "process substitution": 'cat <(builtin . ./dep.sh process; printf "child:%s\\n" "$VALUE")\nprintf "parent:%s\\n" "${VALUE-unset}"\n',
+        }
+
+        for name, main_content in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("dep.sh", 'VALUE="${1-default}"\nprintf "dep:%s\\n" "$VALUE"\n')
+                project.write("main.sh", main_content)
+
+                project.assert_compiled_matches(self, "main.sh")
+                compiled = project.path("compiled.sh").read_text()
+                self.assertNotIn("command source ./dep.sh", compiled)
+                self.assertNotIn("command . ./dep.sh", compiled)
+                self.assertNotIn("builtin source ./dep.sh", compiled)
+                self.assertNotIn("builtin . ./dep.sh", compiled)
+
     def test_subshell_source_lowering_matches_bash(self):
         cases = {
             "source": '( source ./dep.sh; printf "child:%s\\n" "$VALUE" )\nprintf "parent:%s\\n" "${VALUE-unset}"\n',
@@ -3254,18 +3301,6 @@ class CompileRegressionTestCase(unittest.TestCase):
             "branch-dependent function return": (
                 'load_dep() {\n  if [[ -n "$SKIP" ]]; then return 0; fi\n  source ./dep.sh\n}\nload_dep\n',
                 'if [[ -n "$SKIP" ]]',
-            ),
-            "command builtin source": (
-                'command source ./dep.sh\n',
-                'command source ./dep.sh',
-            ),
-            "builtin source": (
-                'builtin source ./dep.sh\n',
-                'builtin source ./dep.sh',
-            ),
-            "command path source": (
-                'command -p source ./dep.sh\n',
-                'command -p source ./dep.sh',
             ),
             "assignment-prefixed source": (
                 'FOO=bar source ./dep.sh\n',

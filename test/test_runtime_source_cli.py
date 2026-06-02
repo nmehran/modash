@@ -221,6 +221,38 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
         self.assertIn("runtime source trace timed out", result.stderr)
         self.assertFalse(output.exists())
 
+    def test_trace_cli_incomplete_trace_fails_before_writing_observation(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    "unset -f source",
+                    "source ./dep.sh",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", "echo dep\n")
+            output = project.path("trace.json")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "trace",
+                    str(entrypoint),
+                    "--output",
+                    str(output),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("missed source-like command", result.stderr)
+        self.assertFalse(output.exists())
+
     def test_existing_compile_cli_still_uses_original_positional_form(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", "source ./dep.sh\n")

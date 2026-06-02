@@ -85,6 +85,18 @@ class ResolvedSource:
 
 
 @dataclass(frozen=True)
+class SourceCommandInvocation:
+    command_name: str
+    source_expression: str
+    source_site: str
+    source_site_column_offset: int
+    source_column_offset: int
+    command_start_index: int
+    source_index: int
+    wrapped: bool = False
+
+
+@dataclass(frozen=True)
 class GlobMatch:
     word: str
     path: str
@@ -784,6 +796,11 @@ def source_command_index(command: str):
     except UnsupportedSourceError:
         return 0 if SOURCE_PATTERN.findall(command) else None
 
+    position = _source_command_position(words)
+    return position[1] if position else None
+
+
+def _source_command_position(words: list[str]):
     command_start = 0
     while command_start < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[command_start]):
         command_start += 1
@@ -795,12 +812,12 @@ def source_command_index(command: str):
             continue
 
         if index == command_start:
-            return index
+            return command_start, index
 
         first_word = words[command_start] if command_start < len(words) else ''
         previous_word = words[index - 1]
         if first_word == 'builtin' and index == command_start + 1:
-            return index
+            return command_start, index
         if first_word == 'command':
             command_index = command_start + 1
             while command_index < len(words) and words[command_index].startswith('-'):
@@ -814,7 +831,7 @@ def source_command_index(command: str):
                     return None
                 command_index += 1
             if index == command_index:
-                return index
+                return command_start, index
         if first_word in {'if', 'while', 'until', 'then', 'elif', 'else', 'do'}:
             branch_index = command_start + 1
             while branch_index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[branch_index]):
@@ -822,12 +839,63 @@ def source_command_index(command: str):
             while branch_index < len(words) and words[branch_index] == "!":
                 branch_index += 1
             if index == branch_index:
-                return index
+                return command_start, index
         if previous_word == '{' or previous_word.endswith('{'):
-            return index
+            return command_start, index
         if any(candidate.endswith(')') for candidate in words[command_start:index]):
-            return index
+            return command_start, index
 
+    return None
+
+
+def source_command_invocation(command: str):
+    try:
+        quoted_words = parse_shell_words_preserving_quotes(command)
+        words = [strip_shell_word_quotes(word) for word in quoted_words]
+    except UnsupportedSourceError:
+        return None
+    if not words:
+        return None
+
+    position = _source_command_position(words)
+    if position is None:
+        return None
+    command_start, source_index = position
+    if source_index >= len(quoted_words):
+        return None
+
+    wrapped = source_index != command_start
+    token_start = shell_word_start(command, quoted_words, source_index)
+    if token_start is None:
+        return None
+
+    command_name = words[source_index]
+    if command_name not in {"source", "."}:
+        return None
+    source_expression = command[token_start + len(quoted_words[source_index]):].strip()
+    source_site = command.strip() if wrapped else f"{command_name} {source_expression}".strip()
+
+    return SourceCommandInvocation(
+        command_name=command_name,
+        source_expression=source_expression,
+        source_site=source_site,
+        source_site_column_offset=0 if wrapped else token_start,
+        source_column_offset=token_start,
+        command_start_index=command_start,
+        source_index=source_index,
+        wrapped=wrapped,
+    )
+
+
+def shell_word_start(command: str, words: list[str], word_index: int):
+    search_start = 0
+    for index, word in enumerate(words[:word_index + 1]):
+        token_start = command.find(word, search_start)
+        if token_start < 0:
+            return None
+        search_start = token_start + len(word)
+        if index == word_index:
+            return token_start
     return None
 
 

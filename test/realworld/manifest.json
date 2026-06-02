@@ -83,6 +83,34 @@
           "path": ".modash-fixtures/source-safe-args-target.sh"
         },
         {
+          "source": "pacman/trace-invocation-wrapper.sh",
+          "path": ".modash-fixtures/trace-invocation-wrapper.sh"
+        },
+        {
+          "source": "pacman/trace-invocation-target.sh",
+          "path": ".modash-fixtures/trace-invocation-target.sh"
+        },
+        {
+          "source": "pacman/child-bash-trace-wrapper.sh",
+          "path": ".modash-fixtures/child-bash-trace-wrapper.sh"
+        },
+        {
+          "source": "pacman/child-bash-trace-target.sh",
+          "path": ".modash-fixtures/child-bash-trace-target.sh"
+        },
+        {
+          "source": "pacman/coverage-warning-wrapper.sh",
+          "path": ".modash-fixtures/coverage-warning-wrapper.sh"
+        },
+        {
+          "source": "pacman/coverage-prod.sh",
+          "path": ".modash-fixtures/coverage-prod.sh"
+        },
+        {
+          "source": "pacman/coverage-dev.sh",
+          "path": ".modash-fixtures/coverage-dev.sh"
+        },
+        {
           "source": "pacman/glob-args-wrapper.sh",
           "path": ".modash-fixtures/glob-args-wrapper.sh"
         },
@@ -309,6 +337,51 @@
         },
         {
           "path": ".modash-fixtures/source-safe-args-wrapper.sh",
+          "modes": {
+            "context": {
+              "expected": "success"
+            },
+            "executable": {
+              "expected": "success"
+            }
+          },
+          "runtime": {
+            "expected": "match",
+            "cwd": ".modash-fixtures"
+          }
+        },
+        {
+          "path": ".modash-fixtures/trace-invocation-wrapper.sh",
+          "modes": {
+            "context": {
+              "expected": "success"
+            },
+            "executable": {
+              "expected": "success"
+            }
+          },
+          "runtime": {
+            "expected": "match",
+            "cwd": ".modash-fixtures"
+          }
+        },
+        {
+          "path": ".modash-fixtures/child-bash-trace-wrapper.sh",
+          "modes": {
+            "context": {
+              "expected": "success"
+            },
+            "executable": {
+              "expected": "success"
+            }
+          },
+          "runtime": {
+            "expected": "match",
+            "cwd": ".modash-fixtures"
+          }
+        },
+        {
+          "path": ".modash-fixtures/coverage-warning-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"

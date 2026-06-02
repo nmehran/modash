@@ -20,6 +20,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             observation = trace_sources(entrypoint, env={"LIB_DIR": str(project.path("lib"))})
             observation_path = project.path("observation.json")
             supplement_path = project.path("source-supplement.json")
+            report_path = project.path("source-supplement.json.report.json")
             write_trace_observation(observation, observation_path)
 
             result = subprocess.run(
@@ -39,10 +40,12 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
                 text=True,
             )
             payload = json.loads(supplement_path.read_text())
+            report = json.loads(report_path.read_text())
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
         self.assertIn("modash: source supplement:", result.stderr)
+        self.assertIn("modash: observation review report:", result.stderr)
         self.assertEqual(payload, {
             "version": 1,
             "variables": {
@@ -50,6 +53,44 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             },
             "functions": {},
         })
+        self.assertEqual(report["version"], 1)
+        self.assertEqual(report["observation_version"], 3)
+        self.assertEqual(report["summary"]["warnings"], 0)
+
+    def test_supplement_cli_writes_explicit_report_path(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./dep.sh\n")
+            project.write("dep.sh", "echo dep\n")
+            observation = trace_sources(entrypoint)
+            observation_path = project.path("observation.json")
+            supplement_path = project.path("source-supplement.json")
+            report_path = project.path("reports/review.json")
+            write_trace_observation(observation, observation_path)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "supplement",
+                    str(entrypoint),
+                    "--from-observation",
+                    str(observation_path),
+                    "--output",
+                    str(supplement_path),
+                    "--report",
+                    str(report_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            explicit_report_exists = report_path.is_file()
+            default_report_exists = project.path("source-supplement.json.report.json").exists()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(explicit_report_exists)
+        self.assertFalse(default_report_exists)
 
     def test_supplement_cli_rejects_missing_observation(self):
         with ScriptProject() as project:

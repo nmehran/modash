@@ -9,10 +9,12 @@ if str(REPO_ROOT) not in sys.path:
 from methods.runtime_source_observations import (  # noqa: E402
     BashInfo,
     EnvironmentInfo,
+    RuntimeProcess,
     RuntimeSourceEvent,
     RuntimeSourceObservation,
     SourceCallSite,
     TraceInfo,
+    fingerprint_file,
 )
 from methods.runtime_source_supplements import (  # noqa: E402
     RuntimeSupplementGenerationError,
@@ -116,9 +118,22 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
                 bash=BashInfo(version="test"),
                 trace=TraceInfo(version="test"),
                 environment=EnvironmentInfo(policy="overlay", recorded_keys=("LIB",)),
+                processes=(
+                    RuntimeProcess(
+                        index=0,
+                        pid=100,
+                        parent_pid=50,
+                        parent_index=None,
+                        entrypoint=str(entrypoint),
+                        cwd=str(project.root),
+                        argv=(),
+                        command=str(entrypoint),
+                    ),
+                ),
                 sources=(
                     RuntimeSourceEvent(
                         index=0,
+                        process_index=0,
                         call_site=SourceCallSite(
                             file=str(entrypoint),
                             line=1,
@@ -128,6 +143,7 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
                     ),
                     RuntimeSourceEvent(
                         index=1,
+                        process_index=0,
                         call_site=SourceCallSite(
                             file=str(entrypoint),
                             line=1,
@@ -135,6 +151,11 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
                         ),
                         resolved_path=str(project.path("lib-two/two.sh")),
                     ),
+                ),
+                files=(
+                    fingerprint_file(entrypoint, roles=("entrypoint", "call-site")),
+                    fingerprint_file(project.path("lib-one/one.sh"), roles=("source",)),
+                    fingerprint_file(project.path("lib-two/two.sh"), roles=("source",)),
                 ),
             )
 
@@ -153,6 +174,20 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
                 generate_source_supplement(other, observation)
 
         self.assertEqual(context.exception.code, "runtime.supplement.entrypoint_mismatch")
+
+    def test_rejects_stale_observation_before_generating_supplement(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source "$LIB_DIR/dep.sh"\n')
+            dependency = project.write("lib/dep.sh", "echo dep\n")
+            observation = project.trace("main.sh", env={"LIB_DIR": str(project.path("lib"))}).observation
+
+            dependency.write_text("echo changed\n", encoding="utf-8")
+
+            with self.assertRaises(RuntimeSupplementGenerationError) as context:
+                generate_source_supplement(entrypoint, observation)
+
+        self.assertEqual(context.exception.code, "runtime.supplement.stale_observation")
+        self.assertIn("stale", str(context.exception))
 
     def test_unsupported_observation_generates_empty_valid_supplement(self):
         with ScriptProject() as project:

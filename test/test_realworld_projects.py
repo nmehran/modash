@@ -916,6 +916,12 @@ def generated_supplement_artifact_path(project, entrypoint_path):
     return output_path.with_name(f"{output_path.name}.source-supplement.json")
 
 
+def observation_review_report_artifact_path(project, entrypoint_path):
+    relative_path = Path(entrypoint_path)
+    output_path = OUTPUTS_DIR / pinned_project_key(project) / "report" / relative_path
+    return output_path.with_name(f"{output_path.name}.observation-report.json")
+
+
 def supplement_replay_output_path(project, entrypoint_path):
     relative_path = Path(entrypoint_path)
     output_path = OUTPUTS_DIR / pinned_project_key(project) / "supplement-replay" / relative_path
@@ -1061,8 +1067,10 @@ def run_runtime_supplement_replay_probe(
     timeout_seconds,
     observation_path,
     supplement_path,
+    report_path,
     compiled_path,
 ):
+    from methods.runtime_observation_reports import build_observation_report, write_observation_report
     from methods.runtime_source_supplements import generate_source_supplement, write_generated_supplement
     from methods.runtime_source_trace import RuntimeSourceTraceError, trace_sources, write_trace_observation
 
@@ -1071,7 +1079,13 @@ def run_runtime_supplement_replay_probe(
         trace_result = trace_sources(entrypoint_path, cwd=cwd, env=trace_environment, timeout=timeout_seconds)
         write_trace_observation(trace_result, observation_path)
         supplement = generate_source_supplement(entrypoint_path, trace_result.observation)
+        report = build_observation_report(
+            entrypoint_path,
+            trace_result.observation,
+            validate_fingerprints=False,
+        )
         write_generated_supplement(supplement, supplement_path)
+        write_observation_report(report, report_path)
     except RuntimeSourceTraceError as exc:
         if exc.code == "runtime.trace.timeout":
             return {
@@ -1119,6 +1133,8 @@ def run_runtime_supplement_replay_probe(
             "trace_stderr": trace_result.stderr,
             "observation_path": str(observation_path),
             "source_supplement": str(supplement_path),
+            "review_report": str(report_path),
+            "coverage_warnings": len(report["warnings"]),
             **compile_result,
         }
 
@@ -1144,6 +1160,8 @@ def run_runtime_supplement_replay_probe(
         "compiled": compiled,
         "observation_path": str(observation_path),
         "source_supplement": str(supplement_path),
+        "review_report": str(report_path),
+        "coverage_warnings": len(report["warnings"]),
         "output_path": str(compiled_path),
     }
 
@@ -1525,7 +1543,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                 continue
 
             environment = project_environment(project, root)
-            entrypoint = next(
+            source_safe = next(
                 (
                     candidate
                     for candidate in project["entrypoints"]
@@ -1533,43 +1551,61 @@ class RealWorldProjectTestCase(unittest.TestCase):
                 ),
                 None,
             )
-            if entrypoint is None:
-                continue
+            trace_cases = []
+            if source_safe is not None:
+                trace_cases.append((
+                    source_safe["path"],
+                    source_safe["runtime"],
+                    2,
+                ))
+            trace_cases.append((
+                ".modash-fixtures/trace-invocation-wrapper.sh",
+                {"cwd": ".modash-fixtures"},
+                4,
+            ))
+            trace_cases.append((
+                ".modash-fixtures/child-bash-trace-wrapper.sh",
+                {"cwd": ".modash-fixtures"},
+                1,
+            ))
 
-            entrypoint_path = root / entrypoint["path"]
-            output_path = trace_artifact_path(project, entrypoint["path"])
-            remove_output_artifact(output_path)
-            probe = run_runtime_trace_probe(
-                entrypoint_path,
-                runtime_cwd(root, entrypoint["runtime"]),
-                environment,
-                output_path,
-                timeout_seconds,
-            )
-            record = normalize_record_paths({
-                "project": project["name"],
-                "version": project["version"],
-                "kind": "runtime-trace",
-                "entrypoint": str(entrypoint_path),
-                **probe,
-            }, root)
-            if record.get("output_path"):
-                record["output_path"] = Path(record["output_path"]).relative_to(REPO_ROOT).as_posix()
-            if record.get("source_paths"):
-                record["source_paths"] = [
-                    relative_to_root(source_path, root)
-                    for source_path in record["source_paths"]
-                ]
-            record["expected_status"] = "success"
-            record["matched_expectation"] = (
-                record["status"] == "success"
-                and record.get("source_events", 0) >= 2
-                and "MODASH_SOURCE_EVENT" not in record.get("stdout", "")
-                and "MODASH_SOURCE_EVENT" not in record.get("stderr", "")
-            )
-            records.append(record)
-            if not record["matched_expectation"]:
-                failures.append(record)
+            for entrypoint_path_text, runtime, minimum_events in trace_cases:
+                entrypoint_path = root / entrypoint_path_text
+                output_path = trace_artifact_path(project, entrypoint_path_text)
+                remove_output_artifact(output_path)
+                probe = run_runtime_trace_probe(
+                    entrypoint_path,
+                    runtime_cwd(root, runtime),
+                    environment,
+                    output_path,
+                    timeout_seconds,
+                )
+                record = normalize_record_paths({
+                    "project": project["name"],
+                    "version": project["version"],
+                    "kind": "runtime-trace",
+                    "entrypoint": str(entrypoint_path),
+                    **probe,
+                }, root)
+                if record.get("output_path"):
+                    record["output_path"] = Path(record["output_path"]).relative_to(REPO_ROOT).as_posix()
+                if record.get("source_paths"):
+                    record["source_paths"] = [
+                        relative_to_root(source_path, root)
+                        for source_path in record["source_paths"]
+                    ]
+                record["expected_status"] = "success"
+                record["matched_expectation"] = (
+                    record["status"] == "success"
+                    and record.get("source_events", 0) >= minimum_events
+                    and "MODASH_SOURCE_EVENT" not in record.get("stdout", "")
+                    and "MODASH_SOURCE_EVENT" not in record.get("stderr", "")
+                    and "MODASH_XTRACE" not in record.get("stdout", "")
+                    and "MODASH_XTRACE" not in record.get("stderr", "")
+                )
+                records.append(record)
+                if not record["matched_expectation"]:
+                    failures.append(record)
 
         write_result_file("runtime-trace.json", {
             "suite": "runtime-trace",
@@ -1613,57 +1649,67 @@ class RealWorldProjectTestCase(unittest.TestCase):
                 continue
 
             trace_environment = project_environment(project, root)
-            entrypoint = next(
-                (
-                    candidate
-                    for candidate in project["entrypoints"]
-                    if candidate["path"] == ".modash-fixtures/source-safe-wrapper.sh"
-                ),
-                None,
+            replay_cases = (
+                (".modash-fixtures/source-safe-wrapper.sh", 2, 0),
+                (".modash-fixtures/child-bash-trace-wrapper.sh", 1, 0),
+                (".modash-fixtures/coverage-warning-wrapper.sh", 1, 1),
             )
-            if entrypoint is None:
-                continue
+            for entrypoint_path_text, minimum_events, minimum_warnings in replay_cases:
+                entrypoint = next(
+                    (
+                        candidate
+                        for candidate in project["entrypoints"]
+                        if candidate["path"] == entrypoint_path_text
+                    ),
+                    None,
+                )
+                if entrypoint is None:
+                    continue
 
-            entrypoint_path = root / entrypoint["path"]
-            observation_path = trace_artifact_path(project, entrypoint["path"])
-            supplement_path = generated_supplement_artifact_path(project, entrypoint["path"])
-            compiled_path = supplement_replay_output_path(project, entrypoint["path"])
-            for artifact in (observation_path, supplement_path, compiled_path):
-                remove_output_artifact(artifact)
+                entrypoint_path = root / entrypoint["path"]
+                observation_path = trace_artifact_path(project, entrypoint["path"])
+                supplement_path = generated_supplement_artifact_path(project, entrypoint["path"])
+                report_path = observation_review_report_artifact_path(project, entrypoint["path"])
+                compiled_path = supplement_replay_output_path(project, entrypoint["path"])
+                for artifact in (observation_path, supplement_path, report_path, compiled_path):
+                    remove_output_artifact(artifact)
 
-            probe = run_runtime_supplement_replay_probe(
-                entrypoint_path,
-                runtime_cwd(root, entrypoint["runtime"]),
-                trace_environment,
-                timeout_seconds,
-                observation_path,
-                supplement_path,
-                compiled_path,
-            )
-            record = normalize_record_paths({
-                "project": project["name"],
-                "version": project["version"],
-                "kind": "runtime-supplement",
-                "entrypoint": str(entrypoint_path),
-                **probe,
-            }, root)
-            for key in ("output_path", "observation_path", "source_supplement"):
-                if record.get(key):
-                    record[key] = Path(record[key]).relative_to(REPO_ROOT).as_posix()
-            if record.get("source_paths"):
-                record["source_paths"] = [
-                    relative_to_root(source_path, root)
-                    for source_path in record["source_paths"]
-                ]
-            record["expected_status"] = "match"
-            record["matched_expectation"] = (
-                record["status"] == "match"
-                and record.get("source_events", 0) >= 2
-                and record.get("source_supplement") is not None
-            )
-            records.append(record)
-            if not record["matched_expectation"]:
-                failures.append(record)
+                probe = run_runtime_supplement_replay_probe(
+                    entrypoint_path,
+                    runtime_cwd(root, entrypoint["runtime"]),
+                    trace_environment,
+                    timeout_seconds,
+                    observation_path,
+                    supplement_path,
+                    report_path,
+                    compiled_path,
+                )
+                record = normalize_record_paths({
+                    "project": project["name"],
+                    "version": project["version"],
+                    "kind": "runtime-supplement",
+                    "entrypoint": str(entrypoint_path),
+                    **probe,
+                }, root)
+                for key in ("output_path", "observation_path", "source_supplement", "review_report"):
+                    if record.get(key):
+                        record[key] = Path(record[key]).relative_to(REPO_ROOT).as_posix()
+                if record.get("source_paths"):
+                    record["source_paths"] = [
+                        relative_to_root(source_path, root)
+                        for source_path in record["source_paths"]
+                    ]
+                record["expected_status"] = "match"
+                record["matched_expectation"] = (
+                    record["status"] == "match"
+                    and record.get("source_events", 0) >= minimum_events
+                    and record.get("coverage_warnings", 0) >= minimum_warnings
+                    and record.get("source_supplement") is not None
+                    and record.get("review_report") is not None
+                )
+                records.append(record)
+                if not record["matched_expectation"]:
+                    failures.append(record)
 
         write_result_file("runtime-supplement-replay.json", {
             "suite": "runtime-supplement-replay",

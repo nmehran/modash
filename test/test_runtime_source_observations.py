@@ -10,11 +10,13 @@ if str(REPO_ROOT) not in sys.path:
 from methods.runtime_source_observations import (  # noqa: E402
     BashInfo,
     EnvironmentInfo,
+    RuntimeProcess,
     RuntimeSourceEvent,
     RuntimeSourceObservation,
     RuntimeSourceObservationError,
     SourceCallSite,
     TraceInfo,
+    fingerprint_file,
     load_observation,
     validate_observation,
     write_observation,
@@ -37,9 +39,22 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                     policy="allowlist",
                     recorded_keys=("Z_VAR", "A_VAR", "Z_VAR"),
                 ),
+                processes=(
+                    RuntimeProcess(
+                        index=0,
+                        pid=100,
+                        parent_pid=50,
+                        parent_index=None,
+                        entrypoint=str(entrypoint),
+                        cwd=str(project.root),
+                        argv=("--flag",),
+                        command=str(entrypoint),
+                    ),
+                ),
                 sources=(
                     RuntimeSourceEvent(
                         index=0,
+                        process_index=0,
                         call_site=SourceCallSite(
                             file=str(entrypoint),
                             line=1,
@@ -50,6 +65,10 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                         status=0,
                     ),
                 ),
+                files=(
+                    fingerprint_file(entrypoint, roles=("entrypoint", "call-site")),
+                    fingerprint_file(dependency, roles=("source",)),
+                ),
             )
 
             path = project.write_observation(".modash/observations/run.json", observation)
@@ -59,9 +78,17 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
 
         self.assertEqual(loaded, observation)
         self.assertTrue(text.endswith("\n"))
-        self.assertTrue(text.startswith('{\n  "version": 1,\n  "entrypoint": '))
+        self.assertTrue(text.startswith('{\n  "version": 3,\n  "entrypoint": '))
         self.assertEqual(data["environment"]["recorded_keys"], ["A_VAR", "Z_VAR"])
+        self.assertEqual(data["processes"][0]["pid"], 100)
+        self.assertIsNone(data["processes"][0]["parent_index"])
+        self.assertEqual(data["sources"][0]["process_index"], 0)
         self.assertEqual(data["sources"][0]["arguments"], ["arg"])
+        self.assertEqual(
+            {tuple(file["roles"]) for file in data["files"]},
+            {("entrypoint", "call-site"), ("source",)},
+        )
+        self.assertTrue(all(len(file["sha256"]) == 64 for file in data["files"]))
 
     def test_validate_accepts_plain_json_object(self):
         with ScriptProject() as project:
@@ -69,16 +96,29 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             dependency = project.write("dep.sh", "echo dep\n")
 
             observation = validate_observation({
-                "version": 1,
+                "version": 3,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
                 "bash": {"version": "5.2.21"},
                 "trace": {"version": "schema-test"},
                 "environment": {"policy": "allowlist", "recorded_keys": []},
+                "processes": [
+                    {
+                        "index": 0,
+                        "pid": 100,
+                        "parent_index": None,
+                        "parent_pid": 50,
+                        "entrypoint": str(entrypoint),
+                        "cwd": str(project.root),
+                        "argv": [],
+                        "command": str(entrypoint),
+                    }
+                ],
                 "sources": [
                     {
                         "index": 0,
+                        "process_index": 0,
                         "call_site": {
                             "file": str(entrypoint),
                             "line": 1,
@@ -89,10 +129,27 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                         "status": 0,
                     }
                 ],
+                "files": [
+                    fingerprint_file(entrypoint, roles=("entrypoint", "call-site")).to_dict(),
+                    fingerprint_file(dependency, roles=("source",)).to_dict(),
+                ],
             })
 
         self.assertEqual(observation.entrypoint, str(entrypoint.resolve(strict=False)))
         self.assertEqual(observation.sources[0].resolved_path, str(dependency.resolve(strict=False)))
+
+    def test_validate_allows_process_command_call_site_without_call_site_fingerprint(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "bash -c 'source ./dep.sh'\n")
+            project.write("dep.sh", "echo dep\n")
+
+            observation = project.trace("main.sh").observation
+            event = observation.sources[0]
+            fingerprint_paths = {fingerprint.path for fingerprint in observation.files}
+            loaded = validate_observation(observation.to_dict())
+
+        self.assertNotIn(event.call_site.file, fingerprint_paths)
+        self.assertEqual(loaded, observation)
 
     def test_invalid_json_fails_with_stable_code(self):
         with ScriptProject() as project:
@@ -115,16 +172,29 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             entrypoint = project.write("main.sh", "source ./dep.sh\n")
             dependency = project.write("dep.sh", "echo dep\n")
             valid = {
-                "version": 1,
+                "version": 3,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
                 "bash": {"version": "5.2.21"},
                 "trace": {"version": "schema-test"},
                 "environment": {"policy": "allowlist", "recorded_keys": []},
+                "processes": [
+                    {
+                        "index": 0,
+                        "pid": 100,
+                        "parent_index": None,
+                        "parent_pid": 50,
+                        "entrypoint": str(entrypoint),
+                        "cwd": str(project.root),
+                        "argv": [],
+                        "command": str(entrypoint),
+                    }
+                ],
                 "sources": [
                     {
                         "index": 0,
+                        "process_index": 0,
                         "call_site": {
                             "file": str(entrypoint),
                             "line": 1,
@@ -135,10 +205,14 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                         "status": 0,
                     }
                 ],
+                "files": [
+                    fingerprint_file(entrypoint, roles=("entrypoint", "call-site")).to_dict(),
+                    fingerprint_file(dependency, roles=("source",)).to_dict(),
+                ],
             }
 
             cases = [
-                ("wrong version", {**valid, "version": 2}, "version must be 1"),
+                ("wrong version", {**valid, "version": 1}, "version must be 3"),
                 ("unknown top-level key", {**valid, "extra": True}, "unknown keys"),
                 (
                     "missing argv",
@@ -150,9 +224,64 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                 ("bad status", _replace_source(valid, status=-1), "status must be greater than or equal to 0"),
                 ("bad event index", _replace_source(valid, index=1), "indexed contiguously"),
                 (
+                    "bad process index",
+                    {**valid, "processes": [{**valid["processes"][0], "index": 1}]},
+                    "processes must be indexed contiguously",
+                ),
+                (
+                    "bad process parent",
+                    {**valid, "processes": [{**valid["processes"][0], "parent_index": 99}]},
+                    "parent_index must reference an existing process",
+                ),
+                (
+                    "bad source process index",
+                    _replace_source(valid, process_index=99),
+                    "process_index must reference an existing process",
+                ),
+                (
                     "bad environment key",
                     {**valid, "environment": {"policy": "allowlist", "recorded_keys": ["BAD=KEY"]}},
                     "must not contain '='",
+                ),
+                (
+                    "bad file role",
+                    _replace_file(valid, roles=["entrypoint", "unknown"]),
+                    "unsupported role",
+                ),
+                (
+                    "bad file digest",
+                    _replace_file(valid, sha256="not-a-digest"),
+                    "SHA-256",
+                ),
+                (
+                    "uppercase file digest",
+                    _replace_file(valid, sha256=valid["files"][0]["sha256"].upper()),
+                    "lowercase",
+                ),
+                (
+                    "duplicate file path",
+                    {**valid, "files": [valid["files"][0], valid["files"][0]]},
+                    "path values must be unique",
+                ),
+                (
+                    "missing entrypoint fingerprint",
+                    {**valid, "files": [valid["files"][1]]},
+                    "entrypoint must have a file fingerprint",
+                ),
+                (
+                    "missing call-site fingerprint role",
+                    _replace_file(valid, roles=["entrypoint"]),
+                    "call_site.file must have a file fingerprint",
+                ),
+                (
+                    "missing source fingerprint",
+                    {**valid, "files": [valid["files"][0]]},
+                    "resolved_path must have a file fingerprint",
+                ),
+                (
+                    "missing source fingerprint role",
+                    _replace_file(valid, index=1, roles=["call-site"]),
+                    "resolved_path must have a file fingerprint",
                 ),
             ]
 
@@ -165,7 +294,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
     def test_write_observation_validates_plain_json_before_writing(self):
         with ScriptProject() as project:
             with self.assertRaises(RuntimeSourceObservationError):
-                write_observation(project.observation_path(), {"version": 1})
+                write_observation(project.observation_path(), {"version": 3})
 
             self.assertFalse(project.observation_path().exists())
 
@@ -173,6 +302,12 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
 def _replace_source(observation, **updates):
     copied = json.loads(json.dumps(observation))
     copied["sources"][0].update(updates)
+    return copied
+
+
+def _replace_file(observation, index=0, **updates):
+    copied = json.loads(json.dumps(observation))
+    copied["files"][index].update(updates)
     return copied
 
 

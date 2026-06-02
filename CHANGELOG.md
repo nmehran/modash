@@ -2,10 +2,35 @@
 
 ## Unreleased
 
+### Added
+
+- Runtime trace observation now covers `builtin source`, `builtin .`,
+  `command source`, and `command .` invocation forms.
+- Executable compile now lowers exact `builtin` / `command` source invocation
+  forms when their source operands are otherwise supported.
+- Runtime tracing now uses an xtrace sidecar to detect source-like commands
+  that bypass wrapper observation and fails closed before writing observations
+  when a trace is incomplete.
+- Runtime trace observations now propagate into child Bash processes and merge
+  parent/child source events with process provenance.
+- Runtime trace observations now use schema `3` file fingerprints for
+  entrypoints, file-backed call sites, and resolved source files.
+- `modash supplement` now writes an observation review report beside generated
+  source supplements.
+
 ### Changed
 
 - Expanded CI coverage to Python 3.10 through 3.14 and added the Python 3.14
   package classifier after the full matrix passed.
+- Promoted pacman fixture coverage for `builtin` / `command` source invocation
+  forms into context, executable, runtime parity, and trace smoke paths.
+- Promoted child Bash trace coverage into synthetic replay and opt-in
+  real-world trace/supplement replay probes.
+- Runtime supplement generation now rejects stale trace observations before
+  deriving compiler input.
+- Reworked README and docs into a smaller user-facing set, removing stale
+  implementation-tranche specs that are already represented by release history
+  and tests.
 
 ## v0.4.1 - 2026-06-02
 

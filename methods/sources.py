@@ -152,15 +152,20 @@ def parameter_expansion_value(reference, context):
         return None
 
     body = reference[2:-1]
-    match = re.fullmatch(r'([a-zA-Z_]\w*)(:?)-(.*)', body)
+    match = re.fullmatch(r'([a-zA-Z_]\w*|[0-9]+)(:?)([-+])(.*)', body, re.S)
     if not match:
         return None
 
-    name, colon, fallback = match.groups()
+    name, colon, operator, word = match.groups()
     value = context['vars'].get(name, os.environ.get(name))
-    if value is None or (colon and value == ""):
-        return resolve_variable_references(fallback, context)
-    return value
+    is_set = value is not None and (not colon or value != "")
+    if operator == "-":
+        if not is_set:
+            return resolve_variable_references(word, context)
+        return value
+    if is_set:
+        return resolve_variable_references(word, context)
+    return ""
 
 
 def resolve_variable_references(command, context):
@@ -176,16 +181,22 @@ def resolve_variable_references(command, context):
         start, end = variable_reference.span()
 
         try:
-            if inner_reference:
-                inner_name = VARIABLE_NAME_PATTERN.match(inner_reference).group(1)
-                inner_definition = context['vars'].get(inner_name)
-                command = replace_substring(command, inner_reference, inner_definition, start, end)
-
             parameter_value = parameter_expansion_value(outer_reference, context)
             if parameter_value is not None:
                 command = replace_substring(command, outer_reference, parameter_value, start, end)
                 command_len = len(command)
                 search_start = start + len(parameter_value)
+                continue
+
+            if inner_reference:
+                inner_name = VARIABLE_NAME_PATTERN.match(inner_reference).group(1)
+                inner_definition = context['vars'].get(inner_name)
+                if inner_definition is None:
+                    search_start = end
+                    continue
+                command = replace_substring(command, inner_reference, inner_definition, start, end)
+                command_len = len(command)
+                search_start = start
                 continue
 
             outer_name = VARIABLE_NAME_PATTERN.match(outer_reference).group(1)

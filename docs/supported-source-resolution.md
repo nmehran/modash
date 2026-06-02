@@ -223,8 +223,7 @@ nested source. Nested sources without explicit arguments can dirty the current
 frame when they mutate positionals, nested sources with explicit arguments
 restore their own frame before returning to the outer source body, and later
 top-level `set --` mutations in the outer sourced file can supersede the
-barrier. See
-[Explicit Source Argument Frame Restoration](source-argument-frame-restoration.md).
+barrier.
 
 ## Sourced-File Return
 
@@ -351,6 +350,24 @@ load_dep() {
 load_dep ./dep.sh
 ```
 
+## Wrapped Source Invocations
+
+Executable mode lowers exact `builtin` and `command` source invocation forms
+when their operands are otherwise supported source expressions. This covers
+parent-shell source sites and the modeled child-shell contexts.
+
+```bash
+builtin source ./dep.sh arg
+builtin . ./dep.sh arg
+command source ./dep.sh arg
+command . ./dep.sh arg
+command -p source ./dep.sh arg
+command -- source ./dep.sh arg
+```
+
+Assignment-prefixed and negated wrapped source commands remain fail-closed until
+their broader simple-command prefix semantics are modeled.
+
 ## Unsupported In Executable Mode
 
 Unsupported or ambiguous source forms fail closed before output is written.
@@ -387,13 +404,12 @@ The remaining source-resolution surface is narrower than general Bash support:
 
 - Remaining case edge semantics such as collating symbols, equivalence classes,
   and broader locale-dependent pattern behavior. The implemented deterministic
-  `extglob` / `GLOBIGNORE` subset is covered in
-  [Source Pattern Semantics Completion](source-pattern-semantics.md).
+  pattern subset includes practical `extglob` and `GLOBIGNORE` handling.
 - Recursive or runtime-dynamic source-bearing function dispatch. Exact
   makepkg-style helper calls using quoted `$@` / `$*` are covered by
-  [Source Supplements And Exact Helper Sources](source-supplements.md).
-  Retained helper definitions that remain callable after merging are covered in
-  [Retained Helper Dispatch](retained-helper-dispatch.md).
+  [Source Supplements](source-supplements.md). Retained helper definitions that
+  remain callable after merging are supported only for finite exact or
+  supplement-backed argument vectors.
 - Runtime source discovery and observed supplement generation. The intended
   observe-to-supplement-to-deterministic-compile workflow is captured in
-  [Runtime Source Discovery North Star](runtime-source-discovery.md).
+  [Runtime Source Discovery](runtime-source-discovery.md).

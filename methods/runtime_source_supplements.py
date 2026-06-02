@@ -9,6 +9,7 @@ from pathlib import Path
 from methods.runtime_source_observations import (
     RuntimeSourceObservation,
     RuntimeSourceObservationError,
+    current_fingerprint_mismatch,
     load_observation,
     validate_observation,
 )
@@ -46,10 +47,12 @@ class GeneratedSourceSupplement:
         }
 
 
-def generate_source_supplement(entrypoint: str | os.PathLike, observation):
+def generate_source_supplement(entrypoint: str | os.PathLike, observation, *, validate_fingerprints=True):
     entrypoint_path = Path(entrypoint).resolve(strict=False)
     observation = _coerce_observation(observation)
     _ensure_observation_matches_entrypoint(entrypoint_path, observation)
+    if validate_fingerprints:
+        _ensure_observation_fingerprints_current(observation)
 
     entrypoint_directory = entrypoint_path.parent
     variables = {}
@@ -133,6 +136,16 @@ def _ensure_observation_matches_entrypoint(entrypoint_path: Path, observation: R
             f"observation entrypoint does not match requested entrypoint: {observed_entrypoint}",
             code="runtime.supplement.entrypoint_mismatch",
         )
+
+
+def _ensure_observation_fingerprints_current(observation: RuntimeSourceObservation):
+    for fingerprint in observation.files:
+        mismatch = current_fingerprint_mismatch(fingerprint)
+        if mismatch is not None:
+            raise RuntimeSupplementGenerationError(
+                f"runtime source observation is stale for {fingerprint.path}: {mismatch} mismatch",
+                code="runtime.supplement.stale_observation",
+            )
 
 
 def _source_word_from_command(command: str):

@@ -364,6 +364,26 @@ class ContextModeTestCase(unittest.TestCase):
         self.assertIn('source ./dep.sh', content)
         self.assertNotIn('# modash: source ./dep.sh -> dep.sh', content)
 
+    def test_context_output_marks_disabled_sources_without_fake_path(self):
+        with ScriptProject() as project:
+            project.write("dep.sh", 'echo "dep body"\n')
+            project.write("guarded.sh", textwrap.dedent("""\
+                [[ -n "$GUARDED_SH" ]] && return
+                GUARDED_SH=1
+                source ./dep.sh
+                """))
+            project.write("main.sh", textwrap.dedent("""\
+                source ./guarded.sh
+                source ./guarded.sh
+                """))
+
+            output = project.compile("main.sh")
+            content = output.read_text()
+
+        self.assertIn("# modash: source ./dep.sh -> dep.sh", content)
+        self.assertIn("# modash: source ./dep.sh -> <skipped> (disabled: return)", content)
+        self.assertNotIn(f"# modash: source ./dep.sh -> {Path.cwd()}", content)
+
     def test_context_mode_is_not_runtime_parity_mode(self):
         with ScriptProject() as project:
             project.write("dep.sh", 'echo "dep body"\n')

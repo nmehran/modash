@@ -1,4 +1,4 @@
-# Source Supplements And Exact Helper Sources
+# Source Supplements
 
 ## Status
 
@@ -91,9 +91,8 @@ V1 intentionally rejects:
 Source commands in helper guards such as `if ! source "$@"; then` are lowered at
 the condition source site for the quoted all-positionals helper subset. Direct
 exact source-bearing conditions such as `if source ./dep.sh; then` are handled
-by the source-condition subset described in
-[Source-Relevant Control Flow Boundaries](source-control-flow-boundaries.md).
-Executable output must still contain no live unresolved source command.
+by the executable source-condition subset. Executable output must still contain
+no live unresolved source command.
 
 The V1 helper subset also models the common makepkg `source_safe` shopt restore
 shape:
@@ -129,8 +128,9 @@ arguments are exact strings passed to the sourced file. They do not make
 arbitrary dynamic dispatch safe.
 
 Retained source helpers that remain callable in generated executable output use
-same-scope dispatch lowering for the supported V1 subset. That contract is
-specified in [Retained Helper Dispatch](retained-helper-dispatch.md).
+same-scope dispatch lowering for the supported V1 subset. Unknown helper
+arguments still fail closed unless the supplement provides a finite allowed
+argument vector.
 
 ## Two-Pass Workflow
 

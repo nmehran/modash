@@ -19,6 +19,27 @@ class SourceRegressionTestCase(unittest.TestCase):
         self.assertEqual(resolve_variable_references("${MISSING:-}", context), "")
         self.assertEqual(resolve_variable_references("${MISSING-}", context), "")
 
+    def test_parameter_alternate_value_resolves_without_recursive_self_reference(self):
+        context = {
+            "vars": {
+                "VALUE": "loaded",
+                "1": "arg",
+            },
+            "current_directory": os.getcwd(),
+        }
+
+        self.assertEqual(resolve_variable_references("${VALUE:+$VALUE,}$1", context), "loaded,arg")
+        self.assertEqual(resolve_variable_references("${VALUE+set}", context), "set")
+        self.assertEqual(resolve_variable_references("${MISSING:+nope}", context), "")
+        self.assertEqual(
+            resolve_variable_references("${EMPTY+set}", {"vars": {"EMPTY": ""}, "current_directory": os.getcwd()}),
+            "set",
+        )
+        self.assertEqual(
+            resolve_variable_references("${EMPTY:+set}", {"vars": {"EMPTY": ""}, "current_directory": os.getcwd()}),
+            "",
+        )
+
     def test_get_commands_keeps_hash_inside_words_and_paths(self):
         self.assertEqual(
             list(get_commands('echo foo#bar; source dep.sh')),
@@ -83,7 +104,7 @@ class SourceRegressionTestCase(unittest.TestCase):
         )
 
     def test_command_wrapped_source_is_detected_as_source_command(self):
-        from methods.source_resolver import contains_nested_source_command, contains_source_command
+        from methods.source_resolver import contains_nested_source_command, contains_source_command, source_command_invocation
 
         self.assertTrue(contains_source_command('command source ./dep.sh'))
         self.assertTrue(contains_source_command('command -p source ./dep.sh'))
@@ -113,6 +134,19 @@ class SourceRegressionTestCase(unittest.TestCase):
         self.assertFalse(contains_nested_source_command('echo $((1 + 2))'))
         self.assertFalse(contains_nested_source_command('tokens=(source ./dep.sh)'))
         self.assertFalse(contains_nested_source_command('declare -a tokens=(source ./dep.sh)'))
+
+        invocation = source_command_invocation('command -p source ./dep.sh arg')
+        self.assertIsNotNone(invocation)
+        self.assertEqual(invocation.command_name, 'source')
+        self.assertEqual(invocation.source_expression, './dep.sh arg')
+        self.assertEqual(invocation.source_site, 'command -p source ./dep.sh arg')
+        self.assertTrue(invocation.wrapped)
+
+        invocation = source_command_invocation('builtin . ./dep.sh')
+        self.assertIsNotNone(invocation)
+        self.assertEqual(invocation.command_name, '.')
+        self.assertEqual(invocation.source_expression, './dep.sh')
+        self.assertEqual(invocation.source_site, 'builtin . ./dep.sh')
 
     def test_heredoc_detection_ignores_quotes_and_arithmetic(self):
         from methods.source_resolver import extract_heredoc_delimiters

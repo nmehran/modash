@@ -1,93 +1,87 @@
-# Runtime Source Discovery North Star
+# Runtime Source Discovery
 
-## Status
+Runtime source discovery is the explicit observe -> review -> supplement path
+for source dependencies that cannot be resolved statically.
 
-North-star design document. The trace foundation and supplement generation /
-replay milestones are implemented for `v0.4.0`; polished xtrace compatibility
-remains planned.
+Normal `modash` compile never executes the target script. Runtime discovery does
+execute it, so it is a separate command and produces review artifacts rather
+than silently changing compiler behavior.
 
-Runtime source discovery observes concrete runtime source behavior and turns that
-observation into reviewed declarative compiler input. It must not become a
-linter, a Bash interpreter, or a claim that one run proves all possible source
-paths.
+## Current Contract
 
-## Product Shape
+- Runtime tracing records concrete source behavior for one execution.
+- One observation is not proof of all branches.
+- Generated supplements are declarative exact JSON, not shell code.
+- `modash supplement` rejects stale observations before deriving compiler
+  input.
+- Executable compile remains deterministic and fail-closed.
+- Xtrace is currently a gap-detection sidecar, not a trusted source graph.
 
-The final product has three cooperating workflows:
-
-1. Static compile.
-   Resolve and merge everything that can be proven without executing shell code.
-2. Runtime observe.
-   Run the original script under an explicit controlled tracing command and
-   record which source paths Bash actually executed for that concrete run.
-3. Replay with supplement.
-   Convert reviewed observations into source supplements, then compile
-   deterministically with `--source-supplement`.
-
-The compiler remains deterministic. Runtime tracing produces input for the
-compiler; it does not silently change compiler semantics.
-
-## Intended User Flow
+## User Flow
 
 ```sh
-modash trace ./entry.sh --timeout 30 -- ./args
-# writes .modash/observations/<run-id>.json
-
-modash supplement ./entry.sh --from-observation .modash/observations/<run-id>.json --output source-supplement.json
-
+modash trace ./entry.sh --output observation.json --timeout 30 -- ./args
+modash supplement ./entry.sh --from-observation observation.json --output source-supplement.json
 modash ./entry.sh merged.sh --mode executable --source-supplement source-supplement.json
 ```
 
-The separation of observe, supplement, and compile should not change.
+The separation matters:
 
-## Core Contract
+1. `trace` runs the original program and records what happened.
+2. `supplement` turns reviewed observations into explicit compiler input.
+3. normal executable compile consumes only deterministic supplement data.
 
-- Runtime discovery records actual sourced paths for one concrete execution.
-- A trace observation is not proof of every possible source path.
-- Generated supplements are declarative exact data, not shell code.
-- The compiler still fails closed if a supplement is incomplete, stale,
-  inconsistent, or attempts to make unsupported behavior look safe.
-- Executable mode must continue to either produce accepted Bash-equivalent
-  output for the supported source graph or fail before writing output.
-- Context mode remains readable-first and must not silently reinterpret
-  observations as static facts.
+## Observation Schema
 
-## Observation Data
+Current observations use schema `3`. They record:
 
-An observation should record enough context to make the run understandable and
-replayable:
+- entrypoint, cwd, argv, Bash version, trace implementation version
+- environment policy and recorded overlay keys
+- traced Bash processes and parent linkage
+- source events in execution order
+- source call-site provenance
+- resolved source paths, source arguments, and source status
+- file fingerprints for the entrypoint, successful source files, and
+  file-backed call sites
 
-- schema version
-- entrypoint path
-- working directory
-- argv
-- Bash version
-- tracing implementation version
-- environment policy and recorded environment keys
-- source observations in execution order
-- source call site when known
-- resolved source path
-- source arguments when known
-- source status
-- timestamp or run id
+Schema validation rejects observations that omit required fingerprint roles.
+Fingerprint validation compares path, size, mtime, and SHA-256 before supplement
+generation.
 
-Example shape:
+Small example:
 
 ```json
 {
-  "version": 1,
+  "version": 3,
   "entrypoint": "/abs/project/entry.sh",
   "cwd": "/abs/project",
   "argv": ["--flag"],
   "bash": {
-    "version": "5.2.21"
+    "version": "GNU bash, version 5.2.21"
+  },
+  "trace": {
+    "version": "runtime-wrapper-v3"
   },
   "environment": {
-    "policy": "allowlist",
+    "policy": "overlay",
     "recorded_keys": ["MAKEPKG_LIBRARY"]
   },
+  "processes": [
+    {
+      "index": 0,
+      "pid": 12345,
+      "parent_index": null,
+      "parent_pid": 12300,
+      "entrypoint": "/abs/project/entry.sh",
+      "cwd": "/abs/project",
+      "argv": ["--flag"],
+      "command": "/abs/project/entry.sh"
+    }
+  ],
   "sources": [
     {
+      "index": 0,
+      "process_index": 0,
       "call_site": {
         "file": "/abs/project/entry.sh",
         "line": 12,
@@ -97,119 +91,75 @@ Example shape:
       "arguments": [],
       "status": 0
     }
+  ],
+  "files": [
+    {
+      "path": "/abs/project/entry.sh",
+      "size": 120,
+      "mtime_ns": 1710000000000000000,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "roles": ["entrypoint", "call-site"]
+    },
+    {
+      "path": "/abs/project/lib/util.sh",
+      "size": 80,
+      "mtime_ns": 1710000000000000001,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "roles": ["source"]
+    }
   ]
 }
 ```
 
-The schema should stay intentionally narrow until the trace parser has real
-corpus coverage.
+## Review Report
 
-## Architecture
+`modash supplement` also writes an observation review report. The report is a
+review aid, not compiler truth. It can show:
 
-The implementation should be split into small modules:
+- observed file-backed source sites
+- unobserved source-capable sites in fingerprinted files
+- child `bash -c` source provenance as process command text
+- summary counts for warnings and observed source events
 
-- `trace_runner`: executes Bash under explicit user request with controlled
-  tracing enabled.
-- `trace_parser`: converts trace output into structured observations.
-- `observation_schema`: validates observation JSON.
-- `supplement_generator`: converts observations into source supplement
-  candidates.
-- `supplement_validator`: checks that generated supplements are declarative,
-  exact, path-safe, and compatible with compiler expectations.
-- real-world integration: uses trace/observation/replay only after the core
-  workflow is proven synthetically.
-
-The trace parser must treat trace text as data. It must not eval, source, or
-execute trace-derived content.
+Same-line multi-source coverage is still line-level. If every static source site
+on a line produced an observed event, the report treats the line as covered.
+Partial same-line execution remains review-only ambiguous until source event
+provenance records columns or stronger command identity.
 
 ## Safety Model
 
-Tracing runs the target program. That must be explicit.
+- Tracing runs the target program and must be requested explicitly.
+- Trace execution has a timeout.
+- Trace stdout/stderr are forwarded, while trace data is written to artifacts.
+- Trace artifacts are data; `modash` does not eval, source, or execute
+  trace-derived content.
+- Generated supplements should be reviewed before use.
+- Automatic compile from an unreviewed observation is out of scope.
 
-- No runtime tracing happens during normal compile.
-- `trace` should warn or document clearly that the target script executes.
-- The user must provide or accept cwd and argv explicitly.
-- Trace execution should have an explicit timeout.
-- Environment capture should default to an allowlist model.
-- Trace output should be written to a predictable artifact path, not mixed into
-  compiler output.
-- Observed paths should be normalized and validated before supplement
-  generation.
-- Auto-compiling directly from an unreviewed trace is out of scope until the
-  supplement workflow is mature.
+## Implemented Runtime Coverage
 
-## Supplement Semantics
+- direct `source` and dot-source observations
+- `builtin source`, `builtin .`, `command source`, and `command .`
+- source arguments and failed source status
+- cwd-sensitive source resolution
+- makepkg-style helper calls such as `source_safe "$@"`
+- child Bash process propagation and parent/child process provenance
+- xtrace sidecar detection for source-like commands that bypass wrappers
+- schema `3` file fingerprints and stale observation rejection
+- review reports for unobserved source-capable file-backed sites
+- real-world replay probes against pinned pacman fixtures
 
-Runtime observations should feed the existing source supplement direction:
+## Remaining Runtime Roadmap
 
-- relative supplement values resolve from the entrypoint directory
-- script assignments override supplement variables
-- supplement variables override process environment
-- function entries define finite allowed source-path argument vectors
-- values remain exact strings, not shell code
+The next major boundary is trusted xtrace graph construction. Before that,
+useful smaller steps are:
 
-Observation-to-supplement generation should prefer the smallest supplement that
-explains the observed run. It should not generate broad wildcards or inferred
-runtime rules from one execution.
+- richer source event identity, including source columns or command ordinals
+- persisted sanitized xtrace provenance for review
+- clearer environment/run metadata for reproducibility
+- supplement generation for a broader but still finite set of runtime-dynamic
+  source helpers
 
-## Acceptance Milestones
-
-### v0.3.0: Trace Foundation
-
-Detailed iteration spec:
-[Runtime Source Discovery Foundation](runtime-source-discovery-foundation.md).
-
-- Add an explicit trace command or internal API.
-- Record observation JSON for direct `source`, dot source, function helpers,
-  cwd changes, source arguments, and failed source statuses.
-- Add synthetic tests for trace parsing and observation schema validation.
-- Keep supplement generation experimental or manual.
-- Do not integrate tracing into normal compile.
-
-### v0.4.0: Supplement Generation And Replay
-
-Detailed iteration spec:
-[Runtime Supplement Generation And Replay](runtime-supplement-generation.md).
-
-- Generate source supplement candidates from observations.
-- Validate generated supplements before compile.
-- Add a two-pass workflow: observe, generate/review supplement, compile.
-- Add one real-world dynamic-source fixture that succeeds only with the
-  generated supplement.
-
-### v0.5.0: Polished Xtrace Compatibility
-
-- Stabilize CLI/API names.
-- Harden environment/cwd/argv reproducibility.
-- Improve diagnostics for stale or incomplete observations.
-- Promote runtime discovery into the real-world suite.
-- Document limitations and safety behavior as user-facing contract.
-
-## Non-Goals
-
-Runtime discovery should not claim to:
-
-- prove all branches
-- lint shell scripts
-- validate project behavior
-- replace Bash semantics
-- accept arbitrary `eval` as safe static fact
-- compile from unreviewed observations as if they were static proof
-- make unsupported parser or evaluator behavior disappear
-
-The `v0.3.0` foundation uses an explicit Bash prelude to wrap `source` and
-dot-source in the traced shell. That is intentionally narrower than full xtrace
-compatibility: `builtin source`, wrapper removal, and child Bash processes are
-not treated as complete coverage until later runtime-discovery tranches.
-
-## Relationship To Static Resolution
-
-Runtime discovery does not replace static resolution. It complements it:
-
-- static resolution handles provable source graphs without execution
-- runtime observation helps users capture concrete paths that are genuinely
-  runtime-dependent
-- supplements make those observed paths explicit and deterministic
-- compile remains fail-closed when the resulting graph cannot be made exact
-
-This boundary is the north star for the runtime discovery roadmap.
+Do not frame runtime discovery as solving arbitrary Bash semantics. The compiler
+still needs a deterministic, reviewable source graph before it can merge scripts
+safely.

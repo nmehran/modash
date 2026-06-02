@@ -32,6 +32,7 @@ from methods.source_resolver import (
     is_source_expansion_failure_replacement_kind,
     missing_source_status,
     parse_shell_words_preserving_quotes,
+    source_command_invocation,
     strip_shell_word_quotes,
 )
 from methods.source_supplements import load_source_supplement
@@ -76,6 +77,9 @@ def shell_quote_words(words):
 
 
 def source_command_name(source_site: str):
+    invocation = source_command_invocation(source_site.strip())
+    if invocation is not None:
+        return invocation.command_name
     try:
         words = parse_shell_words_preserving_quotes(source_site.strip())
     except UnsupportedSourceError:
@@ -156,15 +160,29 @@ def format_context_path(filepath: str, entry_point: str):
 
 
 def construct_context_source_comment(source_declaration, entry_point: str):
+    source_site_text = source_declaration.source_site.strip()
+    direct_source_label = f"source {source_declaration.source_expression.strip()}"
+    invocation = source_command_invocation(source_site_text)
+    first_source_site_word = source_site_text.split(None, 1)[0] if source_site_text else ""
+    is_wrapped_source_invocation = (
+        invocation is not None
+        and invocation.wrapped
+        and invocation.command_name in {"source", "."}
+        and first_source_site_word in {"builtin", "command"}
+    )
     if source_declaration.execution_model == "parent-source":
-        source_label = f"source {source_declaration.source_expression.strip()}"
+        source_label = source_site_text if is_wrapped_source_invocation else direct_source_label
         suffix = ""
     else:
-        source_label = source_declaration.source_site.strip()
+        source_label = source_site_text
         suffix = f" ({source_declaration.execution_model})"
 
     if source_declaration.source_arguments:
         suffix = f"{suffix} (args: {shell_quote_words(source_declaration.source_arguments)})"
+
+    if source_declaration.replacement_kind.startswith("noop-"):
+        condition = f": {source_declaration.condition}" if source_declaration.condition else ""
+        return f"# modash: {source_label} -> <skipped>{suffix} (disabled{condition})"
 
     if source_declaration.occurrence_model in {"conditional", "mutually-exclusive"}:
         condition = f": {source_declaration.condition}" if source_declaration.condition else ""

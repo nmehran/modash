@@ -10,10 +10,15 @@ from methods.runtime_source_trace import (
     trace_sources,
     write_trace_observation,
 )
-from methods.runtime_source_observations import RuntimeSourceObservationError
+from methods.runtime_source_observations import RuntimeSourceObservationError, load_observation
+from methods.runtime_observation_reports import (
+    RuntimeObservationReportError,
+    build_observation_report,
+    write_observation_report,
+)
 from methods.runtime_source_supplements import (
     RuntimeSupplementGenerationError,
-    generate_source_supplement_from_observation_file,
+    generate_source_supplement,
     write_generated_supplement,
 )
 from methods.source_resolver import UnsupportedSourceError
@@ -45,10 +50,18 @@ def trace_main(
     return result.returncode
 
 
-def supplement_main(entrypoint, *, observation, output):
-    supplement = generate_source_supplement_from_observation_file(entrypoint, observation)
+def supplement_main(entrypoint, *, observation, output, report=None):
+    observation_payload = load_observation(observation)
+    supplement = generate_source_supplement(entrypoint, observation_payload)
+    report_payload = build_observation_report(
+        entrypoint,
+        observation_payload,
+        validate_fingerprints=False,
+    )
     supplement_path = write_generated_supplement(supplement, output)
+    report_path = write_observation_report(report_payload, report or f"{supplement_path}.report.json")
     print(f"modash: source supplement: {supplement_path.resolve(strict=False)}", file=sys.stderr)
+    print(f"modash: observation review report: {report_path.resolve(strict=False)}", file=sys.stderr)
 
 
 def parse_env_overlay(values):
@@ -133,8 +146,12 @@ def supplement_cli(argv):
         required=True,
         help='Source supplement JSON file to write.',
     )
+    parser.add_argument(
+        '--report',
+        help='Observation review report JSON file to write. Defaults to OUTPUT.report.json.',
+    )
     args = parser.parse_args(argv)
-    supplement_main(args.entrypoint, observation=args.from_observation, output=args.output)
+    supplement_main(args.entrypoint, observation=args.from_observation, output=args.output, report=args.report)
 
 
 def cli_main(argv=None):
@@ -150,7 +167,7 @@ def cli_main(argv=None):
     if len(argv) > 0 and argv[0] == "supplement":
         try:
             supplement_cli(argv[1:])
-        except (RuntimeSupplementGenerationError, RuntimeSourceObservationError) as exc:
+        except (RuntimeSupplementGenerationError, RuntimeObservationReportError, RuntimeSourceObservationError) as exc:
             print(f"modash: {exc}", file=sys.stderr)
             return 1
         return 0

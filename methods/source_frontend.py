@@ -34,6 +34,7 @@ from methods.source_resolver import (
     is_heredoc_end,
     parse_shell_words,
     parse_shell_words_preserving_quotes,
+    source_command_invocation,
     strip_shell_word_quotes,
     starts_unsupported_control_block,
     source_command_index,
@@ -1470,12 +1471,20 @@ class LineParserFrontend:
     @staticmethod
     def _fallback_source_site(script_path: Path, line_number: int, line: str, command: str,
                               control_flow_source_ranges):
-        words = command.split()
-        source_index = source_command_index(command)
-        command_name = words[source_index] if source_index is not None and source_index < len(words) else "source"
+        invocation = source_command_invocation(command)
+        if invocation is None:
+            words = command.split()
+            source_index = source_command_index(command)
+            command_name = words[source_index] if source_index is not None and source_index < len(words) else "source"
+            source_offset = command.find(command_name)
+            expression = command[source_offset + len(command_name):].strip() if source_offset >= 0 else ""
+            source_site = f"{command_name} {expression}".strip()
+        else:
+            command_name = invocation.command_name
+            source_offset = invocation.source_site_column_offset
+            expression = invocation.source_expression
+            source_site = invocation.source_site
         command_offset = line.find(command)
-        source_offset = command.find(command_name)
-        expression = command[source_offset + len(command_name):].strip() if source_offset >= 0 else ""
         column = command_offset + source_offset + 1 if command_offset >= 0 and source_offset >= 0 else 1
         is_control_flow = LineParserFrontend._column_in_ranges(max(column, 1), control_flow_source_ranges)
 
@@ -1484,6 +1493,7 @@ class LineParserFrontend:
             text=command,
             command_name=command_name,
             source_expression=expression,
+            source_site=source_site,
             is_control_flow=is_control_flow,
         )
 
