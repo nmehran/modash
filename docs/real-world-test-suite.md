@@ -542,3 +542,31 @@ mkinitcpio fixtures. The 0.6 coverage matrix includes runtime-selected Git
 helper-name replay and recursive mkinitcpio hook dispatch through finite
 trusted graphs. Broader ambiguous helper arrays and unreviewable dynamic call
 graphs remain deferred.
+
+## Synthetic Counterparts
+
+Every promoted real-world lesson should have a named synthetic counterpart so
+the fast unit suite preserves the product behavior even when the pinned corpus
+is not running. The current catalog lives in
+`test/test_realworld_pattern_catalog.py`.
+
+| Real-world lesson | Synthetic counterpart |
+| --- | --- |
+| bash-completion `shopt -q` guarded command definitions | `test_bash_completion_shopt_guarded_command_definition_matches_bash` |
+| bash-completion runtime completion loader | `test_completion_runtime_loader_graph_replays_observed_completion_files` |
+| makepkg `source_safe "$@"` helper with shell-option restore | `test_makepkg_source_safe_quoted_at_with_shopt_restore_matches_bash` |
+| makepkg library-prefix supplement replay | `test_makepkg_library_prefix_supplement_replays_observed_source_safe` |
+| wrapped `builtin` / `command` source invocation forms | `test_wrapped_source_invocation_forms_match_bash` |
+| direct glob source arguments | `test_direct_glob_source_arguments_match_bash` |
+| runtime state, cwd, return, and short-circuit parity | `test_runtime_state_cwd_return_and_short_circuit_patterns_match_bash` |
+| explicit source-argument frame restoration | `test_source_argument_frame_restoration_matches_bash` |
+| child-shell source state isolation | `test_child_shell_source_context_preserves_parent_state` |
+| runtime-guarded `if` and `case` source lowering | `test_runtime_guarded_if_and_case_sources_match_bash` |
+| compound source conditions and fallback branches | `test_compound_source_condition_and_fallback_match_bash` |
+| practical extglob, GLOBIGNORE, and case pattern semantics | `test_pattern_semantics_for_extglob_globignore_and_case_match_bash` |
+| unobserved runtime branch coverage warnings | `test_coverage_report_tracks_unobserved_runtime_branch` |
+| Git-style plugin module loader | `test_git_plugin_module_loader_graph_replays_runtime_env_path` |
+| Git-style child Bash command-string source | `test_git_child_bash_command_string_graph_replays_positional_source` |
+| Git-style runtime-selected helper name | `test_git_runtime_selected_helper_name_graph_replays_observed_edges` |
+| mkinitcpio runtime hook dispatch | `test_mkinitcpio_runtime_hook_dispatch_graph_replays_observed_hooks` |
+| mkinitcpio recursive hook dispatch | `test_mkinitcpio_recursive_hook_dispatch_graph_replays_observed_hooks` |
