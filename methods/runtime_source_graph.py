@@ -12,7 +12,8 @@ from methods.runtime_source_observations import (
     RuntimeRunInfo,
     RuntimeSourceObservation,
     RuntimeSourceObservationError,
-    current_fingerprint_mismatch,
+    current_fingerprint_mismatch_details,
+    format_fingerprint_mismatch,
     load_observation,
     validate_observation,
 )
@@ -287,6 +288,7 @@ def validate_observed_source_graph(data):
     _validate_summary(summary, nodes, edges, process_nodes)
 
     xtrace_indexes = []
+    source_identities = set()
     referenced_process_command_nodes = set()
     referenced_missing_source_nodes = set()
     for expected_index, edge in enumerate(edges):
@@ -301,6 +303,9 @@ def validate_observed_source_graph(data):
         process_index = _nonnegative_int(edge.get("process_index"), "edges[].process_index")
         if process_index not in process_nodes:
             raise RuntimeSourceGraphError("edges[].process_index must reference an existing process node")
+        if source_identity in source_identities:
+            raise RuntimeSourceGraphError("edges[].source_identity values must be unique")
+        source_identities.add(source_identity)
         resolved_path = _absolute_path(edge.get("resolved_path"), "edges[].resolved_path")
         status = _nonnegative_int(edge.get("status"), "edges[].status")
         _string_list(edge.get("arguments"), "edges[].arguments")
@@ -328,10 +333,10 @@ def ensure_graph_fingerprints_current(graph):
     graph = validate_observed_source_graph(graph)
     for fingerprint_data in graph["files"]:
         fingerprint = RuntimeFileFingerprint.from_dict(fingerprint_data)
-        mismatch = current_fingerprint_mismatch(fingerprint)
+        mismatch = current_fingerprint_mismatch_details(fingerprint)
         if mismatch is not None:
             raise RuntimeSourceGraphError(
-                f"runtime source graph is stale for {fingerprint.path}: {mismatch} mismatch",
+                format_fingerprint_mismatch("runtime source graph", fingerprint, mismatch),
                 code="runtime.graph.stale_observation",
             )
     _ensure_missing_source_edges_still_missing(graph)
@@ -555,7 +560,9 @@ def _ensure_missing_source_edges_still_missing(graph):
             continue
         if Path(edge["resolved_path"]).is_file():
             raise RuntimeSourceGraphError(
-                f"runtime source graph is stale for {edge['resolved_path']}: source_presence mismatch",
+                "runtime source graph is stale for "
+                f"{edge['resolved_path']}: source_presence mismatch; "
+                "expected absent missing-source edge target; current file exists",
                 code="runtime.graph.stale_observation",
             )
 
@@ -624,10 +631,10 @@ def _ensure_graph_entrypoint(entrypoint_path: Path, observation: RuntimeSourceOb
 
 def _ensure_fingerprints_current(observation: RuntimeSourceObservation):
     for fingerprint in observation.files:
-        mismatch = current_fingerprint_mismatch(fingerprint)
+        mismatch = current_fingerprint_mismatch_details(fingerprint)
         if mismatch is not None:
             raise RuntimeSourceGraphError(
-                f"runtime source observation is stale for {fingerprint.path}: {mismatch} mismatch",
+                format_fingerprint_mismatch("runtime source observation", fingerprint, mismatch),
                 code="runtime.graph.stale_observation",
             )
 

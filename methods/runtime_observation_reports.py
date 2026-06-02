@@ -7,7 +7,8 @@ from pathlib import Path
 from methods.runtime_source_observations import (
     RuntimeSourceObservation,
     RuntimeSourceObservationError,
-    current_fingerprint_mismatch,
+    current_fingerprint_mismatch_details,
+    format_fingerprint_mismatch,
     load_observation,
     validate_observation,
 )
@@ -87,10 +88,10 @@ def _ensure_report_entrypoint(entrypoint_path: Path, observation: RuntimeSourceO
 
 def _ensure_fingerprints_current(observation: RuntimeSourceObservation):
     for fingerprint in observation.files:
-        mismatch = current_fingerprint_mismatch(fingerprint)
+        mismatch = current_fingerprint_mismatch_details(fingerprint)
         if mismatch is not None:
             raise RuntimeObservationReportError(
-                f"runtime source observation is stale for {fingerprint.path}: {mismatch} mismatch",
+                format_fingerprint_mismatch("runtime source observation", fingerprint, mismatch),
                 code="runtime.report.stale_observation",
             )
 

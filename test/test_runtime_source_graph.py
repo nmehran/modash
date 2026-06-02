@@ -104,6 +104,56 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
                 build_observed_source_graph(entrypoint, observation)
 
         self.assertEqual(context.exception.code, "runtime.graph.stale_observation")
+        self.assertIn("roles=source", str(context.exception))
+        self.assertIn("expected", str(context.exception))
+        self.assertIn("current", str(context.exception))
+
+    def test_rejects_stale_entrypoint_with_fingerprint_details(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "echo main\n")
+            observation = project.trace("main.sh").observation
+
+            entrypoint.write_text("echo changed\n", encoding="utf-8")
+
+            with self.assertRaises(RuntimeSourceGraphError) as context:
+                build_observed_source_graph(entrypoint, observation)
+
+        self.assertEqual(context.exception.code, "runtime.graph.stale_observation")
+        self.assertIn("roles=entrypoint", str(context.exception))
+        self.assertIn("expected", str(context.exception))
+        self.assertIn("current", str(context.exception))
+
+    def test_rejects_stale_call_site_only_file_with_fingerprint_details(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "bash ./child.sh\n")
+            child = project.write("child.sh", "source ./dep.sh\n")
+            project.write("dep.sh", "echo dep\n")
+            observation = project.trace("main.sh").observation
+
+            child.write_text("source ./dep.sh\n# changed\n", encoding="utf-8")
+
+            with self.assertRaises(RuntimeSourceGraphError) as context:
+                build_observed_source_graph(entrypoint, observation)
+
+        self.assertEqual(context.exception.code, "runtime.graph.stale_observation")
+        self.assertIn("roles=call-site", str(context.exception))
+        self.assertIn("expected", str(context.exception))
+        self.assertIn("current", str(context.exception))
+
+    def test_rejects_missing_source_file_with_fingerprint_details(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./dep.sh\n")
+            dependency = project.write("dep.sh", "echo dep\n")
+            observation = project.trace("main.sh").observation
+
+            dependency.unlink()
+
+            with self.assertRaises(RuntimeSourceGraphError) as context:
+                build_observed_source_graph(entrypoint, observation)
+
+        self.assertEqual(context.exception.code, "runtime.graph.stale_observation")
+        self.assertIn("roles=source", str(context.exception))
+        self.assertIn("file is missing", str(context.exception))
 
     def test_rejects_source_events_without_trusted_xtrace_links(self):
         with ScriptProject() as project:
@@ -213,6 +263,16 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
             validate_observed_source_graph(graph)
 
         self.assertIn("source_identity must match", str(context.exception))
+
+    def test_validate_graph_rejects_duplicate_source_identity_tampering(self):
+        graph = self._two_source_graph()
+        graph["edges"][1]["source_identity"] = graph["edges"][0]["source_identity"]
+        graph["edges"][1]["xtrace"]["source_identity"] = graph["edges"][0]["source_identity"]
+
+        with self.assertRaises(RuntimeSourceGraphError) as context:
+            validate_observed_source_graph(graph)
+
+        self.assertIn("source_identity values must be unique", str(context.exception))
 
     def test_validate_graph_rejects_missing_source_target_tampering(self):
         graph = self._missing_source_graph()
@@ -324,6 +384,14 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
     def _missing_source_graph(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", 'source ./missing.sh\nprintf "after\\n"\n')
+            graph = build_observed_source_graph(entrypoint, project.trace("main.sh").observation)
+        return copy.deepcopy(graph)
+
+    def _two_source_graph(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./one.sh\nsource ./two.sh\n")
+            project.write("one.sh", "echo one\n")
+            project.write("two.sh", "echo two\n")
             graph = build_observed_source_graph(entrypoint, project.trace("main.sh").observation)
         return copy.deepcopy(graph)
 

@@ -20,6 +20,9 @@
 
 - Runtime source graphs now validate process, node, edge, file fingerprint, and
   xtrace invariants before graph replay.
+- Runtime graph/report/supplement stale diagnostics now show the fingerprinted
+  file role plus expected and current fingerprint fields.
+- Runtime source graphs now reject duplicate source identities before replay.
 - Runtime observations now fingerprint file-backed source files even when the
   source command returns non-zero.
 - Runtime tracing now reconciles wrapper and xtrace source events by observed

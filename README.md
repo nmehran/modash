@@ -95,8 +95,10 @@ key names, and file fingerprints for stale-observation detection.
 `modash graph` validates a trace observation and writes a trusted runtime source
 graph. Graph edges link wrapper-observed source events to sanitized xtrace
 provenance and fail closed if that trust link is missing, stale, or inconsistent
-with the graph's process, file, edge, and fingerprint invariants. It also writes
-a compact text review report beside the graph by default.
+with the graph's process, file, edge, source identity, and fingerprint
+invariants. Stale diagnostics name the file role and expected/current
+fingerprint fields. It also writes a compact text review report beside the graph
+by default.
 
 `modash supplement` writes:
 

@@ -165,11 +165,13 @@ The graph is still data, not executable shell code. It contains:
 - the file fingerprints needed for stale graph rejection
 
 Graph construction fails closed when source events lack xtrace provenance, when
-the observation is stale, or when graph references are malformed. Graph loading
-also validates process, node, edge, fingerprint, and xtrace invariants so a
-hand-edited graph cannot weaken the observed trust relationship without being
-rejected. A graph is a trusted representation of one observed execution, not
-proof that every branch was exercised.
+the observation is stale, or when graph references are malformed. Stale-file
+diagnostics name the fingerprint role and show expected/current fields so the
+reviewer can see whether an entrypoint, call-site file, or source file changed.
+Graph loading also validates process, node, edge, fingerprint, source identity,
+and xtrace invariants so a hand-edited graph cannot weaken the observed trust
+relationship without being rejected. A graph is a trusted representation of one
+observed execution, not proof that every branch was exercised.
 
 `modash graph` writes a text report beside the graph by default:
 

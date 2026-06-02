@@ -580,20 +580,59 @@ def fingerprint_file(path: str | os.PathLike, roles):
 
 
 def current_fingerprint_mismatch(fingerprint: RuntimeFileFingerprint):
+    details = current_fingerprint_mismatch_details(fingerprint)
+    return None if details is None else details["field"]
+
+
+def current_fingerprint_mismatch_details(fingerprint: RuntimeFileFingerprint):
     if not isinstance(fingerprint, RuntimeFileFingerprint):
         raise _schema_error("fingerprint must be a RuntimeFileFingerprint")
     path = Path(fingerprint.path)
     try:
         current = fingerprint_file(path, fingerprint.roles)
     except RuntimeSourceObservationError:
-        return "missing"
+        return {
+            "field": "missing",
+            "expected": fingerprint.to_dict(),
+            "current": None,
+        }
     if current.size != fingerprint.size:
-        return "size"
+        return _fingerprint_field_mismatch("size", fingerprint, current)
     if current.mtime_ns != fingerprint.mtime_ns:
-        return "mtime_ns"
+        return _fingerprint_field_mismatch("mtime_ns", fingerprint, current)
     if current.sha256 != fingerprint.sha256:
-        return "sha256"
+        return _fingerprint_field_mismatch("sha256", fingerprint, current)
     return None
+
+
+def format_fingerprint_mismatch(subject: str, fingerprint: RuntimeFileFingerprint, details=None):
+    details = details or current_fingerprint_mismatch_details(fingerprint)
+    if details is None:
+        return f"{subject} is current for {fingerprint.path}"
+    role_text = ",".join(fingerprint.roles)
+    field = details["field"]
+    if field == "missing":
+        return (
+            f"{subject} is stale for {fingerprint.path} "
+            f"(roles={role_text}): file is missing; "
+            f"expected size={fingerprint.size} "
+            f"mtime_ns={fingerprint.mtime_ns} "
+            f"sha256={fingerprint.sha256}"
+        )
+    return (
+        f"{subject} is stale for {fingerprint.path} "
+        f"(roles={role_text}): {field} mismatch; "
+        f"expected {field}={details['expected'][field]}; "
+        f"current {field}={details['current'][field]}"
+    )
+
+
+def _fingerprint_field_mismatch(field: str, expected: RuntimeFileFingerprint, current: RuntimeFileFingerprint):
+    return {
+        "field": field,
+        "expected": expected.to_dict(),
+        "current": current.to_dict(),
+    }
 
 
 def _validate_fingerprint_coverage(entrypoint: str, processes, sources, files):
