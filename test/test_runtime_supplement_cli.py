@@ -330,6 +330,91 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
         self.assertEqual(run_result.returncode, 0, run_result.stderr)
         self.assertEqual(run_result.stdout, "dep\nmain\n")
 
+    def test_compile_observed_cli_replays_repeated_dynamic_call_site_edges_in_order(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'msg() {',
+                    '    printf "msg:%s\\n" "$*"',
+                    '}',
+                    'run_hooks() {',
+                    '    local hook fn=$1 desc=$2',
+                    '    shift 2',
+                    '    for hook in "$@"; do',
+                    '        [ -r "$HOOK_ROOT/$hook" ] || continue',
+                    '        unset "$fn"',
+                    '        . "$HOOK_ROOT/$hook"',
+                    '        type "$fn" >/dev/null || continue',
+                    '        msg ":: running $desc [$hook]"',
+                    '        "$fn"',
+                    '    done',
+                    '}',
+                    'run_hooks run_hook hook alpha.sh beta.sh missing.sh',
+                    "",
+                ]),
+            )
+            project.write("hooks/alpha.sh", 'run_hook() { printf "alpha\\n"; }\n')
+            project.write("hooks/beta.sh", 'run_hook() { printf "beta\\n"; }\n')
+            observation = trace_sources(entrypoint, env={"HOOK_ROOT": str(project.path("hooks"))})
+            observation_path = project.path("observation.json")
+            graph_path = project.path("runtime-graph.json")
+            output_path = project.path("compiled.sh")
+            write_trace_observation(observation, observation_path)
+
+            graph_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "graph",
+                    str(entrypoint),
+                    "--from-observation",
+                    str(observation_path),
+                    "--output",
+                    str(graph_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            compile_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "compile-observed",
+                    str(entrypoint),
+                    str(output_path),
+                    "--from-graph",
+                    str(graph_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            run_result = subprocess.run(
+                ["bash", str(output_path)],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env={**os.environ, "HOOK_ROOT": str(project.path("hooks"))},
+            )
+            graph = json.loads(graph_path.read_text())
+
+        self.assertEqual(graph_result.returncode, 0, graph_result.stderr)
+        self.assertEqual(compile_result.returncode, 0, compile_result.stderr)
+        self.assertEqual([Path(edge["resolved_path"]).name for edge in graph["edges"]], ["alpha.sh", "beta.sh"])
+        self.assertEqual(run_result.returncode, 0, run_result.stderr)
+        self.assertEqual(
+            run_result.stdout,
+            "msg::: running hook [alpha.sh]\n"
+            "alpha\n"
+            "msg::: running hook [beta.sh]\n"
+            "beta\n",
+        )
+
     def test_compile_observed_cli_rejects_stale_graph_before_output(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", 'source "$LIB_DIR/dep.sh"\n')

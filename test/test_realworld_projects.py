@@ -185,10 +185,10 @@ def validate_runtime_probe(project, entrypoint):
         return
     if not isinstance(runtime, dict):
         raise ValueError(f"real-world project {project['name']} runtime probe must be an object")
-    if runtime.get("expected") not in RUNTIME_EXPECTED_STATUSES:
+    if runtime.get("expected") is not None and runtime.get("expected") not in RUNTIME_EXPECTED_STATUSES:
         raise ValueError(f"real-world project {project['name']} runtime probe has invalid expected status")
     executable_expectation = entrypoint.get("modes", {}).get("executable", {})
-    if executable_expectation.get("expected") != "success":
+    if runtime.get("expected") is not None and executable_expectation.get("expected") != "success":
         raise ValueError(
             f"real-world project {project['name']} runtime probe requires executable success expectation"
         )
@@ -198,8 +198,13 @@ def validate_runtime_probe(project, entrypoint):
     candidate = Path(cwd)
     if candidate.is_absolute() or any(part == ".." for part in candidate.parts):
         raise ValueError(f"real-world project {project['name']} has unsafe runtime cwd")
+    validate_environment({"name": project["name"], "environment": runtime.get("environment", {})})
     for key in RUNTIME_PROBE_KEYS:
         validate_runtime_probe_spec(project, runtime, key)
+    if runtime.get("expected") is None and not any(key in runtime for key in RUNTIME_PROBE_KEYS):
+        raise ValueError(
+            f"real-world project {project['name']} runtime probe must declare parity or a runtime probe"
+        )
 
 
 def validate_runtime_probe_spec(project, runtime, key):
@@ -216,6 +221,21 @@ def validate_runtime_probe_spec(project, runtime, key):
         if not isinstance(minimum_warnings, int) or minimum_warnings < 0:
             raise ValueError(
                 f"real-world project {project['name']} runtime supplement minimum_warnings must be non-negative"
+            )
+    suffixes = spec.get("required_source_suffixes", [])
+    if not isinstance(suffixes, list):
+        raise ValueError(
+            f"real-world project {project['name']} runtime {key} required_source_suffixes must be a list"
+        )
+    for suffix in suffixes:
+        if not isinstance(suffix, str) or not suffix:
+            raise ValueError(
+                f"real-world project {project['name']} runtime {key} required_source_suffixes entries must be strings"
+            )
+        candidate = Path(suffix)
+        if candidate.is_absolute() or any(part == ".." for part in candidate.parts):
+            raise ValueError(
+                f"real-world project {project['name']} runtime {key} has unsafe required source suffix"
             )
 
 
@@ -783,8 +803,18 @@ def apply_fixture_files(project, root):
 
 
 def project_environment(project, root):
+    return environment_values(project.get("environment", {}), root)
+
+
+def runtime_environment(project, root, runtime):
+    environment = project_environment(project, root)
+    environment.update(environment_values(runtime.get("environment", {}), root))
+    return environment
+
+
+def environment_values(values, root):
     environment = {}
-    for name, value in project.get("environment", {}).items():
+    for name, value in values.items():
         environment[name] = value.replace("{root}", str(root))
     return environment
 
@@ -832,6 +862,21 @@ def minimum_probe_events(spec):
 
 def minimum_probe_warnings(spec):
     return spec.get("minimum_warnings", 0)
+
+
+def required_probe_source_suffixes(spec):
+    return tuple(spec.get("required_source_suffixes", ()))
+
+
+def source_suffixes_match(record, spec):
+    source_paths = [
+        str(path).replace(os.sep, "/")
+        for path in record.get("source_paths", [])
+    ]
+    return all(
+        any(path.endswith(suffix) for path in source_paths)
+        for suffix in required_probe_source_suffixes(spec)
+    )
 
 
 def normalize_record_paths(record, root):
@@ -1229,7 +1274,7 @@ def run_runtime_supplement_replay_probe(
             **compile_result,
         }
 
-    compiled = run_runtime_command(compiled_path, cwd, {}, timeout_seconds)
+    compiled = run_runtime_command(compiled_path, cwd, trace_environment, timeout_seconds)
     if compiled["status"] == "timeout":
         status = "timeout"
     else:
@@ -1314,7 +1359,7 @@ def run_runtime_graph_replay_probe(
             },
         }
 
-    compiled = run_runtime_command(compiled_path, cwd, {}, timeout_seconds)
+    compiled = run_runtime_command(compiled_path, cwd, trace_environment, timeout_seconds)
     if compiled["status"] == "timeout":
         status = "timeout"
     else:
@@ -1399,28 +1444,39 @@ def run_runtime_observe_compile_probe(
             },
         }
 
-    compiled = run_runtime_command(compiled_path, cwd, {}, timeout_seconds)
-    if compiled["status"] == "timeout":
+    original = run_runtime_command(entrypoint_path, cwd, trace_environment, timeout_seconds)
+    compiled = run_runtime_command(compiled_path, cwd, trace_environment, timeout_seconds)
+    if original["status"] == "timeout":
+        status = "timeout"
+    elif compiled["status"] == "timeout":
         status = "timeout"
     else:
         matched = (
-            trace_returncode == compiled["returncode"]
-            and stdout.getvalue() == compiled["stdout"]
+            trace_returncode == original["returncode"]
+            and stdout.getvalue() == original["stdout"]
+            and original["returncode"] == compiled["returncode"]
+            and original["stdout"] == compiled["stdout"]
+            and original["stderr"] == compiled["stderr"]
         )
         status = "match" if matched else "mismatch"
 
     try:
-        graph_edges = len(json.loads(graph_path.read_text(encoding="utf-8"))["edges"])
+        graph_payload = json.loads(graph_path.read_text(encoding="utf-8"))
+        graph_edges = len(graph_payload["edges"])
+        source_paths = [edge["resolved_path"] for edge in graph_payload["edges"]]
     except Exception:
         graph_edges = None
+        source_paths = []
 
     return {
         "status": status,
         "duration_seconds": elapsed_seconds(started_at),
         "graph_edges": graph_edges,
+        "source_paths": source_paths,
         "trace_returncode": trace_returncode,
         "trace_stdout": stdout.getvalue(),
         "trace_stderr": stderr.getvalue(),
+        "original": original,
         "compiled": compiled,
         "observation_path": str(observation_path),
         "runtime_graph": str(graph_path),
@@ -1709,12 +1765,12 @@ class RealWorldProjectTestCase(unittest.TestCase):
             if root is None:
                 continue
 
-            environment = project_environment(project, root)
             for entrypoint in project["entrypoints"]:
                 runtime = entrypoint.get("runtime")
-                if runtime is None:
+                if runtime is None or runtime.get("expected") is None:
                     continue
 
+                environment = runtime_environment(project, root, runtime)
                 entrypoint_path = root / entrypoint["path"]
                 expectation = mode_expectation(entrypoint, "executable")
                 source_supplement = materialize_source_supplement(project, root, expectation)
@@ -1805,8 +1861,8 @@ class RealWorldProjectTestCase(unittest.TestCase):
             if root is None:
                 continue
 
-            environment = project_environment(project, root)
             for entrypoint, runtime, spec in runtime_probe_entries(project, "trace"):
+                environment = runtime_environment(project, root, runtime)
                 entrypoint_path = root / entrypoint["path"]
                 output_path = trace_artifact_path(project, entrypoint["path"])
                 remove_output_artifact(output_path)
@@ -1835,6 +1891,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                 record["matched_expectation"] = (
                     record["status"] == "success"
                     and record.get("source_events", 0) >= minimum_probe_events(spec)
+                    and source_suffixes_match(record, spec)
                     and "MODASH_SOURCE_EVENT" not in record.get("stdout", "")
                     and "MODASH_SOURCE_EVENT" not in record.get("stderr", "")
                     and "MODASH_XTRACE" not in record.get("stdout", "")
@@ -1885,8 +1942,8 @@ class RealWorldProjectTestCase(unittest.TestCase):
             if root is None:
                 continue
 
-            trace_environment = project_environment(project, root)
             for entrypoint, runtime, spec in runtime_probe_entries(project, "supplement"):
+                trace_environment = runtime_environment(project, root, runtime)
                 entrypoint_path = root / entrypoint["path"]
                 observation_path = trace_artifact_path(project, entrypoint["path"])
                 supplement_path = generated_supplement_artifact_path(project, entrypoint["path"])
@@ -1925,6 +1982,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                     record["status"] == "match"
                     and record.get("source_events", 0) >= minimum_probe_events(spec)
                     and record.get("coverage_warnings", 0) >= minimum_probe_warnings(spec)
+                    and source_suffixes_match(record, spec)
                     and record.get("source_supplement") is not None
                     and record.get("review_report") is not None
                 )
@@ -1973,8 +2031,8 @@ class RealWorldProjectTestCase(unittest.TestCase):
             if root is None:
                 continue
 
-            trace_environment = project_environment(project, root)
             for entrypoint, runtime, spec in runtime_probe_entries(project, "graph"):
+                trace_environment = runtime_environment(project, root, runtime)
                 entrypoint_path = root / entrypoint["path"]
                 observation_path = trace_artifact_path(project, entrypoint["path"])
                 graph_path = graph_artifact_path(project, entrypoint["path"])
@@ -2013,6 +2071,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                     record["status"] == "match"
                     and record.get("source_events", 0) >= minimum_probe_events(spec)
                     and record.get("graph_edges", 0) >= minimum_probe_events(spec)
+                    and source_suffixes_match(record, spec)
                     and record.get("runtime_graph") is not None
                     and record.get("graph_review_report") is not None
                 )
@@ -2061,8 +2120,8 @@ class RealWorldProjectTestCase(unittest.TestCase):
             if root is None:
                 continue
 
-            trace_environment = project_environment(project, root)
             for entrypoint, runtime, spec in runtime_probe_entries(project, "observe_compile"):
+                trace_environment = runtime_environment(project, root, runtime)
                 entrypoint_path = root / entrypoint["path"]
                 observation_path = observe_compile_observation_artifact_path(project, entrypoint["path"])
                 graph_path = observe_compile_graph_artifact_path(project, entrypoint["path"])
@@ -2091,11 +2150,17 @@ class RealWorldProjectTestCase(unittest.TestCase):
                 for key in ("output_path", "observation_path", "runtime_graph", "graph_review_report"):
                     if record.get(key):
                         record[key] = Path(record[key]).relative_to(REPO_ROOT).as_posix()
+                if record.get("source_paths"):
+                    record["source_paths"] = [
+                        relative_to_root(source_path, root)
+                        for source_path in record["source_paths"]
+                    ]
                 record["expected_status"] = "match"
                 record["matched_expectation"] = (
                     record["status"] == "match"
                     and isinstance(record.get("graph_edges"), int)
                     and record["graph_edges"] >= minimum_probe_events(spec)
+                    and source_suffixes_match(record, spec)
                     and record.get("observation_path") is not None
                     and record.get("runtime_graph") is not None
                     and record.get("graph_review_report") is not None

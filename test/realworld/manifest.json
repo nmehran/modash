@@ -661,6 +661,10 @@
         {
           "source": "mkinitcpio/install-hooks-wrapper.sh",
           "path": ".modash-fixtures/install-hooks-wrapper.sh"
+        },
+        {
+          "source": "mkinitcpio/runtime-hook-dispatch-wrapper.sh",
+          "path": ".modash-fixtures/runtime-hook-dispatch-wrapper.sh"
         }
       ],
       "entrypoints": [
@@ -688,6 +692,48 @@
             },
             "observe_compile": {
               "minimum_events": 2
+            }
+          }
+        },
+        {
+          "path": ".modash-fixtures/runtime-hook-dispatch-wrapper.sh",
+          "modes": {
+            "context": {
+              "expected": "success"
+            },
+            "executable": {
+              "expected": "unsupported",
+              "diagnostic": {
+                "code": "unsupported.source.unresolved",
+                "fragment": ". \"$MODASH_MKINITCPIO_HOOK_ROOT/$hook\""
+              }
+            }
+          },
+          "runtime": {
+            "cwd": ".modash-fixtures",
+            "environment": {
+              "MODASH_MKINITCPIO_HOOK_ROOT": "{root}/hooks"
+            },
+            "trace": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "hooks/consolefont",
+                "hooks/keymap"
+              ]
+            },
+            "graph": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "hooks/consolefont",
+                "hooks/keymap"
+              ]
+            },
+            "observe_compile": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "hooks/consolefont",
+                "hooks/keymap"
+              ]
             }
           }
         }

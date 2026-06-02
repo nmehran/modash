@@ -231,6 +231,8 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - makepkg-style helper calls such as `source_safe "$@"`
 - finite helper-local source path aliases such as
   `local path=$1; shift; source "$path" "$@"`
+- repeated guarded runtime-selected source sites from a trusted graph, such as
+  a mkinitcpio-style `. "$root/$hook"` hook loop observed for a finite hook list
 - child Bash process propagation and parent/child process provenance
 - persisted xtrace provenance linked to wrapper-observed source events
 - schema `6` source identities, file fingerprints, and stale observation
@@ -242,7 +244,8 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - explicit self-supplemented executable compile from a trusted graph
 - explicit one-shot observe -> graph/report -> compile workflow
 - review reports for unobserved source-capable file-backed sites
-- real-world replay probes against pinned pacman and mkinitcpio fixtures
+- real-world replay probes against pinned pacman and mkinitcpio fixtures,
+  including mkinitcpio runtime hook-dispatch graph replay
 
 ## Remaining Runtime Roadmap
 

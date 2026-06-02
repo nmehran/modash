@@ -219,6 +219,7 @@ RETAINED_HELPER_POSITIONAL_SOURCE_EXPRESSIONS = QUOTED_ALL_POSITIONALS_SOURCE_EX
     '"$1"',
     '"${1}"',
 })
+SOURCE_OVERRIDE_EXHAUSTED = object()
 
 
 @dataclass
@@ -481,6 +482,7 @@ class SourceEvaluator:
         self.mode = mode
         self.source_supplement = source_supplement or empty_source_supplement()
         self.source_overrides = self._source_override_map(source_overrides)
+        self._source_override_indexes = Counter()
         self.events: list[SourceEvent] = []
         self.disabled_sources: list[DisabledSourceSite] = []
         self.line_replacements: list[LineReplacement] = []
@@ -507,6 +509,7 @@ class SourceEvaluator:
         self.line_replacements = []
         self.retained_helper_source_sites = []
         self._retained_helper_stack = []
+        self._source_override_indexes.clear()
         self._evaluate_file(entrypoint, state, ())
         self._ensure_retained_helpers_resolved()
         return EvaluationResult(
@@ -518,14 +521,15 @@ class SourceEvaluator:
 
     @staticmethod
     def _source_override_map(source_overrides):
-        return {
-            (
+        overrides = {}
+        for override in source_overrides or ():
+            key = (
                 Path(override.path).resolve(strict=False),
                 override.line,
                 override.command.strip(),
-            ): override
-            for override in source_overrides or ()
-        }
+            )
+            overrides.setdefault(key, []).append(override)
+        return {key: tuple(values) for key, values in overrides.items()}
 
     def _evaluate_file(
         self,
@@ -1774,6 +1778,10 @@ class SourceEvaluator:
         if self._raw_word_is_single_quoted(raw_word):
             return [word]
 
+        positional_words = self._expand_positional_loop_word(raw_word, state)
+        if positional_words is not None:
+            return positional_words
+
         if '$(' in word or '`' in word:
             return self._resolve_command_substitution_loop_word(word, raw_word, node, state)
 
@@ -1840,6 +1848,17 @@ class SourceEvaluator:
             return [resolved_word]
 
         return [word]
+
+    def _expand_positional_loop_word(self, raw_word: str, state: EvaluationState):
+        if raw_word in {'"$@"', '"${@}"'}:
+            if state.ambiguous_positionals:
+                return None
+            return list(state.positional_arguments)
+        if raw_word in {'"$*"', '"${*}"'}:
+            if state.ambiguous_positionals:
+                return None
+            return [self._joined_positionals(state)]
+        return None
 
     def _resolve_command_substitution_loop_word(self, word: str, raw_word: str, node, state: EvaluationState):
         if '`' in raw_word or '`' in word:
@@ -4317,6 +4336,12 @@ class SourceEvaluator:
         source_site = self._source_site_text(node)
         source_override = self._source_override_for_node(node)
 
+        if source_override is SOURCE_OVERRIDE_EXHAUSTED:
+            if state.loop_depth > 0:
+                state.last_status = 1
+                raise LoopContinueSignal()
+            source_override = None
+
         if source_override is not None:
             invocation = SourceInvocation(
                 ResolvedSource(
@@ -4455,11 +4480,19 @@ class SourceEvaluator:
         )
 
     def _source_override_for_node(self, node: SourceSite):
-        return self.source_overrides.get((
+        key = (
             node.location.path.resolve(strict=False),
             node.location.line,
             node.text.strip(),
-        ))
+        )
+        overrides = self.source_overrides.get(key)
+        if not overrides:
+            return None
+        index = self._source_override_indexes[key]
+        if index >= len(overrides):
+            return SOURCE_OVERRIDE_EXHAUSTED
+        self._source_override_indexes[key] += 1
+        return overrides[index]
 
     def _resolve_source_invocation(
         self,
@@ -5031,6 +5064,9 @@ class SourceEvaluator:
         if self._raw_command_skipped_by_known_status(node, state):
             return
 
+        if self._apply_local_declaration(node, state):
+            return
+
         if self._apply_function_call(node, state, stack):
             return
 
@@ -5120,6 +5156,55 @@ class SourceEvaluator:
             else:
                 source_status = self._evaluate_sourced_file(source_path, state, stack)
         state.last_status = source_status
+
+    def _apply_local_declaration(self, node: RawCommand, state: EvaluationState):
+        if state.function_body_depth <= 0 or not state.local_scopes:
+            return False
+        if contains_source_command(node.text) or contains_nested_source_command(node.text):
+            return False
+        try:
+            words = parse_shell_words_preserving_quotes(node.text.strip())
+        except UnsupportedSourceError:
+            return False
+        if not words or strip_shell_word_quotes(words[0]) != "local":
+            return False
+
+        for word in words[1:]:
+            if word.startswith("-"):
+                return False
+            if "=" in word:
+                name, value = word.split("=", 1)
+                if not re.fullmatch(r'[a-zA-Z_]\w*', name):
+                    return False
+                SourceEvaluator._capture_local_variable(name, state)
+                try:
+                    resolved = self._resolve_function_exact_word(
+                        value,
+                        node,
+                        state,
+                        "unsupported.source.local",
+                        "unsupported dynamic local declaration",
+                        "unsupported unresolved local declaration",
+                        "Local declarations must be exact for source-aware function evaluation.",
+                    )
+                except UnsupportedSourceError:
+                    state.variables.pop(name, None)
+                    state.runtime_variables.pop(name, None)
+                    state.ambiguous_variables.add(name)
+                else:
+                    state.variables[name] = resolved
+                    state.runtime_variables[name] = resolved
+                    state.ambiguous_variables.discard(name)
+            else:
+                name = strip_shell_word_quotes(word)
+                if not re.fullmatch(r'[a-zA-Z_]\w*', name):
+                    return False
+                SourceEvaluator._capture_local_variable(name, state)
+                state.variables.pop(name, None)
+                state.runtime_variables.pop(name, None)
+                state.ambiguous_variables.discard(name)
+        state.last_status = 0
+        return True
 
     def _apply_child_shell_sources(self, node: RawCommand, state: EvaluationState, stack: tuple[Path, ...]):
         try:
@@ -5756,7 +5841,12 @@ class SourceEvaluator:
                 "Recursive source effects need an explicit bounded recursion model.",
             )
 
-        arguments = self._resolve_function_arguments(function_name, words[index + 1:], node, state)
+        try:
+            arguments = self._resolve_function_arguments(function_name, words[index + 1:], node, state)
+        except UnsupportedSourceError:
+            if self.mode == "context" or not self._function_variants_may_source(variants):
+                return False
+            raise
         prefix_words = words[:index]
         if len(variants) == 1:
             self._apply_function_call_variant(
@@ -6294,6 +6384,9 @@ class SourceEvaluator:
             )
         if state.loop_depth <= 0:
             state.last_status = 1
+            return True
+        if node.separator in {"&&", "||"} and state.last_status is None:
+            state.last_status = 1 if node.separator == "&&" else 0
             return True
         if command == "break":
             raise LoopBreakSignal()

@@ -23,6 +23,9 @@
 - Added a pinned `mkinitcpio` real-world corpus fixture that promotes runtime
   parity, trace, supplement replay, trusted graph replay, and observe-compile
   against real install-hook source files.
+- Added a pinned `mkinitcpio` runtime hook-dispatch fixture that leaves static
+  executable mode fail-closed but requires trace, trusted graph replay, and
+  observe-compile to resolve guarded repeated runtime-selected real hook files.
 
 ### Changed
 
@@ -46,15 +49,21 @@
   fixtures and retains observation, graph, report, and compiled artifacts.
 - The opt-in real-world harness now drives trace, supplement, graph, and
   observe-compile probes from manifest-declared runtime expectations.
+- Runtime graph overrides now replay repeated observed source edges from the
+  same source call site in observed order.
+- The opt-in real-world harness can require specific observed source suffixes
+  for trace, graph, and observe-compile probes.
+- Observe-compile real-world probes now compare the compiled artifact against a
+  separate untraced original run, including exit status, stdout, and stderr.
 
 ### Validation
 
-- Full unit suite: `453` tests, `8` skipped.
+- Full unit suite: `454` tests, `8` skipped.
 - Opt-in real-world suite with runtime trace, supplement replay, runtime
   parity, trusted graph replay, and observe-compile gates: `11` tests,
-  covering `50` pinned compile records, `20` runtime parity records, `4`
-  trace records, `4` supplement replay records, `4` trusted graph replay
-  records, and `5` observe-compile records.
+  covering `52` pinned compile records, `20` runtime parity records, `5`
+  trace records, `4` supplement replay records, `5` trusted graph replay
+  records, and `6` observe-compile records.
 - PyPI distribution build: sdist and wheel passed `twine check`.
 
 ## v0.4.5 - 2026-06-02

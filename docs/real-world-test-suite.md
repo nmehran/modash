@@ -159,13 +159,17 @@ The first pinned project is `bash-completion` 2.16.0 from its upstream release
 archive. The second is `pacman` 7.1.0 from the upstream Arch Linux release
 archive, using makepkg library entrypoints with a real sourced shell library
 graph. The third is `mkinitcpio` 32 from the upstream Arch Linux release
-archive, using install-hook fixtures that source real project hook files.
+archive, using install-hook fixtures that source real project hook files and a
+controlled runtime hook-dispatch fixture that traces runtime-selected real hook
+files.
 Supplement-backed `libmakepkg` library entrypoints are pinned as context and
 executable success where retained `source_safe` definitions can be lowered
 through a reviewed finite supplement fixture. Harness-owned pacman and
 mkinitcpio wrapper fixtures exercise real helper/hook files and focused Bash
-semantics; those wrappers are pinned as success in both context and executable
-modes and have runtime parity probes.
+semantics. Most wrappers are pinned as success in both context and executable
+modes and have runtime parity probes. Runtime-discovery fixtures may instead
+pin executable mode as unsupported while requiring trace, trusted graph replay,
+and observe-compile to resolve and replay the observed source graph.
 
 Pinned manifest entries enforce expected outcomes for both `context` and
 `executable` modes. Supported expected statuses are:
@@ -301,6 +305,8 @@ mkinitcpio fixtures:
 
 - real `source_safe` helper dispatch
 - real mkinitcpio install-hook source files
+- guarded runtime-selected mkinitcpio hook dispatch from a repeated dynamic
+  `. "$root/$hook"` source site, resolved through trace and trusted graph replay
 - context, executable, runtime parity, and trace observation coverage for
   `builtin source`, `builtin .`, `command source`, and `command .`
 - real `source_safe` helper dispatch with exact source arguments
@@ -317,14 +323,17 @@ when `MODASH_REALWORLD_GRAPH=1` is set, or when the broader supplement replay
 gate is enabled. The graph replay path traces the original wrapper, builds a
 trusted runtime source graph, writes the graph review report, compiles through
 `compile-observed`, and compares the compiled output with the traced run.
-Result records include graph edge counts plus paths to the observation, runtime
-graph, graph review report, and compiled replay artifact.
+Manifest probes can also require specific observed source path suffixes, so a
+record cannot pass merely by observing an arbitrary source count. Result
+records include graph edge counts plus paths to the observation, runtime graph,
+graph review report, and compiled replay artifact.
 
 Explicit observe-compile probes are promoted when
 `MODASH_REALWORLD_OBSERVE_COMPILE=1` or `MODASH_REALWORLD_GRAPH=1` is set. This
 path runs the public one-shot workflow, retains the observation, trusted graph,
 graph review report, and compiled artifact, then compares the compiled output
-with the observed run.
+with a separate untraced original run under the same environment, including
+exit status, stdout, and stderr.
 
 Most real distro scripts should remain compile/classification fixtures, not
 runtime fixtures.
