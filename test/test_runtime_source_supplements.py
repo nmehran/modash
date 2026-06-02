@@ -143,6 +143,78 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
         })
         self.assertEqual(supplement.to_dict()["variables"], {})
 
+    def test_generates_function_signature_from_first_positional_alias_without_source_args(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_alias "$TARGET"\n')
+            project.write("helpers.sh", 'source_alias() { local path=$1; source "$path"; }\n')
+            project.write("dep.sh", "echo dep\n")
+            observation = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))}).observation
+
+            supplement = generate_source_supplement(entrypoint, observation)
+
+        self.assertEqual(supplement.to_dict()["functions"], {
+            "source_alias": [
+                {
+                    "arguments": ["dep.sh"],
+                },
+            ],
+        })
+        self.assertEqual(supplement.to_dict()["variables"], {})
+
+    def test_generates_function_signature_from_first_positional_alias_and_explicit_shift_one(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_alias "$TARGET" extra\n')
+            project.write("helpers.sh", 'source_alias() { local path=$1; shift 1; source "$path" "$@"; }\n')
+            project.write("dep.sh", "echo dep\n")
+            observation = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))}).observation
+
+            supplement = generate_source_supplement(entrypoint, observation)
+
+        self.assertEqual(supplement.to_dict()["functions"], {
+            "source_alias": [
+                {
+                    "arguments": ["dep.sh", "extra"],
+                },
+            ],
+        })
+        self.assertEqual(supplement.to_dict()["variables"], {})
+
+    def test_does_not_generate_function_or_variable_for_dynamic_shifted_alias(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_alias "$TARGET" extra\n')
+            project.write("helpers.sh", 'source_alias() { local path=$1; shift "$COUNT"; source "$path" "$@"; }\n')
+            project.write("dep.sh", "echo dep\n")
+            observation = project.trace(
+                "main.sh",
+                env={
+                    "COUNT": "1",
+                    "TARGET": str(project.path("dep.sh")),
+                },
+            ).observation
+
+            supplement = generate_source_supplement(entrypoint, observation)
+
+        self.assertEqual(supplement.to_dict(), {
+            "version": 1,
+            "variables": {},
+            "functions": {},
+        })
+
+    def test_does_not_generate_function_or_variable_for_multi_shifted_alias(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_alias "$TARGET" skipped extra\n')
+            project.write("helpers.sh", 'source_alias() { local path=$1; shift 2; source "$path" "$@"; }\n')
+            project.write("dep.sh", "echo dep\n")
+            observation = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))}).observation
+
+            supplement = generate_source_supplement(entrypoint, observation)
+
+        self.assertEqual(supplement.to_dict(), {
+            "version": 1,
+            "variables": {},
+            "functions": {},
+        })
+
     def test_generates_function_signature_from_first_positional_alias_and_direct_positional_args(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_alias "$TARGET" one two\n')

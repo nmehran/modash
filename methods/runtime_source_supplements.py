@@ -65,6 +65,7 @@ class _SupplementSourceEvent:
 @dataclass(frozen=True)
 class _FunctionSourceAlias:
     function_name: str | None
+    has_function_local_assignment: bool = False
     has_first_positional_alias: bool = False
     shifted_after_alias: bool = False
 
@@ -126,7 +127,7 @@ def _generate_source_supplement_from_events(entrypoint_path: Path, source_events
         alias = _function_source_alias(event.call_site_file, event.call_site_line, source_word)
         helper_arguments = _helper_signature_arguments(event, source_word, source_arg_words, alias)
 
-        variable = None if alias.has_first_positional_alias else _variable_candidate(
+        variable = None if alias.has_function_local_assignment else _variable_candidate(
             source_word,
             event.resolved_path,
             entrypoint_directory,
@@ -345,21 +346,21 @@ def _function_source_alias(path: str, line: int, source_word: str):
 
     words = _function_words_before_source(function_context[1], source_word)
     shifted = False
-    first_positional_aliases = set()
+    has_function_local_assignment = False
+    aliased_from_first_positional = False
     shifted_after_alias = False
     index = 0
     while index < len(words):
         word = words[index]
         if word == "shift":
-            amount = words[index + 1] if index + 1 < len(words) and words[index + 1].isdigit() else "1"
-            index += 2 if amount != "1" or (index + 1 < len(words) and words[index + 1].isdigit()) else 1
+            amount, index = _consume_shift(words, index)
             if amount != "1":
-                first_positional_aliases.discard(variable_name)
+                aliased_from_first_positional = False
                 shifted_after_alias = False
                 shifted = True
                 continue
             shifted = True
-            if variable_name in first_positional_aliases:
+            if aliased_from_first_positional:
                 shifted_after_alias = True
             continue
 
@@ -370,18 +371,34 @@ def _function_source_alias(path: str, line: int, source_word: str):
         name, value = assignment
         if name != variable_name:
             continue
+        has_function_local_assignment = True
         if not shifted and _is_first_positional_word(value):
-            first_positional_aliases.add(name)
+            aliased_from_first_positional = True
             shifted_after_alias = False
         else:
-            first_positional_aliases.discard(name)
+            aliased_from_first_positional = False
             shifted_after_alias = False
 
     return _FunctionSourceAlias(
         function_name=function_name,
-        has_first_positional_alias=variable_name in first_positional_aliases,
+        has_function_local_assignment=has_function_local_assignment,
+        has_first_positional_alias=aliased_from_first_positional,
         shifted_after_alias=shifted_after_alias,
     )
+
+
+def _consume_shift(words, index):
+    next_index = index + 1
+    if next_index >= len(words):
+        return "1", next_index
+    word = words[next_index]
+    if word.isdigit() or _looks_like_explicit_shift_count(word):
+        return word, next_index + 1
+    return "1", next_index
+
+
+def _looks_like_explicit_shift_count(word: str):
+    return word.startswith("$") or bool(re.fullmatch(r'[+-]\d+', word))
 
 
 def _exact_variable_reference_name(word: str):
