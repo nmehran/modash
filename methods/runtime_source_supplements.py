@@ -167,7 +167,7 @@ def _generate_source_supplement_from_events(entrypoint_path: Path, source_events
         "version": SUPPLEMENT_VERSION,
         "variables": dict(sorted(variables.items())),
         "functions": {
-            name: sorted(entries, key=lambda item: item["arguments"])
+            name: entries
             for name, entries in sorted(functions.items())
         },
     }

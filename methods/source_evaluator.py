@@ -483,6 +483,7 @@ class SourceEvaluator:
         self.source_supplement = source_supplement or empty_source_supplement()
         self.source_overrides = self._source_override_map(source_overrides)
         self._source_override_indexes = Counter()
+        self._function_dispatch_signature_indexes = Counter()
         self.events: list[SourceEvent] = []
         self.disabled_sources: list[DisabledSourceSite] = []
         self.line_replacements: list[LineReplacement] = []
@@ -510,6 +511,7 @@ class SourceEvaluator:
         self.retained_helper_source_sites = []
         self._retained_helper_stack = []
         self._source_override_indexes.clear()
+        self._function_dispatch_signature_indexes.clear()
         self._evaluate_file(entrypoint, state, ())
         self._ensure_retained_helpers_resolved()
         return EvaluationResult(
@@ -4359,6 +4361,10 @@ class SourceEvaluator:
             if state.loop_depth > 0:
                 state.last_status = 1
                 raise LoopContinueSignal()
+            if state.occurrence_context == OccurrenceModel.CONDITIONAL:
+                self._disable_unreachable_sources([node], "trusted runtime graph conditional source")
+                state.last_status = 1
+                return
             source_override = None
 
         if source_override is not None:
@@ -5880,6 +5886,14 @@ class SourceEvaluator:
             return False
 
         if function_name in state.ambiguous_functions:
+            variants = state.function_variants.get(function_name)
+            function_def = state.functions.get(function_name)
+            if variants is not None and not self._function_variants_may_source(variants):
+                return False
+            if variants is None and function_def is not None and not self._node_list_may_source(function_def.body):
+                return False
+            if variants is None and function_def is None and self.source_overrides:
+                return False
             raise unsupported_source_error(
                 str(node.location.path),
                 node.location.line - 1,
@@ -5995,16 +6009,13 @@ class SourceEvaluator:
             if not self._function_variants_may_source(variants):
                 continue
             signatures = self.source_supplement.function_signatures(function_name)
-            if not any(len(signature) == len(argument_words) for signature in signatures):
+            matching_signatures = tuple(
+                signature for signature in signatures if len(signature) == len(argument_words)
+            )
+            if not matching_signatures:
                 continue
-            try:
-                arguments = self._resolve_function_arguments(function_name, argument_words, node, state)
-            except UnsupportedSourceError:
-                continue
-            candidates.append((function_name, function_def, variants, arguments))
+            candidates.append((function_name, function_def, variants, matching_signatures))
 
-        if len(candidates) == 1:
-            return candidates[0]
         if len(candidates) > 1:
             raise unsupported_source_error(
                 str(node.location.path),
@@ -6015,14 +6026,28 @@ class SourceEvaluator:
                 "ambiguous graph-backed dynamic function dispatch",
                 "Trusted graph replay can bind a dynamic source helper only when one finite observed helper signature matches.",
             )
+        if len(candidates) == 1:
+            function_name, function_def, variants, signatures = candidates[0]
+            arguments = self._graph_backed_dynamic_function_arguments(function_name, signatures)
+            if arguments is None:
+                return None
+            return function_name, function_def, variants, arguments
         return None
+
+    def _graph_backed_dynamic_function_arguments(self, function_name: str, signatures: tuple[tuple[str, ...], ...]):
+        key = function_name
+        index = self._function_dispatch_signature_indexes[key]
+        if index >= len(signatures):
+            return None
+        self._function_dispatch_signature_indexes[key] += 1
+        return signatures[index]
 
     def _graph_backed_recursion_allowed(self, function_name: str, state: EvaluationState):
         if not self.source_overrides:
             return False
         current_depth = sum(1 for name in state.function_call_stack if name == function_name)
         observed_source_budget = sum(len(overrides) for overrides in self.source_overrides.values())
-        return current_depth <= observed_source_budget
+        return current_depth <= observed_source_budget + 1
 
     def _apply_function_call_variant(
         self,

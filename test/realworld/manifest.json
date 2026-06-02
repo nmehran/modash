@@ -717,6 +717,10 @@
         {
           "source": "git/child-bash-prompt-wrapper.sh",
           "path": ".modash-fixtures/child-bash-prompt-wrapper.sh"
+        },
+        {
+          "source": "git/dynamic-helper-loader-wrapper.sh",
+          "path": ".modash-fixtures/dynamic-helper-loader-wrapper.sh"
         }
       ],
       "entrypoints": [
@@ -802,6 +806,54 @@
               ]
             }
           }
+        },
+        {
+          "path": ".modash-fixtures/dynamic-helper-loader-wrapper.sh",
+          "behavior_class": "runtime-selected-helper-name",
+          "modes": {
+            "context": {
+              "expected": "unsupported",
+              "diagnostic": {
+                "code": "unsupported.source.function-dispatch",
+                "fragment": "\"$MODASH_GIT_HELPER\" \"$MODASH_GIT_MERGETOOLS_DIR/bc\""
+              }
+            },
+            "executable": {
+              "expected": "unsupported",
+              "diagnostic": {
+                "code": "unsupported.source.function-dispatch",
+                "fragment": "\"$MODASH_GIT_HELPER\" \"$MODASH_GIT_MERGETOOLS_DIR/bc\""
+              }
+            }
+          },
+          "runtime": {
+            "cwd": ".modash-fixtures",
+            "environment": {
+              "MODASH_GIT_HELPER": "load_mergetool",
+              "MODASH_GIT_MERGETOOLS_DIR": "{root}/mergetools"
+            },
+            "trace": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "mergetools/bc",
+                "mergetools/vimdiff"
+              ]
+            },
+            "graph": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "mergetools/bc",
+                "mergetools/vimdiff"
+              ]
+            },
+            "observe_compile": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "mergetools/bc",
+                "mergetools/vimdiff"
+              ]
+            }
+          }
         }
       ]
     },
@@ -823,6 +875,10 @@
         {
           "source": "mkinitcpio/runtime-hook-dispatch-wrapper.sh",
           "path": ".modash-fixtures/runtime-hook-dispatch-wrapper.sh"
+        },
+        {
+          "source": "mkinitcpio/recursive-hook-dispatch-wrapper.sh",
+          "path": ".modash-fixtures/recursive-hook-dispatch-wrapper.sh"
         }
       ],
       "entrypoints": [
@@ -858,6 +914,53 @@
           "modes": {
             "context": {
               "expected": "success"
+            },
+            "executable": {
+              "expected": "unsupported",
+              "diagnostic": {
+                "code": "unsupported.source.unresolved",
+                "fragment": ". \"$MODASH_MKINITCPIO_HOOK_ROOT/$hook\""
+              }
+            }
+          },
+          "runtime": {
+            "cwd": ".modash-fixtures",
+            "environment": {
+              "MODASH_MKINITCPIO_HOOK_ROOT": "{root}/hooks"
+            },
+            "trace": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "hooks/consolefont",
+                "hooks/keymap"
+              ]
+            },
+            "graph": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "hooks/consolefont",
+                "hooks/keymap"
+              ]
+            },
+            "observe_compile": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "hooks/consolefont",
+                "hooks/keymap"
+              ]
+            }
+          }
+        },
+        {
+          "path": ".modash-fixtures/recursive-hook-dispatch-wrapper.sh",
+          "behavior_class": "recursive-runtime-hook-dispatch",
+          "modes": {
+            "context": {
+              "expected": "unsupported",
+              "diagnostic": {
+                "code": "unsupported.source.function-recursion",
+                "fragment": "run_hookfunctions_recursive \"$fn\" \"$desc\" \"$@\""
+              }
             },
             "executable": {
               "expected": "unsupported",

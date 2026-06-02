@@ -282,11 +282,13 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                     '  if [ "$#" -eq 0 ]; then',
                     "    return 0",
                     "  fi",
-                    '  source "$ROOT/$1"',
+                    '  if [ -r "$ROOT/$1" ]; then',
+                    '    source "$ROOT/$1"',
+                    "  fi",
                     "  shift",
                     '  load_hooks "$@"',
                     "}",
-                    "load_hooks alpha.sh beta.sh",
+                    "load_hooks alpha.sh beta.sh missing.sh",
                     "",
                 ]),
             )
@@ -381,16 +383,19 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                 "main.sh",
                 "\n".join([
                     'load_one() { source "$1"; }',
-                    '"$HELPER" "$TARGET"',
+                    '"$HELPER" "$TARGET_ONE"',
+                    '"$HELPER" "$TARGET_TWO"',
                     "",
                 ]),
             )
-            dependency = project.write("dep.sh", 'VALUE=loaded\nprintf "dep:%s\\n" "$VALUE"\n')
+            dependency_one = project.write("one.sh", 'printf "dep:one\\n"\n')
+            dependency_two = project.write("two.sh", 'printf "dep:two\\n"\n')
             trace = project.trace(
                 "main.sh",
                 env={
                     "HELPER": "load_one",
-                    "TARGET": str(dependency),
+                    "TARGET_ONE": str(dependency_one),
+                    "TARGET_TWO": str(dependency_two),
                 },
             )
             graph = build_observed_source_graph(entrypoint, trace.observation)
@@ -403,12 +408,13 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                 compiled,
                 env={
                     "HELPER": "load_one",
-                    "TARGET": str(dependency),
+                    "TARGET_ONE": str(dependency_one),
+                    "TARGET_TWO": str(dependency_two),
                 },
             )
 
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertEqual(result.stdout, "dep:loaded\n")
+        self.assertEqual(result.stdout, "dep:one\ndep:two\n")
 
     def test_dynamic_helper_name_static_compile_remains_fail_closed_without_graph(self):
         with ScriptProject() as project:
@@ -417,7 +423,7 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                 "main.sh",
                 "\n".join([
                     'load_one() { source "$1"; }',
-                    '"$HELPER" "$TARGET"',
+                    '"$HELPER" "$TARGET_ONE"',
                     "",
                 ]),
             )

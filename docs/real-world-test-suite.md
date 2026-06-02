@@ -537,6 +537,8 @@ probes, explicit source-argument frame restoration fixtures, opt-in
 human-readable reports, and source-relevant control-flow boundary promotion are
 also implemented. Runtime-guarded static source fixtures are implemented for
 guarded `if` and `case` source lowering; trusted graph replay and explicit
-observe-compile probes are implemented for manifest-selected pacman and
-mkinitcpio fixtures. Broader recursive/runtime-dynamic dispatch remains
-deferred to future runtime work.
+observe-compile probes are implemented for manifest-selected pacman, Git, and
+mkinitcpio fixtures. The 0.6 coverage matrix includes runtime-selected Git
+helper-name replay and recursive mkinitcpio hook dispatch through finite
+trusted graphs. Broader ambiguous helper arrays and unreviewable dynamic call
+graphs remain deferred.
