@@ -137,7 +137,7 @@ Expose tracing without changing compile behavior.
 CLI:
 
 ```sh
-modash trace ENTRY [--cwd DIR] [--env KEY=VALUE ...] [--output FILE | --output-dir DIR] [--timeout SECONDS] [--] [ARGS...]
+python modash.py trace ENTRY [--cwd DIR] [--env KEY=VALUE ...] [--output FILE | --output-dir DIR] [--timeout SECONDS] [--] [ARGS...]
 ```
 
 API:

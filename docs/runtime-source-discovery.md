@@ -30,17 +30,16 @@ compiler; it does not silently change compiler semantics.
 ## Intended User Flow
 
 ```sh
-modash trace ./entry.sh --timeout 30 -- ./args
+python modash.py trace ./entry.sh --timeout 30 -- ./args
 # writes .modash/observations/<run-id>.json
 
-modash supplement ./entry.sh --from-observation .modash/observations/<run-id>.json --output source-supplement.json
+python modash.py supplement ./entry.sh --from-observation .modash/observations/<run-id>.json --output source-supplement.json
 
-modash ./entry.sh merged.sh --mode executable --source-supplement source-supplement.json
+python modash.py ./entry.sh merged.sh --mode executable --source-supplement source-supplement.json
 ```
 
-The names above are directional. Exact CLI spelling can change during the
-implementation specs, but the separation of observe, supplement, and compile
-should not.
+Future installed-command spelling can be polished later, but the separation of
+observe, supplement, and compile should not.
 
 ## Core Contract
 

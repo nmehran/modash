@@ -126,7 +126,7 @@ def supplement_cli(argv):
     parser.add_argument(
         '--from-observation',
         required=True,
-        help='Runtime source observation JSON produced by modash trace.',
+        help='Runtime source observation JSON produced by the trace command.',
     )
     parser.add_argument(
         '--output',

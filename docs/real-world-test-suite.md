@@ -81,9 +81,11 @@ MODASH_REALWORLD_REPORT=1
 ```
 
 Timeout control, fetching, runtime parity checks, runtime trace smoke probes,
-runtime supplement replay probes, human-readable report output, and snapshot
-updates are separate operations so a normal internal corpus run stays
-deterministic.
+runtime supplement replay probes, and human-readable report output are separate
+operations so a normal internal corpus run stays deterministic.
+
+The opt-in real-world gates share ignored `.realworld/` cache and output
+artifacts. Run them serially when using them as a release check.
 
 ## Test Tiers
 
@@ -202,8 +204,8 @@ cache, and passes it to `modash` for that mode only.
 
 Runtime trace smoke probes are separately opt-in with
 `MODASH_REALWORLD_TRACE=1`. They execute a small pinned pacman/makepkg-style
-fixture through the explicit `modash trace` workflow, validate that source
-events were observed, and write observation artifacts under:
+fixture through the explicit `python modash.py trace` workflow, validate that
+source events were observed, and write observation artifacts under:
 
 ```text
 .realworld/outputs/<project-version>/trace/<entrypoint>.trace.json
