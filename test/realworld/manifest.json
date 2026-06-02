@@ -332,7 +332,19 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modash-fixtures"
+            "cwd": ".modash-fixtures",
+            "trace": {
+              "minimum_events": 2
+            },
+            "supplement": {
+              "minimum_events": 2
+            },
+            "graph": {
+              "minimum_events": 2
+            },
+            "observe_compile": {
+              "minimum_events": 2
+            }
           }
         },
         {
@@ -347,7 +359,10 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modash-fixtures"
+            "cwd": ".modash-fixtures",
+            "observe_compile": {
+              "minimum_events": 2
+            }
           }
         },
         {
@@ -362,7 +377,10 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modash-fixtures"
+            "cwd": ".modash-fixtures",
+            "trace": {
+              "minimum_events": 4
+            }
           }
         },
         {
@@ -377,7 +395,19 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modash-fixtures"
+            "cwd": ".modash-fixtures",
+            "trace": {
+              "minimum_events": 1
+            },
+            "supplement": {
+              "minimum_events": 1
+            },
+            "graph": {
+              "minimum_events": 1
+            },
+            "observe_compile": {
+              "minimum_events": 1
+            }
           }
         },
         {
@@ -392,7 +422,17 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modash-fixtures"
+            "cwd": ".modash-fixtures",
+            "supplement": {
+              "minimum_events": 1,
+              "minimum_warnings": 1
+            },
+            "graph": {
+              "minimum_events": 1
+            },
+            "observe_compile": {
+              "minimum_events": 1
+            }
           }
         },
         {
@@ -603,6 +643,52 @@
           "runtime": {
             "expected": "match",
             "cwd": ".modash-fixtures"
+          }
+        }
+      ]
+    },
+    {
+      "name": "mkinitcpio",
+      "kind": "pinned",
+      "version": "32",
+      "source": {
+        "url": "https://github.com/archlinux/mkinitcpio/releases/download/v32/mkinitcpio-32.tar.gz",
+        "archive": "mkinitcpio-32.tar.gz",
+        "sha256": "f167d0b9831a5b6ae388525ebc92cea3a4766429e16ee2b56dbaa8d3b7c73ab2",
+        "strip_components": 1
+      },
+      "fixture_files": [
+        {
+          "source": "mkinitcpio/install-hooks-wrapper.sh",
+          "path": ".modash-fixtures/install-hooks-wrapper.sh"
+        }
+      ],
+      "entrypoints": [
+        {
+          "path": ".modash-fixtures/install-hooks-wrapper.sh",
+          "modes": {
+            "context": {
+              "expected": "success"
+            },
+            "executable": {
+              "expected": "success"
+            }
+          },
+          "runtime": {
+            "expected": "match",
+            "cwd": ".modash-fixtures",
+            "trace": {
+              "minimum_events": 2
+            },
+            "supplement": {
+              "minimum_events": 2
+            },
+            "graph": {
+              "minimum_events": 2
+            },
+            "observe_compile": {
+              "minimum_events": 2
+            }
           }
         }
       ]

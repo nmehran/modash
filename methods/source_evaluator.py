@@ -453,6 +453,15 @@ class ConditionAtom:
 
 
 @dataclass(frozen=True)
+class SourceOverride:
+    path: str
+    line: int
+    command: str
+    resolved_path: str
+    arguments: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ConditionWords:
     words: tuple[str, ...]
     kind: str
@@ -466,10 +475,12 @@ class SourceEvaluator:
         frontend: ParserFrontend | None = None,
         mode: str = "executable",
         source_supplement: SourceSupplement | None = None,
+        source_overrides=(),
     ):
         self.frontend = frontend or LineParserFrontend()
         self.mode = mode
         self.source_supplement = source_supplement or empty_source_supplement()
+        self.source_overrides = self._source_override_map(source_overrides)
         self.events: list[SourceEvent] = []
         self.disabled_sources: list[DisabledSourceSite] = []
         self.line_replacements: list[LineReplacement] = []
@@ -504,6 +515,17 @@ class SourceEvaluator:
             line_replacements=tuple(self.line_replacements),
             final_state=state.snapshot(),
         )
+
+    @staticmethod
+    def _source_override_map(source_overrides):
+        return {
+            (
+                Path(override.path).resolve(strict=False),
+                override.line,
+                override.command.strip(),
+            ): override
+            for override in source_overrides or ()
+        }
 
     def _evaluate_file(
         self,
@@ -4113,7 +4135,7 @@ class SourceEvaluator:
         if isinstance(node, ast.Name):
             return self._arithmetic_name_value(node.id, state, condition)
 
-        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub, ast.Not)):
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub, ast.Not, ast.Invert)):
             operand = self._evaluate_arithmetic_ast(node.operand, state, condition)
             if operand is None:
                 return None
@@ -4121,9 +4143,14 @@ class SourceEvaluator:
                 return operand
             if isinstance(node.op, ast.USub):
                 return -operand
+            if isinstance(node.op, ast.Invert):
+                return ~operand
             return 0 if bool(operand) else 1
 
-        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Mod)):
+        if isinstance(node, ast.BinOp) and isinstance(
+            node.op,
+            (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Mod, ast.LShift, ast.RShift, ast.BitAnd, ast.BitOr, ast.BitXor),
+        ):
             left = self._evaluate_arithmetic_ast(node.left, state, condition)
             right = self._evaluate_arithmetic_ast(node.right, state, condition)
             if left is None or right is None:
@@ -4134,6 +4161,18 @@ class SourceEvaluator:
                 return left - right
             if isinstance(node.op, ast.Mult):
                 return left * right
+            if isinstance(node.op, (ast.LShift, ast.RShift)) and right < 0:
+                raise UnsupportedSourceError(f"unsupported negative arithmetic shift in if condition: {condition}")
+            if isinstance(node.op, ast.LShift):
+                return left << right
+            if isinstance(node.op, ast.RShift):
+                return left >> right
+            if isinstance(node.op, ast.BitAnd):
+                return left & right
+            if isinstance(node.op, ast.BitOr):
+                return left | right
+            if isinstance(node.op, ast.BitXor):
+                return left ^ right
             if right == 0:
                 raise UnsupportedSourceError(f"unsupported arithmetic division by zero in if condition: {condition}")
             if isinstance(node.op, ast.FloorDiv):
@@ -4275,21 +4314,33 @@ class SourceEvaluator:
                 "Control-flow source sites need modeled branch semantics before executable lowering.",
             )
         is_context_control_flow = node.is_control_flow and self.mode == "context"
-
-        try:
-            self._ensure_source_state_can_resolve(node, node.source_expression, state)
-            resolved_expression = self._expand_array_indexes(node.source_expression, node, state)
-            invocation = self._resolve_source_invocation(
-                resolved_expression,
-                node,
-                state,
-            )
-        except UnsupportedSourceError:
-            if self.mode == "context":
-                return
-            raise
-
         source_site = self._source_site_text(node)
+        source_override = self._source_override_for_node(node)
+
+        if source_override is not None:
+            invocation = SourceInvocation(
+                ResolvedSource(
+                    path=source_override.resolved_path,
+                    source_expression=node.source_expression.strip(),
+                    source_site=source_site,
+                    source_value=node.source_expression.strip(),
+                ),
+                source_arguments=source_override.arguments or None,
+            )
+        else:
+            try:
+                self._ensure_source_state_can_resolve(node, node.source_expression, state)
+                resolved_expression = self._expand_array_indexes(node.source_expression, node, state)
+                invocation = self._resolve_source_invocation(
+                    resolved_expression,
+                    node,
+                    state,
+                )
+            except UnsupportedSourceError:
+                if self.mode == "context":
+                    return
+                raise
+
         resolved_source = invocation.source
         source_arguments = invocation.source_arguments
 
@@ -4402,6 +4453,13 @@ class SourceEvaluator:
             source_value,
             source_arguments,
         )
+
+    def _source_override_for_node(self, node: SourceSite):
+        return self.source_overrides.get((
+            node.location.path.resolve(strict=False),
+            node.location.line,
+            node.text.strip(),
+        ))
 
     def _resolve_source_invocation(
         self,

@@ -1278,7 +1278,13 @@ def context_paths_from_source_events(entry_point: str, events):
     return ordered_paths
 
 
-def compile_sources(entry_point: str, output_file: str, mode: str = "context", source_supplement=None):
+def compile_sources(
+    entry_point: str,
+    output_file: str,
+    mode: str = "context",
+    source_supplement=None,
+    source_overrides=(),
+):
     if mode not in {"context", "executable"}:
         raise ValueError(f"Unsupported compile mode: {mode}")
 
@@ -1290,7 +1296,11 @@ def compile_sources(entry_point: str, output_file: str, mode: str = "context", s
 
     entry_point = os.path.abspath(entry_point)
     supplement = load_source_supplement(source_supplement, os.path.dirname(entry_point))
-    evaluation = SourceEvaluator(mode=mode, source_supplement=supplement).evaluate(entry_point)
+    evaluation = SourceEvaluator(
+        mode=mode,
+        source_supplement=supplement,
+        source_overrides=source_overrides,
+    ).evaluate(entry_point)
     context = context_from_source_events(evaluation.events, evaluation.disabled_sources, evaluation.line_replacements)
     if mode == "executable":
         output = render_executable_script(entry_point, context)

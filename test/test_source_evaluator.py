@@ -576,6 +576,23 @@ class SourceEvaluatorTestCase(unittest.TestCase):
             [arithmetic, numeric, regex, pattern, grep_dep, grep_regex],
         )
 
+    def test_bitwise_arithmetic_assignments_and_conditions_are_evaluated(self):
+        with ScriptProject() as project:
+            dep = project.write("dep.sh", 'echo "bitwise"\n')
+            entry = project.write("main.sh", textwrap.dedent("""\
+                flag_file=$(( 1 << 0 ))
+                flag_console=$(( 1 << 2 ))
+                mask=$(( flag_file | flag_console ))
+                mask=$(( mask & ~2 ))
+                if (( mask == 5 )); then
+                  source ./dep.sh
+                fi
+                """))
+
+            result = SourceEvaluator().evaluate(entry)
+
+        self.assertEqual([event.path for event in result.events], [dep])
+
     def test_if_block_unsupported_condition_lowers_exact_branch_source(self):
         with ScriptProject() as project:
             dep = project.write("dep.sh", 'echo "dep"\n')

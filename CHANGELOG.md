@@ -20,11 +20,17 @@
   observed graph.
 - Trusted graph supplement generation now recognizes finite helper-local
   source path aliases such as `local path=$1; shift; source "$path" "$@"`.
+- Added a pinned `mkinitcpio` real-world corpus fixture that promotes runtime
+  parity, trace, supplement replay, trusted graph replay, and observe-compile
+  against real install-hook source files.
 
 ### Changed
 
 - Runtime source graphs now validate process, node, edge, file fingerprint, and
   xtrace invariants before graph replay.
+- `compile-observed` and `observe-compile` now use trusted file-backed graph
+  edges as exact source overrides, which preserves observed CWD-relative source
+  resolution during deterministic compile.
 - Runtime graph/report/supplement stale diagnostics now show the fingerprinted
   file role plus expected and current fingerprint fields.
 - Runtime source graphs now reject duplicate source identities before replay.
@@ -32,16 +38,23 @@
   source command returns non-zero.
 - Runtime tracing now reconciles wrapper and xtrace source events by observed
   invocation identity instead of relying on global sequence order.
+- Executable source evaluation now supports exact deterministic bitwise
+  arithmetic operators used by shell libraries for constants and bit masks.
 - The opt-in real-world harness now promotes trusted graph replay and
   `compile-observed` as first-class pacman fixture probes.
 - The opt-in real-world harness now promotes `observe-compile` against pacman
   fixtures and retains observation, graph, report, and compiled artifacts.
+- The opt-in real-world harness now drives trace, supplement, graph, and
+  observe-compile probes from manifest-declared runtime expectations.
 
 ### Validation
 
-- Full unit suite: `450` tests, `8` skipped.
+- Full unit suite: `453` tests, `8` skipped.
 - Opt-in real-world suite with runtime trace, supplement replay, runtime
-  parity, trusted graph replay, and observe-compile gates: `11` tests.
+  parity, trusted graph replay, and observe-compile gates: `11` tests,
+  covering `50` pinned compile records, `20` runtime parity records, `4`
+  trace records, `4` supplement replay records, `4` trusted graph replay
+  records, and `5` observe-compile records.
 - PyPI distribution build: sdist and wheel passed `twine check`.
 
 ## v0.4.5 - 2026-06-02

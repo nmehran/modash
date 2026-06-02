@@ -31,6 +31,7 @@ from methods.runtime_source_supplements import (
     load_source_supplement_from_payload,
     write_generated_supplement,
 )
+from methods.source_evaluator import SourceOverride
 from methods.source_resolver import UnsupportedSourceError
 
 
@@ -137,7 +138,27 @@ def _compile_from_graph_payload(entrypoint, output, graph_payload):
         _entrypoint_directory(entrypoint),
     )
     Path(output).parent.mkdir(parents=True, exist_ok=True)
-    compile_sources(entrypoint, output, mode="executable", source_supplement=source_supplement)
+    compile_sources(
+        entrypoint,
+        output,
+        mode="executable",
+        source_supplement=source_supplement,
+        source_overrides=_source_overrides_from_graph_payload(graph_payload),
+    )
+
+
+def _source_overrides_from_graph_payload(graph_payload):
+    return tuple(
+        SourceOverride(
+            path=edge["call_site"]["file"],
+            line=edge["call_site"]["line"],
+            command=edge["call_site"]["command"],
+            resolved_path=edge["resolved_path"],
+            arguments=tuple(edge["arguments"]),
+        )
+        for edge in graph_payload["edges"]
+        if edge["to"].startswith("file:")
+    )
 
 
 def _entrypoint_directory(entrypoint):

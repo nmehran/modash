@@ -54,6 +54,20 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
         self.assertEqual(edge["xtrace"]["source_identity"], edge["source_identity"])
         self.assertEqual(edge["xtrace"]["command"], "source ./dep.sh one")
 
+    def test_builds_trusted_graph_from_dot_source_observation(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", ". ./dep.sh\n")
+            dependency = project.write("dep.sh", 'printf "dep\\n"\n')
+            observation = project.trace("main.sh").observation
+
+            graph = build_observed_source_graph(entrypoint, observation)
+
+        edge = graph["edges"][0]
+        self.assertEqual(edge["from"], f"file:{entrypoint.resolve(strict=False)}")
+        self.assertEqual(edge["to"], f"file:{dependency.resolve(strict=False)}")
+        self.assertEqual(edge["call_site"]["command"], ". ./dep.sh")
+        self.assertEqual(edge["xtrace"]["command"], "__modash_trace_dot_source ./dep.sh")
+
     def test_builds_process_command_node_for_child_bash_c_source(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", "bash -c 'source ./dep.sh child'\n")

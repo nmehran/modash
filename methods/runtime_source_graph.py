@@ -550,7 +550,7 @@ def _validate_edge_xtrace(edge, xtrace, process_index, call_site, source_identit
         raise RuntimeSourceGraphError("edges[].xtrace.process_index must match edge process_index")
     if xtrace["file"] != call_site["file"] or xtrace["line"] != call_site["line"]:
         raise RuntimeSourceGraphError("edges[].xtrace must match edge call_site")
-    if not _is_source_like_command(xtrace["command"]):
+    if not _is_trusted_xtrace_source_command(xtrace["command"], call_site["command"]):
         raise RuntimeSourceGraphError("edges[].xtrace.command must be a source-like command")
 
 
@@ -611,6 +611,32 @@ def _is_source_like_command(command: str):
         or command.startswith("command source ")
         or command == "command ."
         or command.startswith("command . ")
+    )
+
+
+def _is_trusted_xtrace_source_command(command: str, call_site_command: str):
+    return (
+        _is_source_like_command(command)
+        or (
+            _is_trace_wrapper_source_command(command)
+            and _is_source_like_command(call_site_command)
+        )
+    )
+
+
+def _is_trace_wrapper_source_command(command: str):
+    command = command.strip()
+    return (
+        command == "__modash_trace_dot_source"
+        or command.startswith("__modash_trace_dot_source ")
+        or command == "__modash_trace_builtin source"
+        or command.startswith("__modash_trace_builtin source ")
+        or command == "__modash_trace_builtin ."
+        or command.startswith("__modash_trace_builtin . ")
+        or command == "__modash_trace_command source"
+        or command.startswith("__modash_trace_command source ")
+        or command == "__modash_trace_command ."
+        or command.startswith("__modash_trace_command . ")
     )
 
 

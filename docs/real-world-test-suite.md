@@ -7,7 +7,8 @@ fixtures, normalized JSON result output, pinned corpus fetch/cache path, pinned
 expected-outcome enforcement, retained output artifacts, supplement fixtures,
 expanded safe runtime parity probes, and concise opt-in reports are
 implemented. The pinned corpus
-includes `bash-completion` and `pacman`/`makepkg` library fixtures.
+includes `bash-completion`, `pacman`/`makepkg` library fixtures, and
+`mkinitcpio` install-hook fixtures.
 
 This suite is intended to live on an internal development branch until the
 harness and corpus prove useful enough to merge. It should be opt-in and should
@@ -147,6 +148,8 @@ Good initial candidates:
   loading.
 - `pacman` / `makepkg`: shell-heavy Arch tooling with a large sourced
   `libmakepkg` tree.
+- `mkinitcpio`: initramfs tooling with sourced install hooks and shell
+  libraries.
 - `dracut`: initramfs tooling with many shell modules and distro integration
   scripts.
 - `grub2` `util/grub.d`: bootloader script corpus with distro packaging
@@ -155,12 +158,14 @@ Good initial candidates:
 The first pinned project is `bash-completion` 2.16.0 from its upstream release
 archive. The second is `pacman` 7.1.0 from the upstream Arch Linux release
 archive, using makepkg library entrypoints with a real sourced shell library
-graph. Supplement-backed `libmakepkg` library entrypoints are pinned as context
-and executable success where retained `source_safe` definitions can be lowered
-through a reviewed finite supplement fixture. Harness-owned pacman wrapper
-fixtures exercise the real helper and focused Bash semantics; those wrappers
-are pinned as success in both context and executable modes and have runtime
-parity probes.
+graph. The third is `mkinitcpio` 32 from the upstream Arch Linux release
+archive, using install-hook fixtures that source real project hook files.
+Supplement-backed `libmakepkg` library entrypoints are pinned as context and
+executable success where retained `source_safe` definitions can be lowered
+through a reviewed finite supplement fixture. Harness-owned pacman and
+mkinitcpio wrapper fixtures exercise real helper/hook files and focused Bash
+semantics; those wrappers are pinned as success in both context and executable
+modes and have runtime parity probes.
 
 Pinned manifest entries enforce expected outcomes for both `context` and
 `executable` modes. Supported expected statuses are:
@@ -291,9 +296,11 @@ Runtime parity compares:
 - stdout and stderr, normalized only where the manifest declares an accepted
   normalization
 
-The runtime probe set starts with controlled pacman fixtures:
+The runtime probe set is manifest-driven and starts with controlled pacman and
+mkinitcpio fixtures:
 
 - real `source_safe` helper dispatch
+- real mkinitcpio install-hook source files
 - context, executable, runtime parity, and trace observation coverage for
   `builtin source`, `builtin .`, `command source`, and `command .`
 - real `source_safe` helper dispatch with exact source arguments
@@ -305,13 +312,13 @@ The runtime probe set starts with controlled pacman fixtures:
 - explicit source-argument frame restoration around later nested source sites
 - skipped dynamic source payloads behind known `&&` / `||` status
 
-Trusted graph replay is also promoted for the same controlled pacman runtime
-fixtures when `MODASH_REALWORLD_GRAPH=1` is set, or when the broader supplement
-replay gate is enabled. The graph replay path traces the original wrapper,
-builds a trusted runtime source graph, writes the graph review report, compiles
-through `compile-observed`, and compares the compiled output with the traced
-run. Result records include graph edge counts plus paths to the observation,
-runtime graph, graph review report, and compiled replay artifact.
+Trusted graph replay is also promoted for manifest-selected runtime fixtures
+when `MODASH_REALWORLD_GRAPH=1` is set, or when the broader supplement replay
+gate is enabled. The graph replay path traces the original wrapper, builds a
+trusted runtime source graph, writes the graph review report, compiles through
+`compile-observed`, and compares the compiled output with the traced run.
+Result records include graph edge counts plus paths to the observation, runtime
+graph, graph review report, and compiled replay artifact.
 
 Explicit observe-compile probes are promoted when
 `MODASH_REALWORLD_OBSERVE_COMPILE=1` or `MODASH_REALWORLD_GRAPH=1` is set. This
@@ -513,7 +520,7 @@ artifacts, not inside normal corpus compilation.
 6. Promote the first useful real-world finding into a synthetic regression.
 
 Items 1 through 6 are implemented for the initial local smoke,
-`bash-completion`, and `pacman` corpus paths. Pinned expected-outcome
+`bash-completion`, `pacman`, and `mkinitcpio` corpus paths. Pinned expected-outcome
 enforcement, retained artifacts for successful pinned runs, supplement-backed
 pacman success expectations, direct glob source-argument fixtures,
 wrapped-source positional mutation fixtures, multiple safe runtime parity
@@ -521,5 +528,6 @@ probes, explicit source-argument frame restoration fixtures, opt-in
 human-readable reports, and source-relevant control-flow boundary promotion are
 also implemented. Runtime-guarded static source fixtures are implemented for
 guarded `if` and `case` source lowering; trusted graph replay and explicit
-observe-compile probes are implemented for controlled pacman fixtures. Broader
-recursive/runtime-dynamic dispatch remains deferred to future runtime work.
+observe-compile probes are implemented for manifest-selected pacman and
+mkinitcpio fixtures. Broader recursive/runtime-dynamic dispatch remains
+deferred to future runtime work.

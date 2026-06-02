@@ -34,6 +34,7 @@ OUTPUTS_DIR = REALWORLD_DIR / "outputs"
 PINNED_MODES = ("context", "executable")
 EXPECTED_STATUSES = frozenset({"success", "unsupported", "timeout", "skip"})
 RUNTIME_EXPECTED_STATUSES = frozenset({"match"})
+RUNTIME_PROBE_KEYS = frozenset({"trace", "supplement", "graph", "observe_compile"})
 
 LOCAL_SMOKE_PATTERNS = (
     "/etc/profile",
@@ -197,6 +198,25 @@ def validate_runtime_probe(project, entrypoint):
     candidate = Path(cwd)
     if candidate.is_absolute() or any(part == ".." for part in candidate.parts):
         raise ValueError(f"real-world project {project['name']} has unsafe runtime cwd")
+    for key in RUNTIME_PROBE_KEYS:
+        validate_runtime_probe_spec(project, runtime, key)
+
+
+def validate_runtime_probe_spec(project, runtime, key):
+    spec = runtime.get(key)
+    if spec is None:
+        return
+    if not isinstance(spec, dict):
+        raise ValueError(f"real-world project {project['name']} runtime {key} probe must be an object")
+    minimum_events = spec.get("minimum_events", 1)
+    if not isinstance(minimum_events, int) or minimum_events < 0:
+        raise ValueError(f"real-world project {project['name']} runtime {key} minimum_events must be non-negative")
+    if key == "supplement":
+        minimum_warnings = spec.get("minimum_warnings", 0)
+        if not isinstance(minimum_warnings, int) or minimum_warnings < 0:
+            raise ValueError(
+                f"real-world project {project['name']} runtime supplement minimum_warnings must be non-negative"
+            )
 
 
 def validate_environment(project):
@@ -793,6 +813,25 @@ def runtime_cwd(root, runtime):
     if not candidate.is_relative_to(root.resolve()):
         raise ValueError(f"unsafe runtime cwd: {cwd}")
     return candidate
+
+
+def runtime_probe_entries(project, probe_name):
+    for entrypoint in project["entrypoints"]:
+        runtime = entrypoint.get("runtime")
+        if runtime is None:
+            continue
+        spec = runtime.get(probe_name)
+        if spec is None:
+            continue
+        yield entrypoint, runtime, spec
+
+
+def minimum_probe_events(spec):
+    return spec.get("minimum_events", 1)
+
+
+def minimum_probe_warnings(spec):
+    return spec.get("minimum_warnings", 0)
 
 
 def normalize_record_paths(record, root):
@@ -1763,39 +1802,13 @@ class RealWorldProjectTestCase(unittest.TestCase):
             if reason:
                 setup_record["reason"] = reason
             setup_records.append(setup_record)
-            if root is None or project["name"] != "pacman":
+            if root is None:
                 continue
 
             environment = project_environment(project, root)
-            source_safe = next(
-                (
-                    candidate
-                    for candidate in project["entrypoints"]
-                    if candidate["path"] == ".modash-fixtures/source-safe-wrapper.sh"
-                ),
-                None,
-            )
-            trace_cases = []
-            if source_safe is not None:
-                trace_cases.append((
-                    source_safe["path"],
-                    source_safe["runtime"],
-                    2,
-                ))
-            trace_cases.append((
-                ".modash-fixtures/trace-invocation-wrapper.sh",
-                {"cwd": ".modash-fixtures"},
-                4,
-            ))
-            trace_cases.append((
-                ".modash-fixtures/child-bash-trace-wrapper.sh",
-                {"cwd": ".modash-fixtures"},
-                1,
-            ))
-
-            for entrypoint_path_text, runtime, minimum_events in trace_cases:
-                entrypoint_path = root / entrypoint_path_text
-                output_path = trace_artifact_path(project, entrypoint_path_text)
+            for entrypoint, runtime, spec in runtime_probe_entries(project, "trace"):
+                entrypoint_path = root / entrypoint["path"]
+                output_path = trace_artifact_path(project, entrypoint["path"])
                 remove_output_artifact(output_path)
                 probe = run_runtime_trace_probe(
                     entrypoint_path,
@@ -1821,7 +1834,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                 record["expected_status"] = "success"
                 record["matched_expectation"] = (
                     record["status"] == "success"
-                    and record.get("source_events", 0) >= minimum_events
+                    and record.get("source_events", 0) >= minimum_probe_events(spec)
                     and "MODASH_SOURCE_EVENT" not in record.get("stdout", "")
                     and "MODASH_SOURCE_EVENT" not in record.get("stderr", "")
                     and "MODASH_XTRACE" not in record.get("stdout", "")
@@ -1869,27 +1882,11 @@ class RealWorldProjectTestCase(unittest.TestCase):
             if reason:
                 setup_record["reason"] = reason
             setup_records.append(setup_record)
-            if root is None or project["name"] != "pacman":
+            if root is None:
                 continue
 
             trace_environment = project_environment(project, root)
-            replay_cases = (
-                (".modash-fixtures/source-safe-wrapper.sh", 2, 0),
-                (".modash-fixtures/child-bash-trace-wrapper.sh", 1, 0),
-                (".modash-fixtures/coverage-warning-wrapper.sh", 1, 1),
-            )
-            for entrypoint_path_text, minimum_events, minimum_warnings in replay_cases:
-                entrypoint = next(
-                    (
-                        candidate
-                        for candidate in project["entrypoints"]
-                        if candidate["path"] == entrypoint_path_text
-                    ),
-                    None,
-                )
-                if entrypoint is None:
-                    continue
-
+            for entrypoint, runtime, spec in runtime_probe_entries(project, "supplement"):
                 entrypoint_path = root / entrypoint["path"]
                 observation_path = trace_artifact_path(project, entrypoint["path"])
                 supplement_path = generated_supplement_artifact_path(project, entrypoint["path"])
@@ -1900,7 +1897,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
 
                 probe = run_runtime_supplement_replay_probe(
                     entrypoint_path,
-                    runtime_cwd(root, entrypoint["runtime"]),
+                    runtime_cwd(root, runtime),
                     trace_environment,
                     timeout_seconds,
                     observation_path,
@@ -1926,8 +1923,8 @@ class RealWorldProjectTestCase(unittest.TestCase):
                 record["expected_status"] = "match"
                 record["matched_expectation"] = (
                     record["status"] == "match"
-                    and record.get("source_events", 0) >= minimum_events
-                    and record.get("coverage_warnings", 0) >= minimum_warnings
+                    and record.get("source_events", 0) >= minimum_probe_events(spec)
+                    and record.get("coverage_warnings", 0) >= minimum_probe_warnings(spec)
                     and record.get("source_supplement") is not None
                     and record.get("review_report") is not None
                 )
@@ -1973,27 +1970,11 @@ class RealWorldProjectTestCase(unittest.TestCase):
             if reason:
                 setup_record["reason"] = reason
             setup_records.append(setup_record)
-            if root is None or project["name"] != "pacman":
+            if root is None:
                 continue
 
             trace_environment = project_environment(project, root)
-            replay_cases = (
-                (".modash-fixtures/source-safe-wrapper.sh", 2),
-                (".modash-fixtures/child-bash-trace-wrapper.sh", 1),
-                (".modash-fixtures/coverage-warning-wrapper.sh", 1),
-            )
-            for entrypoint_path_text, minimum_events in replay_cases:
-                entrypoint = next(
-                    (
-                        candidate
-                        for candidate in project["entrypoints"]
-                        if candidate["path"] == entrypoint_path_text
-                    ),
-                    None,
-                )
-                if entrypoint is None:
-                    continue
-
+            for entrypoint, runtime, spec in runtime_probe_entries(project, "graph"):
                 entrypoint_path = root / entrypoint["path"]
                 observation_path = trace_artifact_path(project, entrypoint["path"])
                 graph_path = graph_artifact_path(project, entrypoint["path"])
@@ -2004,7 +1985,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
 
                 probe = run_runtime_graph_replay_probe(
                     entrypoint_path,
-                    runtime_cwd(root, entrypoint["runtime"]),
+                    runtime_cwd(root, runtime),
                     trace_environment,
                     timeout_seconds,
                     observation_path,
@@ -2030,8 +2011,8 @@ class RealWorldProjectTestCase(unittest.TestCase):
                 record["expected_status"] = "match"
                 record["matched_expectation"] = (
                     record["status"] == "match"
-                    and record.get("source_events", 0) >= minimum_events
-                    and record.get("graph_edges", 0) >= minimum_events
+                    and record.get("source_events", 0) >= minimum_probe_events(spec)
+                    and record.get("graph_edges", 0) >= minimum_probe_events(spec)
                     and record.get("runtime_graph") is not None
                     and record.get("graph_review_report") is not None
                 )
@@ -2077,28 +2058,11 @@ class RealWorldProjectTestCase(unittest.TestCase):
             if reason:
                 setup_record["reason"] = reason
             setup_records.append(setup_record)
-            if root is None or project["name"] != "pacman":
+            if root is None:
                 continue
 
             trace_environment = project_environment(project, root)
-            replay_cases = (
-                (".modash-fixtures/source-safe-wrapper.sh", 2),
-                (".modash-fixtures/source-safe-args-wrapper.sh", 2),
-                (".modash-fixtures/child-bash-trace-wrapper.sh", 1),
-                (".modash-fixtures/coverage-warning-wrapper.sh", 1),
-            )
-            for entrypoint_path_text, minimum_events in replay_cases:
-                entrypoint = next(
-                    (
-                        candidate
-                        for candidate in project["entrypoints"]
-                        if candidate["path"] == entrypoint_path_text
-                    ),
-                    None,
-                )
-                if entrypoint is None:
-                    continue
-
+            for entrypoint, runtime, spec in runtime_probe_entries(project, "observe_compile"):
                 entrypoint_path = root / entrypoint["path"]
                 observation_path = observe_compile_observation_artifact_path(project, entrypoint["path"])
                 graph_path = observe_compile_graph_artifact_path(project, entrypoint["path"])
@@ -2109,7 +2073,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
 
                 probe = run_runtime_observe_compile_probe(
                     entrypoint_path,
-                    runtime_cwd(root, entrypoint["runtime"]),
+                    runtime_cwd(root, runtime),
                     trace_environment,
                     timeout_seconds,
                     observation_path,
@@ -2131,7 +2095,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                 record["matched_expectation"] = (
                     record["status"] == "match"
                     and isinstance(record.get("graph_edges"), int)
-                    and record["graph_edges"] >= minimum_events
+                    and record["graph_edges"] >= minimum_probe_events(spec)
                     and record.get("observation_path") is not None
                     and record.get("runtime_graph") is not None
                     and record.get("graph_review_report") is not None

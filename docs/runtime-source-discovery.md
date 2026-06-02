@@ -242,7 +242,7 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - explicit self-supplemented executable compile from a trusted graph
 - explicit one-shot observe -> graph/report -> compile workflow
 - review reports for unobserved source-capable file-backed sites
-- real-world replay probes against pinned pacman fixtures
+- real-world replay probes against pinned pacman and mkinitcpio fixtures
 
 ## Remaining Runtime Roadmap
 
@@ -250,7 +250,8 @@ Useful remaining steps are:
 
 - supplement generation for a broader but still finite set of runtime-dynamic
   source helpers
-- broader real-world promotion for one-shot observe/compile workflows
+- broader real-world promotion for one-shot observe/compile workflows beyond
+  the current controlled pinned fixtures
 
 Do not frame runtime discovery as solving arbitrary Bash semantics. The compiler
 still needs a deterministic, reviewable source graph before it can merge scripts
