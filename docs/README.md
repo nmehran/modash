@@ -13,8 +13,10 @@ by tests, changelog entries, and user-facing docs.
   helper-source workflow for runtime-dynamic values.
 - [Runtime Source Discovery](runtime-source-discovery.md): north-star runtime
   observe -> graph -> review/supplement -> deterministic compile workflow,
-  current observation and graph schemas, safety model, and remaining
-  runtime-discovery roadmap.
+  current observation and graph schemas, and safety model.
+- [0.6 Roadmap](roadmap-0.6.md): coverage-completion plan for broader
+  real-world observe-compile promotion, finite runtime-dynamic helpers,
+  recursive/runtime-dynamic dispatch, static edge semantics, and cleanup.
 - [Real-World Internal Test Suite](real-world-test-suite.md): opt-in pinned
   corpus, generated artifact, runtime parity, trace, and supplement replay
   gates.

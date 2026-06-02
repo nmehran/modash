@@ -247,15 +247,10 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - real-world replay probes against pinned pacman and mkinitcpio fixtures,
   including mkinitcpio runtime hook-dispatch graph replay
 
-## Remaining Runtime Roadmap
+## Next Roadmap
 
-Useful remaining steps are:
-
-- supplement generation for a broader but still finite set of runtime-dynamic
-  source helpers
-- broader real-world promotion for one-shot observe/compile workflows beyond
-  the current controlled pinned fixtures
-
-Do not frame runtime discovery as solving arbitrary Bash semantics. The compiler
-still needs a deterministic, reviewable source graph before it can merge scripts
-safely.
+The post-0.5 work is tracked in [modash 0.6 Roadmap](roadmap-0.6.md). 0.6 is
+the coverage-completion milestone for broader real-world `observe-compile`
+promotion, finite runtime-dynamic helper shapes, recursive/runtime-dynamic
+dispatch through trusted finite graphs, deterministic static edge semantics, and
+maintainability cleanup.

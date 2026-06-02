@@ -3,8 +3,8 @@
 `modash` merges Bash script projects into one file.
 
 It resolves `source` dependencies without executing shell code during normal
-compile. When a source path is genuinely runtime-dependent, `modash` also
-provides an explicit observe -> review -> supplement workflow.
+compile. When a path can only be known by running the script, `modash` can trace
+one explicit run and compile from the reviewed result.
 
 ## Install
 
@@ -69,55 +69,50 @@ bounded source-bearing function calls.
 See [Supported Source Resolution](docs/supported-source-resolution.md) for the
 current support matrix and fail-closed boundaries.
 
-## Runtime Observations
+## Runtime-Dependent Sources
 
-Runtime tracing is explicit because it runs the target script.
+Most `source` dependencies can be resolved without running the script. When a
+project chooses a source path at runtime, use runtime discovery explicitly. It
+runs the target once, records the source files that were actually loaded, writes
+review artifacts, and then compiles from that reviewed graph.
+
+Use this for patterns like hook dispatchers, plugin loaders, or helper
+functions where a normal executable compile correctly fails closed because the
+source path depends on runtime state.
+
+Recommended flow:
 
 ```sh
 modash trace scripts/main.sh --output observation.json -- --flag
 modash graph scripts/main.sh --from-observation observation.json --output runtime-graph.json
+modash compile-observed scripts/main.sh merged.sh --from-graph runtime-graph.json
+```
+
+The graph and its text report are the review points. They show which source
+sites ran, which files were loaded, and whether the files still match the trace.
+One trace represents one execution path; it is not proof that every branch was
+covered.
+
+If you want to keep the generated compiler input as a separate file, write an
+explicit supplement and pass it to executable compile:
+
+```sh
 modash supplement scripts/main.sh --from-graph runtime-graph.json --output source-supplement.json
 modash scripts/main.sh merged.sh --mode executable --source-supplement source-supplement.json
 ```
 
-After reviewing a trusted graph, the compile step can self-supplement without
-writing the intermediate supplement file:
+For automation, `observe-compile` performs the explicit trace, writes the graph
+and report, and compiles from that newly observed graph:
 
 ```sh
-modash compile-observed scripts/main.sh merged.sh --from-graph runtime-graph.json
+modash observe-compile scripts/main.sh merged.sh --reviewed-graph-out runtime-graph.json -- --flag
 ```
 
-`modash trace` writes an observation JSON artifact. Current observations include
-process provenance, resolved source events, linked source identities, sanitized
-xtrace source provenance, schema `6` run metadata, recorded environment overlay
-key names, and file fingerprints for stale-observation detection.
-
-`modash graph` validates a trace observation and writes a trusted runtime source
-graph. Graph edges link wrapper-observed source events to sanitized xtrace
-provenance and fail closed if that trust link is missing, stale, or inconsistent
-with the graph's process, file, edge, source identity, and fingerprint
-invariants. Stale diagnostics name the file role and expected/current
-fingerprint fields. It also writes a compact text review report beside the graph
-by default.
-
-`modash supplement` writes:
-
-- a schema `1` JSON source supplement candidate
-- an observation review report, defaulting to `OUTPUT.report.json`
-
-Generated supplements are exact data, not shell code. Review the graph,
-supplement, and report before compiling with `--source-supplement`.
-Generation covers finite observed helper shapes, including quoted `$@` sources
-and helper-local first-argument aliases such as:
-`local path=$1; shift; source "$path" "$@"`.
-Observation reports can warn about unobserved source-capable sites, but one
-traced run is not proof of every branch.
-
-Runtime discovery still feeds deterministic compilation through an explicit
-trusted graph artifact. For automation, `observe-compile` is an explicit
-one-shot command that runs the target, writes the observation, trusted graph,
-and review report artifacts, then compiles from that newly observed graph.
-Normal compile never traces.
+Normal compile never traces. Runtime artifacts are data, not shell code, and
+generated supplements contain exact values for source resolution rather than
+commands to execute. See
+[Runtime Source Discovery](docs/runtime-source-discovery.md) for the detailed
+artifact formats, trust checks, and safety model.
 
 ## Commands
 
@@ -145,7 +140,7 @@ Useful options:
   trusted graph and an in-memory generated supplement.
 - `observe-compile --reviewed-graph-out FILE`: explicitly run tracing, write
   review artifacts, and compile executable output from the newly observed graph.
-- `supplement --report FILE`: choose the review report path.
+- `supplement --report FILE`: choose where to write the review report.
 
 ## Development
 
