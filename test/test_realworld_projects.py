@@ -1,5 +1,7 @@
+import contextlib
 import glob
 import hashlib
+import io
 import json
 import math
 import multiprocessing
@@ -62,6 +64,10 @@ def trace_enabled():
 
 def supplement_enabled():
     return os.environ.get("MODASH_REALWORLD_SUPPLEMENT") == "1"
+
+
+def graph_enabled():
+    return os.environ.get("MODASH_REALWORLD_GRAPH") == "1" or supplement_enabled()
 
 
 def report_enabled():
@@ -916,6 +922,18 @@ def generated_supplement_artifact_path(project, entrypoint_path):
     return output_path.with_name(f"{output_path.name}.source-supplement.json")
 
 
+def graph_artifact_path(project, entrypoint_path):
+    relative_path = Path(entrypoint_path)
+    output_path = OUTPUTS_DIR / pinned_project_key(project) / "graph" / relative_path
+    return output_path.with_name(f"{output_path.name}.runtime-graph.json")
+
+
+def graph_review_report_artifact_path(project, entrypoint_path):
+    relative_path = Path(entrypoint_path)
+    output_path = OUTPUTS_DIR / pinned_project_key(project) / "graph-report" / relative_path
+    return output_path.with_name(f"{output_path.name}.runtime-graph.txt")
+
+
 def observation_review_report_artifact_path(project, entrypoint_path):
     relative_path = Path(entrypoint_path)
     output_path = OUTPUTS_DIR / pinned_project_key(project) / "report" / relative_path
@@ -926,6 +944,12 @@ def supplement_replay_output_path(project, entrypoint_path):
     relative_path = Path(entrypoint_path)
     output_path = OUTPUTS_DIR / pinned_project_key(project) / "supplement-replay" / relative_path
     return output_path.with_name(f"{output_path.name}.supplement-replay.sh")
+
+
+def graph_replay_output_path(project, entrypoint_path):
+    relative_path = Path(entrypoint_path)
+    output_path = OUTPUTS_DIR / pinned_project_key(project) / "graph-replay" / relative_path
+    return output_path.with_name(f"{output_path.name}.graph-replay.sh")
 
 
 def clear_project_outputs(project):
@@ -1162,6 +1186,91 @@ def run_runtime_supplement_replay_probe(
         "source_supplement": str(supplement_path),
         "review_report": str(report_path),
         "coverage_warnings": len(report["warnings"]),
+        "output_path": str(compiled_path),
+    }
+
+
+def run_runtime_graph_replay_probe(
+    entrypoint_path,
+    cwd,
+    trace_environment,
+    timeout_seconds,
+    observation_path,
+    graph_path,
+    graph_report_path,
+    compiled_path,
+):
+    from methods.runtime_source_graph import (
+        build_observed_source_graph,
+        write_observed_source_graph,
+        write_observed_source_graph_review,
+    )
+    from methods.runtime_source_trace import RuntimeSourceTraceError, trace_sources, write_trace_observation
+    from modash import compile_observed_main
+
+    started_at = time.perf_counter()
+    try:
+        trace_result = trace_sources(entrypoint_path, cwd=cwd, env=trace_environment, timeout=timeout_seconds)
+        write_trace_observation(trace_result, observation_path)
+        graph = build_observed_source_graph(entrypoint_path, trace_result.observation)
+        write_observed_source_graph(graph, graph_path)
+        write_observed_source_graph_review(graph, graph_report_path)
+        compiled_path.parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.redirect_stderr(io.StringIO()):
+            compile_observed_main(str(entrypoint_path), str(compiled_path), graph=str(graph_path))
+    except RuntimeSourceTraceError as exc:
+        if exc.code == "runtime.trace.timeout":
+            return {
+                "status": "timeout",
+                "duration_seconds": elapsed_seconds(started_at),
+                "timeout_seconds": timeout_seconds,
+                "exception": {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            }
+        return {
+            "status": "error",
+            "duration_seconds": elapsed_seconds(started_at),
+            "exception": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "duration_seconds": elapsed_seconds(started_at),
+            "exception": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+
+    compiled = run_runtime_command(compiled_path, cwd, {}, timeout_seconds)
+    if compiled["status"] == "timeout":
+        status = "timeout"
+    else:
+        matched = (
+            trace_result.returncode == compiled["returncode"]
+            and trace_result.stdout == compiled["stdout"]
+            and trace_result.stderr == compiled["stderr"]
+        )
+        status = "match" if matched else "mismatch"
+
+    return {
+        "status": status,
+        "duration_seconds": elapsed_seconds(started_at),
+        "source_events": len(trace_result.observation.sources),
+        "source_paths": [event.resolved_path for event in trace_result.observation.sources],
+        "graph_edges": len(graph["edges"]),
+        "trace_returncode": trace_result.returncode,
+        "trace_stdout": trace_result.stdout,
+        "trace_stderr": trace_result.stderr,
+        "compiled": compiled,
+        "observation_path": str(observation_path),
+        "runtime_graph": str(graph_path),
+        "graph_review_report": str(graph_report_path),
         "output_path": str(compiled_path),
     }
 
@@ -1725,6 +1834,110 @@ class RealWorldProjectTestCase(unittest.TestCase):
         if failures:
             self.fail(
                 "runtime supplement replay failures:\n"
+                + "\n".join(record_summary(record) + record_details(record) for record in failures)
+            )
+
+    @unittest.skipUnless(
+        graph_enabled(),
+        "set MODASH_REALWORLD_GRAPH=1 or MODASH_REALWORLD_SUPPLEMENT=1 to run runtime graph replay probes",
+    )
+    def test_pinned_runtime_graph_replay_probe(self):
+        manifest = load_manifest()
+        timeout_seconds = mode_timeout_seconds()
+        setup_records = []
+        records = []
+        failures = []
+
+        for project in manifest["projects"]:
+            root, setup_status, reason = ensure_pinned_project(project)
+            setup_record = {
+                "project": project["name"],
+                "version": project["version"],
+                "status": setup_status,
+            }
+            if reason:
+                setup_record["reason"] = reason
+            setup_records.append(setup_record)
+            if root is None or project["name"] != "pacman":
+                continue
+
+            trace_environment = project_environment(project, root)
+            replay_cases = (
+                (".modash-fixtures/source-safe-wrapper.sh", 2),
+                (".modash-fixtures/child-bash-trace-wrapper.sh", 1),
+                (".modash-fixtures/coverage-warning-wrapper.sh", 1),
+            )
+            for entrypoint_path_text, minimum_events in replay_cases:
+                entrypoint = next(
+                    (
+                        candidate
+                        for candidate in project["entrypoints"]
+                        if candidate["path"] == entrypoint_path_text
+                    ),
+                    None,
+                )
+                if entrypoint is None:
+                    continue
+
+                entrypoint_path = root / entrypoint["path"]
+                observation_path = trace_artifact_path(project, entrypoint["path"])
+                graph_path = graph_artifact_path(project, entrypoint["path"])
+                graph_report_path = graph_review_report_artifact_path(project, entrypoint["path"])
+                compiled_path = graph_replay_output_path(project, entrypoint["path"])
+                for artifact in (observation_path, graph_path, graph_report_path, compiled_path):
+                    remove_output_artifact(artifact)
+
+                probe = run_runtime_graph_replay_probe(
+                    entrypoint_path,
+                    runtime_cwd(root, entrypoint["runtime"]),
+                    trace_environment,
+                    timeout_seconds,
+                    observation_path,
+                    graph_path,
+                    graph_report_path,
+                    compiled_path,
+                )
+                record = normalize_record_paths({
+                    "project": project["name"],
+                    "version": project["version"],
+                    "kind": "runtime-graph",
+                    "entrypoint": str(entrypoint_path),
+                    **probe,
+                }, root)
+                for key in ("output_path", "observation_path", "runtime_graph", "graph_review_report"):
+                    if record.get(key):
+                        record[key] = Path(record[key]).relative_to(REPO_ROOT).as_posix()
+                if record.get("source_paths"):
+                    record["source_paths"] = [
+                        relative_to_root(source_path, root)
+                        for source_path in record["source_paths"]
+                    ]
+                record["expected_status"] = "match"
+                record["matched_expectation"] = (
+                    record["status"] == "match"
+                    and record.get("source_events", 0) >= minimum_events
+                    and record.get("graph_edges", 0) >= minimum_events
+                    and record.get("runtime_graph") is not None
+                    and record.get("graph_review_report") is not None
+                )
+                records.append(record)
+                if not record["matched_expectation"]:
+                    failures.append(record)
+
+        write_result_file("runtime-graph-replay.json", {
+            "suite": "runtime-graph-replay",
+            "timeout_seconds": timeout_seconds,
+            "graph_enabled": graph_enabled(),
+            "summary": result_summary(records),
+            "setup": setup_records,
+            "records": records,
+        })
+
+        if not records:
+            self.skipTest("no runtime graph replay project is cached")
+        if failures:
+            self.fail(
+                "runtime graph replay failures:\n"
                 + "\n".join(record_summary(record) + record_details(record) for record in failures)
             )
 

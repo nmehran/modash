@@ -21,6 +21,8 @@
   source command returns non-zero.
 - Runtime tracing now reconciles wrapper and xtrace source events by observed
   invocation identity instead of relying on global sequence order.
+- The opt-in real-world harness now promotes trusted graph replay and
+  `compile-observed` as first-class pacman fixture probes.
 
 ## v0.4.5 - 2026-06-02
 

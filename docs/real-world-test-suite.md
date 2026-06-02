@@ -302,6 +302,14 @@ The runtime probe set starts with controlled pacman fixtures:
 - explicit source-argument frame restoration around later nested source sites
 - skipped dynamic source payloads behind known `&&` / `||` status
 
+Trusted graph replay is also promoted for the same controlled pacman runtime
+fixtures when `MODASH_REALWORLD_GRAPH=1` is set, or when the broader supplement
+replay gate is enabled. The graph replay path traces the original wrapper,
+builds a trusted runtime source graph, writes the graph review report, compiles
+through `compile-observed`, and compares the compiled output with the traced
+run. Result records include graph edge counts plus paths to the observation,
+runtime graph, graph review report, and compiled replay artifact.
+
 Most real distro scripts should remain compile/classification fixtures, not
 runtime fixtures.
 
