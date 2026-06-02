@@ -143,8 +143,10 @@ def trace_sources(
         counter_path = tmpdir_path / "source-events.counter"
         xtrace_path = tmpdir_path / "xtrace.log"
         failure_path = tmpdir_path / "trace-failure.txt"
+        scanner_path = tmpdir_path / "positionals-scanner.py"
         prelude_path = tmpdir_path / "prelude.sh"
         prelude_path.write_text(_trace_prelude(), encoding="utf-8")
+        scanner_path.write_text(_positionals_scanner_script(), encoding="utf-8")
         trace_path.write_bytes(b"")
         counter_path.write_text("0\n", encoding="utf-8")
         xtrace_path.write_bytes(b"")
@@ -158,6 +160,8 @@ def trace_sources(
             "MODASH_TRACE_COUNTER_FILE": str(counter_path),
             "MODASH_TRACE_XTRACE_FILE": str(xtrace_path),
             "MODASH_TRACE_FAILURE_FILE": str(failure_path),
+            "MODASH_TRACE_POSITIONAL_SCANNER": str(scanner_path),
+            "MODASH_TRACE_PYTHON": sys.executable,
         })
 
         try:
@@ -297,6 +301,45 @@ def _normalize_timeout(timeout):
             code="runtime.trace.invalid_timeout",
         )
     return timeout_seconds
+
+
+def _positionals_scanner_script():
+    repo_root = str(Path(__file__).resolve().parents[1])
+    return f'''\
+import sys
+
+REPO_ROOT = {repo_root!r}
+if REPO_ROOT and REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+try:
+    from methods.compile import file_top_level_source_traits
+except Exception as exc:
+    print(f"modash positional scanner import failed: {{exc}}", file=sys.stderr)
+    sys.exit(2)
+
+
+def main(argv):
+    if len(argv) != 2:
+        print("modash positional scanner expected exactly one path", file=sys.stderr)
+        return 2
+    path = argv[1]
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            content = handle.read()
+    except OSError:
+        return 1
+    try:
+        _, has_top_level_positional_mutation = file_top_level_source_traits(path, content)
+    except Exception as exc:
+        print(f"modash positional scanner failed for {{path}}: {{exc}}", file=sys.stderr)
+        return 2
+    return 0 if has_top_level_positional_mutation else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
+'''
 
 
 def _resolve_trace_paths(entrypoint, cwd):
@@ -1037,6 +1080,7 @@ PS4=$'+MODASH_XTRACE\x1f${BASHPID}\x1f${PWD}\x1f${BASH_SOURCE[0]}\x1f${LINENO}\x
 
 __modash_source_stack=()
 declare -A __modash_source_file_map=()
+declare -A __modash_source_positional_mutation_cache=()
 __modash_caller_positionals=()
 __modash_source_call_args=()
 __modash_caller_positionals_captured=0
@@ -1194,67 +1238,26 @@ __modash_capture_source_call() {
 }
 
 __modash_source_may_mutate_positionals() {
-  local path=${1-}
+  local path=${1-} scanner_status
   if [[ -z $path || ! -r $path ]]; then
     return 1
   fi
-  local scanner_status
-  awk '
-    function count_char(text, character, count, idx) {
-      count = 0
-      for (idx = 1; idx <= length(text); idx++) {
-        if (substr(text, idx, 1) == character) {
-          count++
-        }
-      }
-      return count
-    }
-    function normalized_line(text) {
-      if (text ~ /^[[:space:]]*#/) {
-        return ""
-      }
-      return text
-    }
-    function is_function_start(text) {
-      return text ~ /^[[:space:]]*([[:alpha:]_][[:alnum:]_]*[[:space:]]*\(\)[[:space:]]*|function[[:space:]]+[[:alpha:]_][[:alnum:]_]*([[:space:]]*\(\))?[[:space:]]*)\{/
-    }
-    function has_positional_mutation(text) {
-      return text ~ /(^|[[:space:];&|({])shift([[:space:];&|)}]|$)/ \
-        || text ~ /(^|[[:space:];&|({])set[[:space:]]+--([[:space:];&|)}]|$)/ \
-        || text ~ /(^|[[:space:];&|({])set[[:space:]]+([^[:space:]+-]|["$])/
-    }
-    {
-      line = normalized_line($0)
-      if (function_depth > 0) {
-        function_depth += count_char(line, "{") - count_char(line, "}")
-        if (function_depth < 0) {
-          function_depth = 0
-        }
-        next
-      }
-      if (is_function_start(line)) {
-        depth = count_char(line, "{") - count_char(line, "}")
-        if (depth > 0) {
-          function_depth = depth
-        }
-        next
-      }
-      if (has_positional_mutation(line)) {
-        found = 1
-        exit
-      }
-    }
-    END {
-      exit found ? 0 : 1
-    }
-  ' "$path"
+
+  if [[ -n ${__modash_source_positional_mutation_cache[$path]+set} ]]; then
+    return "${__modash_source_positional_mutation_cache[$path]}"
+  fi
+
+  "$MODASH_TRACE_PYTHON" "$MODASH_TRACE_POSITIONAL_SCANNER" "$path"
   scanner_status=$?
   if ((scanner_status == 0)); then
+    __modash_source_positional_mutation_cache["$path"]=0
     return 0
   fi
   if ((scanner_status == 1)); then
+    __modash_source_positional_mutation_cache["$path"]=1
     return 1
   fi
+  __modash_source_positional_mutation_cache["$path"]=0
   return 0
 }
 

@@ -175,6 +175,63 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(result.stdout, expected.stdout)
         self.assertEqual([event.arguments for event in result.observation.sources], [(), ("arg one", "arg-two")])
 
+    def test_trace_ignores_positional_mutation_words_in_quotes_comments_and_heredocs(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                'source "$DEP"\nprintf "main:%s:%s\\n" "${1-unset}" "${2-unset}"\n',
+            )
+            dependency = project.write(
+                "dep.sh",
+                "\n".join([
+                    'printf "literal:%s\\n" "shift"',
+                    "cat >/dev/null <<'EOF'",
+                    "shift",
+                    "set -- changed",
+                    "EOF",
+                    "# shift",
+                    ': "set -- changed"',
+                    "",
+                ]),
+            )
+            env = {**os.environ, "DEP": str(dependency)}
+            expected = subprocess.run(
+                ["bash", str(entrypoint), "A", "B"],
+                cwd=str(project.root),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+
+            result = project.trace("main.sh", argv=("A", "B"), env={"DEP": str(dependency)})
+
+        self.assertEqual(expected.returncode, 0, expected.stderr)
+        self.assertEqual(result.returncode, expected.returncode, result.stderr)
+        self.assertEqual(result.stdout, expected.stdout)
+
+    def test_trace_fails_closed_for_control_flow_top_level_positional_mutation(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write("main.sh", 'source "$DEP"\nprintf "main:%s\\n" "${1-unset}"\n')
+            dependency = project.write(
+                "dep.sh",
+                "\n".join([
+                    f"touch {str(sentinel)!r}",
+                    "if true; then",
+                    "  shift",
+                    "fi",
+                    "",
+                ]),
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh", argv=("A", "B"), env={"DEP": str(dependency)})
+
+        self.assertEqual(context.exception.code, "runtime.trace.nontransparent-source-positionals")
+        self.assertFalse(sentinel.exists())
+
     def test_trace_allows_explicit_source_args_to_shift_positionals(self):
         with ScriptProject() as project:
             entrypoint = project.write(
