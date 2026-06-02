@@ -2818,9 +2818,6 @@ class SourceEvaluator:
                 hint="Array case subjects need explicit array semantics.",
             )
 
-        if strip_matching_quotes(subject) == "$#":
-            return None if state.ambiguous_positionals else str(len(state.positional_arguments))
-
         value = self._condition_value(subject, state)
         if value is not None:
             return value
@@ -4284,6 +4281,9 @@ class SourceEvaluator:
 
     @staticmethod
     def _condition_value(value: str, state: EvaluationState):
+        if strip_matching_quotes(value.strip()) == "$#":
+            return None if state.ambiguous_positionals else str(len(state.positional_arguments))
+
         variable_names = [match.group(1) or match.group(2) for match in SCALAR_REFERENCE_PATTERN.finditer(value)]
         if any(name in state.ambiguous_variables for name in variable_names):
             return None

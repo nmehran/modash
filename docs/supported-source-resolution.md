@@ -405,6 +405,8 @@ The remaining source-resolution surface is narrower than general Bash support:
 - Remaining case edge semantics such as collating symbols, equivalence classes,
   and broader locale-dependent pattern behavior. The implemented deterministic
   pattern subset includes practical `extglob` and `GLOBIGNORE` handling.
+- Exact positional-count predicates such as `[ "$#" -eq 0 ]` are modeled for
+  function-return guards when the current positional frame is exact.
 - Recursive or runtime-dynamic source-bearing function dispatch outside a
   finite trusted runtime graph. Exact makepkg-style helper calls using quoted
   `$@` / `$*` are covered by [Source Supplements](source-supplements.md).

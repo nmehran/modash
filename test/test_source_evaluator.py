@@ -286,6 +286,40 @@ class SourceEvaluatorTestCase(unittest.TestCase):
         self.assertEqual(cm.exception.diagnostic.code, "unsupported.source.function-control")
         self.assertEqual(cm.exception.diagnostic.location.line, 2)
 
+    def test_function_return_guarded_by_exact_positional_count_allows_reachable_source(self):
+        with ScriptProject() as project:
+            dep = project.write("dep.sh", 'echo "dep"\n')
+            entry = project.write("main.sh", textwrap.dedent("""\
+                load_dep() {
+                  if [ "$#" -eq 0 ]; then
+                    return 0
+                  fi
+                  source ./dep.sh
+                }
+                load_dep arg
+                """))
+
+            result = SourceEvaluator().evaluate(entry)
+
+        self.assertEqual([event.path for event in result.events], [dep])
+
+    def test_function_return_guarded_by_exact_positional_count_skips_source(self):
+        with ScriptProject() as project:
+            project.write("dep.sh", 'echo "dep"\n')
+            entry = project.write("main.sh", textwrap.dedent("""\
+                load_dep() {
+                  if [ "$#" -eq 0 ]; then
+                    return 0
+                  fi
+                  source ./dep.sh
+                }
+                load_dep
+                """))
+
+            result = SourceEvaluator().evaluate(entry)
+
+        self.assertEqual(result.events, ())
+
     def test_branch_dependent_function_return_status_raises_structured_diagnostic(self):
         with ScriptProject() as project:
             entry = project.write("main.sh", textwrap.dedent("""\
