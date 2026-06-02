@@ -1,5 +1,55 @@
 # Changelog
 
+## v0.4.0 - 2026-06-02
+
+Runtime source discovery and supplement replay release.
+
+### Added
+
+- Explicit `modashc.py trace` workflow that executes a target Bash script under
+  controlled source tracing and writes reviewed observation JSON.
+- Runtime source observation schema with validation for entrypoint, cwd, argv,
+  Bash/trace metadata, environment policy, source call sites, resolved paths,
+  source arguments, and source status.
+- Bounded trace execution with `--timeout`, stable timeout diagnostics, and
+  fail-closed behavior before writing observations on timeout.
+- `modashc.py supplement` workflow that converts reviewed observations into
+  declarative source supplement candidates.
+- Observation-to-supplement inference for exact variable-prefix source paths and
+  makepkg-style helper source calls such as `source_safe() { source "$@"; }`.
+- Synthetic observe -> supplement -> executable compile -> run replay tests.
+- Opt-in real-world trace and generated-supplement replay probes for the pinned
+  pacman/makepkg `source_safe` fixture.
+
+### Changed
+
+- Documented the three-step runtime workflow: observe, review/generate
+  supplement, then compile deterministically with `--source-supplement`.
+- Promoted runtime discovery docs from north-star planning into implemented
+  `v0.3.0` trace foundation and `v0.4.0` supplement replay milestones.
+- Kept normal compile deterministic: tracing never runs during context or
+  executable compile unless the explicit `trace` command is invoked.
+
+### Validation
+
+- Full unit suite: `385` tests, `6` skipped.
+- Cached real-world suite: `9` tests, `3` skipped opt-in runtime gates.
+- Opt-in runtime trace smoke probe: matched the pinned pacman `source_safe`
+  observation.
+- Opt-in runtime supplement replay probe: generated a supplement candidate,
+  compiled with it, and matched Bash output/status.
+- Generated replay artifact scan: no live unresolved `source` sites.
+
+### Notes
+
+- Generated source supplements are candidates from one observed run. They must be
+  reviewed before use and are not proof of unexecuted branches.
+- Runtime discovery still complements static resolution; it does not replace the
+  fail-closed compiler contract.
+- Polished xtrace compatibility, child Bash trace merging, broader branch
+  coverage diagnostics, and automatic compile from unreviewed observations remain
+  future work.
+
 ## v0.2.0 - 2026-05-28
 
 Static Bash parity hardening and real-world validation release.

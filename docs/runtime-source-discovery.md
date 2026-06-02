@@ -3,8 +3,8 @@
 ## Status
 
 North-star design document. The trace foundation and supplement generation /
-replay milestones are implemented on the current development branch; polished
-xtrace compatibility remains planned.
+replay milestones are implemented for `v0.4.0`; polished xtrace compatibility
+remains planned.
 
 Runtime source discovery observes concrete runtime source behavior and turns that
 observation into reviewed declarative compiler input. It must not become a

@@ -225,7 +225,7 @@ Safety goals:
 
 ## Deferred To Later Iterations
 
-Deferred to `v0.4.0` supplement generation and replay:
+Covered by `v0.4.0` supplement generation and replay:
 
 - generate source supplement candidates from observations
 - validate generated supplements against compiler expectations
