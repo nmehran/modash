@@ -48,7 +48,9 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
         self.assertIn("modash: runtime source graph:", result.stderr)
         self.assertIn("modash: runtime graph review report:", result.stderr)
         self.assertEqual(graph["version"], 1)
-        self.assertEqual(graph["observation_version"], 5)
+        self.assertEqual(graph["observation_version"], 6)
+        self.assertEqual(graph["environment"]["policy"], "inherit")
+        self.assertIn("shell", graph["run"])
         self.assertEqual(graph["edges"][0]["resolved_path"], str(dependency.resolve(strict=False)))
         self.assertEqual(graph["edges"][0]["xtrace"]["command"], "source ./dep.sh arg")
         self.assertIn("trusted: yes", report)
@@ -130,7 +132,10 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             "functions": {},
         })
         self.assertEqual(report["version"], 1)
-        self.assertEqual(report["observation_version"], 5)
+        self.assertEqual(report["observation_version"], 6)
+        self.assertEqual(report["environment"]["policy"], "overlay")
+        self.assertEqual(report["environment"]["recorded_keys"], ["LIB_DIR"])
+        self.assertIn("timeout_seconds", report["run"])
         self.assertEqual(report["summary"]["warnings"], 0)
 
     def test_supplement_cli_generates_candidate_from_graph(self):

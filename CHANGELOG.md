@@ -4,8 +4,11 @@
 
 ### Added
 
-- Runtime observations now use schema `5` and persist source identities linking
+- Runtime observations now use schema `6` and persist source identities linking
   wrapper-observed source events to sanitized xtrace source provenance.
+- Runtime observations, graph artifacts, and review reports now carry run
+  metadata and recorded environment overlay key names without serializing
+  ambient environment values.
 - Added `modash graph` to build a trusted runtime source graph from trace
   observations and write a compact human-readable graph review report.
 - `modash supplement` can now generate deterministic source supplements from a

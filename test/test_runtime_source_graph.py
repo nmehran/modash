@@ -40,7 +40,9 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
             graph = build_observed_source_graph(entrypoint, observation)
 
         self.assertEqual(graph["version"], 1)
-        self.assertEqual(graph["observation_version"], 5)
+        self.assertEqual(graph["observation_version"], 6)
+        self.assertEqual(graph["environment"]["policy"], "inherit")
+        self.assertIn("shell", graph["run"])
         self.assertEqual(graph["summary"]["processes"], 1)
         self.assertEqual(graph["summary"]["edges"], 1)
         self.assertEqual(graph["summary"]["trusted_xtrace_edges"], 1)
@@ -298,6 +300,8 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
 
         self.assertIn("modash runtime source graph review", text)
         self.assertIn("trusted: yes", text)
+        self.assertIn("run: observed_at=", text)
+        self.assertIn("environment: policy=inherit", text)
         self.assertIn("source identity", text.replace("_", " "))
         self.assertIn(str(dependency.resolve(strict=False)), text)
         self.assertIn("xtrace:", text)

@@ -5,9 +5,11 @@ import os
 from pathlib import Path
 
 from methods.runtime_source_observations import (
+    EnvironmentInfo,
     FILE_FINGERPRINT_ROLES,
     OBSERVATION_VERSION,
     RuntimeFileFingerprint,
+    RuntimeRunInfo,
     RuntimeSourceObservation,
     RuntimeSourceObservationError,
     current_fingerprint_mismatch,
@@ -20,6 +22,8 @@ GRAPH_TOP_LEVEL_KEYS = frozenset({
     "version",
     "entrypoint",
     "observation_version",
+    "environment",
+    "run",
     "summary",
     "nodes",
     "edges",
@@ -108,6 +112,8 @@ def build_observed_source_graph(entrypoint: str | os.PathLike, observation, *, v
         "version": GRAPH_VERSION,
         "entrypoint": observation.entrypoint,
         "observation_version": observation.version,
+        "environment": observation.environment.to_dict(),
+        "run": observation.run.to_dict(),
         "summary": {
             "processes": len(observation.processes),
             "nodes": len(node_list),
@@ -147,6 +153,19 @@ def build_observed_source_graph_review(graph, *, validate_fingerprints=True):
         "modash runtime source graph review",
         f"entrypoint: {graph['entrypoint']}",
         f"observation_schema: {graph['observation_version']}",
+        (
+            "run: "
+            f"observed_at={graph['run']['observed_at_utc']} "
+            f"shell={graph['run']['shell']} "
+            f"timeout={_display_timeout(graph['run']['timeout_seconds'])} "
+            f"python={graph['run']['python_version']} "
+            f"modash={graph['run']['modash_version']}"
+        ),
+        (
+            "environment: "
+            f"policy={graph['environment']['policy']} "
+            f"recorded_keys={','.join(graph['environment']['recorded_keys']) or '-'}"
+        ),
         (
             "summary: "
             f"processes={graph['summary']['processes']} "
@@ -220,6 +239,8 @@ def validate_observed_source_graph(data):
     entrypoint = _absolute_path(data["entrypoint"], "entrypoint")
     if _nonnegative_int(data["observation_version"], "observation_version") != OBSERVATION_VERSION:
         raise RuntimeSourceGraphError(f"observation_version must be {OBSERVATION_VERSION}")
+    EnvironmentInfo.from_dict(data["environment"])
+    RuntimeRunInfo.from_dict(data["run"])
     summary = _summary(data["summary"])
     nodes = _object_list(data["nodes"], "nodes")
     edges = _object_list(data["edges"], "edges")
@@ -341,6 +362,14 @@ def _shell_quote(value: str):
     if value and all(character.isalnum() or character in "@%_+=:,./-" for character in value):
         return value
     return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def _display_timeout(value):
+    if value is None:
+        return "none"
+    if float(value).is_integer():
+        return str(int(value))
+    return str(value)
 
 
 def _summary(value):

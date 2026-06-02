@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import math
 import os
+import platform
+import shutil
 import subprocess
 import tempfile
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +17,7 @@ from methods.runtime_source_observations import (
     BashInfo,
     EnvironmentInfo,
     RuntimeProcess,
+    RuntimeRunInfo,
     RuntimeSourceEvent,
     RuntimeSourceObservation,
     RuntimeSourceObservationError,
@@ -27,7 +32,7 @@ from methods.source_resolver import (
     strip_shell_word_quotes,
 )
 
-TRACE_VERSION = "runtime-wrapper-v5"
+TRACE_VERSION = "runtime-wrapper-v6"
 PROCESS_MARKER = "MODASH_PROCESS_EVENT"
 TRACE_MARKER = "MODASH_SOURCE_EVENT"
 XTRACE_MARKER = "MODASH_XTRACE"
@@ -212,6 +217,14 @@ def trace_sources(
                 policy="inherit" if env is None else "overlay",
                 recorded_keys=tuple(sorted(str(key) for key in (env or {}).keys())),
             ),
+            run=RuntimeRunInfo(
+                observed_at_utc=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                modash_version=_modash_version(),
+                platform=platform.platform(),
+                python_version=sys.version.split()[0],
+                shell=_resolved_shell(bash),
+                timeout_seconds=timeout_seconds,
+            ),
             processes=processes,
             sources=source_events,
             xtrace=xtrace,
@@ -316,6 +329,18 @@ def _bash_version(bash):
 
     first_line = completed.stdout.splitlines()[0] if completed.stdout else str(bash)
     return first_line
+
+
+def _resolved_shell(bash):
+    resolved = shutil.which(str(bash))
+    return resolved or str(bash)
+
+
+def _modash_version():
+    try:
+        return importlib.metadata.version("modash")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 
 
 def _observation_processes(raw_processes):

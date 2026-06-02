@@ -89,8 +89,8 @@ modash compile-observed scripts/main.sh merged.sh --from-graph runtime-graph.jso
 
 `modash trace` writes an observation JSON artifact. Current observations include
 process provenance, resolved source events, linked source identities, sanitized
-xtrace source provenance, and schema `5` file fingerprints for stale-observation
-detection.
+xtrace source provenance, schema `6` run metadata, recorded environment overlay
+key names, and file fingerprints for stale-observation detection.
 
 `modash graph` validates a trace observation and writes a trusted runtime source
 graph. Graph edges link wrapper-observed source events to sanitized xtrace

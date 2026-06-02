@@ -39,6 +39,8 @@ def build_observation_report(entrypoint: str | os.PathLike, observation, *, vali
         "version": REPORT_VERSION,
         "entrypoint": observation.entrypoint,
         "observation_version": observation.version,
+        "environment": observation.environment.to_dict(),
+        "run": observation.run.to_dict(),
         "summary": {
             "observed_sources": len(observation.sources),
             "xtrace_source_commands": len(observation.xtrace),

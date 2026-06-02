@@ -40,7 +40,10 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(event.arguments, ())
         self.assertEqual(event.status, 0)
         fingerprints = {Path(file.path).name: file for file in result.observation.files}
-        self.assertEqual(result.observation.version, 5)
+        self.assertEqual(result.observation.version, 6)
+        self.assertEqual(result.observation.environment.policy, "inherit")
+        self.assertEqual(result.observation.run.timeout_seconds, 30.0)
+        self.assertTrue(result.observation.run.shell)
         self.assertEqual(len(result.observation.xtrace), 1)
         self.assertEqual(event.xtrace_index, 0)
         self.assertTrue(event.source_identity.startswith("src:"))

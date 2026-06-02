@@ -48,9 +48,11 @@ The separation matters:
 
 ## Observation Schema
 
-Current observations use schema `5`. They record:
+Current observations use schema `6`. They record:
 
 - entrypoint, cwd, argv, Bash version, trace implementation version
+- run metadata: observed timestamp, modash version, platform, Python version,
+  shell command, and timeout
 - environment policy and recorded overlay keys
 - traced Bash processes and parent linkage
 - source events in execution order
@@ -69,7 +71,7 @@ Small example:
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "entrypoint": "/abs/project/entry.sh",
   "cwd": "/abs/project",
   "argv": ["--flag"],
@@ -77,11 +79,19 @@ Small example:
     "version": "GNU bash, version 5.2.21"
   },
   "trace": {
-    "version": "runtime-wrapper-v5"
+    "version": "runtime-wrapper-v6"
   },
   "environment": {
     "policy": "overlay",
     "recorded_keys": ["MAKEPKG_LIBRARY"]
+  },
+  "run": {
+    "observed_at_utc": "2026-06-02T12:00:00Z",
+    "modash_version": "0.5.0",
+    "platform": "Linux-6.x-x86_64-with-glibc2.x",
+    "python_version": "3.14.0",
+    "shell": "/usr/bin/bash",
+    "timeout_seconds": 30.0
   },
   "processes": [
     {
@@ -144,7 +154,7 @@ Small example:
 
 ## Trusted Source Graph
 
-`modash graph` consumes a schema `5` observation and writes a graph artifact.
+`modash graph` consumes a schema `6` observation and writes a graph artifact.
 The graph is still data, not executable shell code. It contains:
 
 - process nodes
@@ -207,7 +217,7 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - makepkg-style helper calls such as `source_safe "$@"`
 - child Bash process propagation and parent/child process provenance
 - persisted xtrace provenance linked to wrapper-observed source events
-- schema `5` source identities, file fingerprints, and stale observation
+- schema `6` source identities, file fingerprints, and stale observation
   rejection
 - trusted runtime source graph construction
 - strict graph invariant validation for reviewed graph replay

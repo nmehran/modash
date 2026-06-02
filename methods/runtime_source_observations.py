@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import os
 import hashlib
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
-OBSERVATION_VERSION = 5
+OBSERVATION_VERSION = 6
 TOP_LEVEL_KEYS = frozenset({
     "version",
     "entrypoint",
@@ -15,6 +16,7 @@ TOP_LEVEL_KEYS = frozenset({
     "bash",
     "trace",
     "environment",
+    "run",
     "processes",
     "sources",
     "xtrace",
@@ -23,6 +25,14 @@ TOP_LEVEL_KEYS = frozenset({
 BASH_KEYS = frozenset({"version"})
 TRACE_KEYS = frozenset({"version"})
 ENVIRONMENT_KEYS = frozenset({"policy", "recorded_keys"})
+RUN_KEYS = frozenset({
+    "observed_at_utc",
+    "modash_version",
+    "platform",
+    "python_version",
+    "shell",
+    "timeout_seconds",
+})
 PROCESS_KEYS = frozenset({
     "index",
     "pid",
@@ -128,6 +138,50 @@ class EnvironmentInfo:
         return {
             "policy": self.policy,
             "recorded_keys": list(self.recorded_keys),
+        }
+
+
+@dataclass(frozen=True)
+class RuntimeRunInfo:
+    observed_at_utc: str = "unknown"
+    modash_version: str = "unknown"
+    platform: str = "unknown"
+    python_version: str = "unknown"
+    shell: str = "bash"
+    timeout_seconds: float | None = None
+
+    def __post_init__(self):
+        object.__setattr__(self, "observed_at_utc", _nonempty_string(self.observed_at_utc, "run.observed_at_utc"))
+        object.__setattr__(self, "modash_version", _nonempty_string(self.modash_version, "run.modash_version"))
+        object.__setattr__(self, "platform", _nonempty_string(self.platform, "run.platform"))
+        object.__setattr__(self, "python_version", _nonempty_string(self.python_version, "run.python_version"))
+        object.__setattr__(self, "shell", _nonempty_string(self.shell, "run.shell"))
+        object.__setattr__(
+            self,
+            "timeout_seconds",
+            _optional_positive_number(self.timeout_seconds, "run.timeout_seconds"),
+        )
+
+    @classmethod
+    def from_dict(cls, data):
+        _require_keys(data, RUN_KEYS, "run")
+        return cls(
+            observed_at_utc=data["observed_at_utc"],
+            modash_version=data["modash_version"],
+            platform=data["platform"],
+            python_version=data["python_version"],
+            shell=data["shell"],
+            timeout_seconds=data["timeout_seconds"],
+        )
+
+    def to_dict(self):
+        return {
+            "observed_at_utc": self.observed_at_utc,
+            "modash_version": self.modash_version,
+            "platform": self.platform,
+            "python_version": self.python_version,
+            "shell": self.shell,
+            "timeout_seconds": self.timeout_seconds,
         }
 
 
@@ -394,6 +448,7 @@ class RuntimeSourceObservation:
     trace: TraceInfo
     environment: EnvironmentInfo
     processes: tuple[RuntimeProcess, ...]
+    run: RuntimeRunInfo = field(default_factory=RuntimeRunInfo)
     sources: tuple[RuntimeSourceEvent, ...] = field(default_factory=tuple)
     xtrace: tuple[RuntimeXtraceSourceCommand, ...] = field(default_factory=tuple)
     files: tuple[RuntimeFileFingerprint, ...] = field(default_factory=tuple)
@@ -415,6 +470,8 @@ class RuntimeSourceObservation:
             raise _schema_error("trace must be a TraceInfo")
         if not isinstance(self.environment, EnvironmentInfo):
             raise _schema_error("environment must be an EnvironmentInfo")
+        if not isinstance(self.run, RuntimeRunInfo):
+            raise _schema_error("run must be a RuntimeRunInfo")
         processes = tuple(_sequence(self.processes, "processes"))
         if not processes:
             raise _schema_error("processes must contain at least one process")
@@ -472,6 +529,7 @@ class RuntimeSourceObservation:
             bash=BashInfo.from_dict(data["bash"]),
             trace=TraceInfo.from_dict(data["trace"]),
             environment=EnvironmentInfo.from_dict(data["environment"]),
+            run=RuntimeRunInfo.from_dict(data["run"]),
             processes=tuple(RuntimeProcess.from_dict(process) for process in _object_list(data["processes"], "processes")),
             sources=tuple(RuntimeSourceEvent.from_dict(event) for event in _object_list(data["sources"], "sources")),
             xtrace=tuple(
@@ -490,6 +548,7 @@ class RuntimeSourceObservation:
             "bash": self.bash.to_dict(),
             "trace": self.trace.to_dict(),
             "environment": self.environment.to_dict(),
+            "run": self.run.to_dict(),
             "processes": [process.to_dict() for process in self.processes],
             "sources": [event.to_dict() for event in self.sources],
             "xtrace": [command.to_dict() for command in self.xtrace],
@@ -731,6 +790,16 @@ def _nonnegative_int(value, label: str):
     if value < 0:
         raise _schema_error(f"{label} must be greater than or equal to 0")
     return value
+
+
+def _optional_positive_number(value, label: str):
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _schema_error(f"{label} must be a positive number or null")
+    if not math.isfinite(float(value)) or float(value) <= 0:
+        raise _schema_error(f"{label} must be a positive number or null")
+    return float(value)
 
 
 def _integer(value, label: str):
