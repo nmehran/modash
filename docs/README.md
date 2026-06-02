@@ -57,6 +57,8 @@ keep only in code comments or tests.
 - [Runtime Source Discovery Foundation](runtime-source-discovery-foundation.md):
   planned `v0.3.0` trace foundation iteration with tranche and commit
   checkpoints.
+- [Runtime Supplement Generation And Replay](runtime-supplement-generation.md):
+  planned `v0.4.0` observe-to-supplement-to-deterministic-replay iteration.
 - [Next-Generation Evaluator And IR Plan](evaluator-ir-plan.md): Architecture
   notes and implementation history for the source-effect IR and evaluator.
 

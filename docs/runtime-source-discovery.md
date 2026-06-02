@@ -168,6 +168,9 @@ Detailed iteration spec:
 
 ### v0.4.0: Supplement Generation And Replay
 
+Detailed iteration spec:
+[Runtime Supplement Generation And Replay](runtime-supplement-generation.md).
+
 - Generate source supplement candidates from observations.
 - Validate generated supplements before compile.
 - Add a two-pass workflow: observe, generate/review supplement, compile.
