@@ -76,13 +76,15 @@ MODASHC_REALWORLD_TIMEOUT=3
 MODASHC_REALWORLD_FETCH=1
 MODASHC_REALWORLD_RUNTIME=1
 MODASHC_REALWORLD_TRACE=1
+MODASHC_REALWORLD_SUPPLEMENT=1
 MODASHC_REALWORLD_REPORT=1
 MODASHC_REALWORLD_UPDATE_SNAPSHOTS=1
 ```
 
 Timeout control, fetching, runtime parity checks, runtime trace smoke probes,
-human-readable report output, and snapshot updates are separate operations so a
-normal internal corpus run stays deterministic.
+runtime supplement replay probes, human-readable report output, and snapshot
+updates are separate operations so a normal internal corpus run stays
+deterministic.
 
 ## Test Tiers
 
@@ -211,6 +213,33 @@ events were observed, and write observation artifacts under:
 These probes are not supplement generation and do not prove all branch paths.
 They exist to spot-check that the runtime observation workflow produces
 reviewable data against a real helper implementation.
+
+### Runtime Supplement Replay Probes
+
+Runtime supplement replay probes are separately opt-in with
+`MODASHC_REALWORLD_SUPPLEMENT=1`. They execute the observed workflow end to end
+against a small pinned pacman/makepkg-style fixture:
+
+1. trace the original with the required runtime environment
+2. write an observation artifact
+3. generate a source supplement candidate
+4. compile executable output with that supplement
+5. run the compiled output without relying on the original runtime environment
+
+Generated supplement artifacts are retained under:
+
+```text
+.realworld/outputs/<project-version>/supplement/<entrypoint>.source-supplement.json
+```
+
+Compiled replay artifacts are retained under:
+
+```text
+.realworld/outputs/<project-version>/supplement-replay/<entrypoint>.supplement-replay.sh
+```
+
+These probes still do not make generated supplements automatic compiler input.
+They exist to validate the reviewed observe-to-supplement-to-replay workflow.
 
 ### Manual Artifact Review
 

@@ -60,6 +60,10 @@ def trace_enabled():
     return os.environ.get("MODASHC_REALWORLD_TRACE") == "1"
 
 
+def supplement_enabled():
+    return os.environ.get("MODASHC_REALWORLD_SUPPLEMENT") == "1"
+
+
 def report_enabled():
     return os.environ.get("MODASHC_REALWORLD_REPORT") == "1"
 
@@ -906,6 +910,18 @@ def trace_artifact_path(project, entrypoint_path):
     return output_path.with_name(f"{output_path.name}.trace.json")
 
 
+def generated_supplement_artifact_path(project, entrypoint_path):
+    relative_path = Path(entrypoint_path)
+    output_path = OUTPUTS_DIR / pinned_project_key(project) / "supplement" / relative_path
+    return output_path.with_name(f"{output_path.name}.source-supplement.json")
+
+
+def supplement_replay_output_path(project, entrypoint_path):
+    relative_path = Path(entrypoint_path)
+    output_path = OUTPUTS_DIR / pinned_project_key(project) / "supplement-replay" / relative_path
+    return output_path.with_name(f"{output_path.name}.supplement-replay.sh")
+
+
 def clear_project_outputs(project):
     shutil.rmtree(OUTPUTS_DIR / pinned_project_key(project), ignore_errors=True)
 
@@ -1016,6 +1032,81 @@ def run_runtime_trace_probe(entrypoint_path, cwd, environment, output_path):
         "source_events": len(observation.sources),
         "source_paths": [event.resolved_path for event in observation.sources],
         "output_path": str(output_path),
+    }
+
+
+def run_runtime_supplement_replay_probe(
+    entrypoint_path,
+    cwd,
+    trace_environment,
+    timeout_seconds,
+    observation_path,
+    supplement_path,
+    compiled_path,
+):
+    from methods.runtime_source_supplements import generate_source_supplement, write_generated_supplement
+    from methods.runtime_source_trace import trace_sources, write_trace_observation
+
+    started_at = time.perf_counter()
+    try:
+        trace_result = trace_sources(entrypoint_path, cwd=cwd, env=trace_environment)
+        write_trace_observation(trace_result, observation_path)
+        supplement = generate_source_supplement(entrypoint_path, trace_result.observation)
+        write_generated_supplement(supplement, supplement_path)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "duration_seconds": elapsed_seconds(started_at),
+            "exception": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+
+    compile_result = run_mode_with_timeout(
+        entrypoint_path,
+        "executable",
+        timeout_seconds,
+        output_path=compiled_path,
+        environment={},
+        source_supplement=supplement_path,
+    )
+    if compile_result["status"] != "success":
+        return {
+            "status": "compile-" + compile_result["status"],
+            "duration_seconds": elapsed_seconds(started_at),
+            "source_events": len(trace_result.observation.sources),
+            "trace_returncode": trace_result.returncode,
+            "trace_stdout": trace_result.stdout,
+            "trace_stderr": trace_result.stderr,
+            "observation_path": str(observation_path),
+            "source_supplement": str(supplement_path),
+            **compile_result,
+        }
+
+    compiled = run_runtime_command(compiled_path, cwd, {}, timeout_seconds)
+    if compiled["status"] == "timeout":
+        status = "timeout"
+    else:
+        matched = (
+            trace_result.returncode == compiled["returncode"]
+            and trace_result.stdout == compiled["stdout"]
+            and trace_result.stderr == compiled["stderr"]
+        )
+        status = "match" if matched else "mismatch"
+
+    return {
+        "status": status,
+        "duration_seconds": elapsed_seconds(started_at),
+        "source_events": len(trace_result.observation.sources),
+        "source_paths": [event.resolved_path for event in trace_result.observation.sources],
+        "trace_returncode": trace_result.returncode,
+        "trace_stdout": trace_result.stdout,
+        "trace_stderr": trace_result.stderr,
+        "compiled": compiled,
+        "observation_path": str(observation_path),
+        "source_supplement": str(supplement_path),
+        "output_path": str(compiled_path),
     }
 
 
@@ -1453,6 +1544,100 @@ class RealWorldProjectTestCase(unittest.TestCase):
         if failures:
             self.fail(
                 "runtime trace smoke failures:\n"
+                + "\n".join(record_summary(record) + record_details(record) for record in failures)
+            )
+
+    @unittest.skipUnless(
+        supplement_enabled(),
+        "set MODASHC_REALWORLD_SUPPLEMENT=1 to run runtime supplement replay probes",
+    )
+    def test_pinned_runtime_supplement_replay_probe(self):
+        manifest = load_manifest()
+        timeout_seconds = mode_timeout_seconds()
+        setup_records = []
+        records = []
+        failures = []
+
+        for project in manifest["projects"]:
+            root, setup_status, reason = ensure_pinned_project(project)
+            setup_record = {
+                "project": project["name"],
+                "version": project["version"],
+                "status": setup_status,
+            }
+            if reason:
+                setup_record["reason"] = reason
+            setup_records.append(setup_record)
+            if root is None or project["name"] != "pacman":
+                continue
+
+            trace_environment = project_environment(project, root)
+            entrypoint = next(
+                (
+                    candidate
+                    for candidate in project["entrypoints"]
+                    if candidate["path"] == ".modashc-fixtures/source-safe-wrapper.sh"
+                ),
+                None,
+            )
+            if entrypoint is None:
+                continue
+
+            entrypoint_path = root / entrypoint["path"]
+            observation_path = trace_artifact_path(project, entrypoint["path"])
+            supplement_path = generated_supplement_artifact_path(project, entrypoint["path"])
+            compiled_path = supplement_replay_output_path(project, entrypoint["path"])
+            for artifact in (observation_path, supplement_path, compiled_path):
+                remove_output_artifact(artifact)
+
+            probe = run_runtime_supplement_replay_probe(
+                entrypoint_path,
+                runtime_cwd(root, entrypoint["runtime"]),
+                trace_environment,
+                timeout_seconds,
+                observation_path,
+                supplement_path,
+                compiled_path,
+            )
+            record = normalize_record_paths({
+                "project": project["name"],
+                "version": project["version"],
+                "kind": "runtime-supplement",
+                "entrypoint": str(entrypoint_path),
+                **probe,
+            }, root)
+            for key in ("output_path", "observation_path", "source_supplement"):
+                if record.get(key):
+                    record[key] = Path(record[key]).relative_to(REPO_ROOT).as_posix()
+            if record.get("source_paths"):
+                record["source_paths"] = [
+                    relative_to_root(source_path, root)
+                    for source_path in record["source_paths"]
+                ]
+            record["expected_status"] = "match"
+            record["matched_expectation"] = (
+                record["status"] == "match"
+                and record.get("source_events", 0) >= 2
+                and record.get("source_supplement") is not None
+            )
+            records.append(record)
+            if not record["matched_expectation"]:
+                failures.append(record)
+
+        write_result_file("runtime-supplement-replay.json", {
+            "suite": "runtime-supplement-replay",
+            "timeout_seconds": timeout_seconds,
+            "supplement_enabled": supplement_enabled(),
+            "summary": result_summary(records),
+            "setup": setup_records,
+            "records": records,
+        })
+
+        if not records:
+            self.skipTest("no runtime supplement replay project is cached")
+        if failures:
+            self.fail(
+                "runtime supplement replay failures:\n"
                 + "\n".join(record_summary(record) + record_details(record) for record in failures)
             )
 
