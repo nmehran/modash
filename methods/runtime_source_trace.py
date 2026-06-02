@@ -32,7 +32,7 @@ from methods.source_resolver import (
     strip_shell_word_quotes,
 )
 
-TRACE_VERSION = "runtime-wrapper-v6"
+TRACE_VERSION = "runtime-wrapper-v8"
 PROCESS_MARKER = "MODASH_PROCESS_EVENT"
 TRACE_MARKER = "MODASH_SOURCE_EVENT"
 XTRACE_MARKER = "MODASH_XTRACE"
@@ -142,11 +142,13 @@ def trace_sources(
         trace_path = tmpdir_path / "source-events.bin"
         counter_path = tmpdir_path / "source-events.counter"
         xtrace_path = tmpdir_path / "xtrace.log"
+        failure_path = tmpdir_path / "trace-failure.txt"
         prelude_path = tmpdir_path / "prelude.sh"
         prelude_path.write_text(_trace_prelude(), encoding="utf-8")
         trace_path.write_bytes(b"")
         counter_path.write_text("0\n", encoding="utf-8")
         xtrace_path.write_bytes(b"")
+        failure_path.write_text("", encoding="utf-8")
 
         run_env.update({
             "BASH_ENV": str(prelude_path),
@@ -155,6 +157,7 @@ def trace_sources(
             "MODASH_TRACE_FILE": str(trace_path),
             "MODASH_TRACE_COUNTER_FILE": str(counter_path),
             "MODASH_TRACE_XTRACE_FILE": str(xtrace_path),
+            "MODASH_TRACE_FAILURE_FILE": str(failure_path),
         })
 
         try:
@@ -178,6 +181,8 @@ def trace_sources(
                 f"unable to run Bash for runtime trace: {bash}: {exc}",
                 code="runtime.trace.bash_unavailable",
             ) from exc
+
+        _raise_trace_prelude_failure(failure_path)
 
         raw_trace = _parse_raw_trace(trace_path.read_bytes())
         xtrace_commands = _xtrace_source_commands(
@@ -253,6 +258,22 @@ def _trace_environment(env):
     if env:
         run_env.update({str(key): str(value) for key, value in env.items()})
     return run_env
+
+
+def _raise_trace_prelude_failure(path: Path):
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    if not content:
+        return
+    lines = content.splitlines()
+    code = lines[0] if lines else "runtime.trace.failed"
+    message = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
+    raise RuntimeSourceTraceError(
+        message or "runtime source trace failed before trustworthy observation completed",
+        code=code or "runtime.trace.failed",
+    )
 
 
 def _normalize_timeout(timeout):
@@ -432,7 +453,7 @@ def _observation_xtrace_commands(
             line=command.line,
             function=command.function,
             cwd=command.cwd,
-            command=command.command,
+            command=_observation_xtrace_command_text(command.command),
         ))
     return tuple(commands)
 
@@ -742,6 +763,11 @@ def _parse_xtrace_source_invocation(command: str):
     stripped_words = [_strip_shell_word_quotes(word) for word in words]
     if not stripped_words:
         return None
+
+    alias_invocation = _parse_modash_alias_xtrace_invocation(stripped_words)
+    if alias_invocation is not None:
+        return alias_invocation
+
     index = _xtrace_source_command_index(stripped_words)
     if index is None:
         return None
@@ -753,6 +779,83 @@ def _parse_xtrace_source_invocation(command: str):
     return _XtraceSourceInvocation(
         source_path=source_path,
         arguments=tuple(stripped_words[index + 2:]),
+    )
+
+
+def _observation_xtrace_command_text(command: str):
+    try:
+        words = parse_shell_words_preserving_quotes(command)
+    except Exception:
+        return command
+    stripped_words = [_strip_shell_word_quotes(word) for word in words]
+    if not stripped_words:
+        return command
+
+    normalized_words = _normalized_modash_alias_xtrace_words(stripped_words)
+    if normalized_words is None:
+        return command
+    return " ".join(_xtrace_shell_quote(word) for word in normalized_words)
+
+
+def _normalized_modash_alias_xtrace_words(words):
+    if words[0] == "__modash_trace_source_alias":
+        if len(words) < 5:
+            return None
+        command_name = "." if words[1] == "dot" or words[2] == "." else "source"
+        try:
+            separator = words.index("--", 4)
+        except ValueError:
+            return None
+        source_words = words[separator + 1:]
+        if not source_words:
+            return None
+        return (command_name, *source_words)
+
+    if words[0] not in {"__modash_trace_builtin", "__modash_trace_command"}:
+        return None
+    try:
+        separator = words.index("--", 1)
+    except ValueError:
+        return None
+    wrapped_words = words[separator + 1:]
+    if len(wrapped_words) < 2 or wrapped_words[0] not in {"source", "."}:
+        return None
+    command_name = "builtin" if words[0] == "__modash_trace_builtin" else "command"
+    return (command_name, *wrapped_words)
+
+
+def _xtrace_shell_quote(value: str):
+    if value and all(character.isalnum() or character in "@%_+=:,./-" for character in value):
+        return value
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def _parse_modash_alias_xtrace_invocation(words):
+    if words[0] == "__modash_trace_source_alias":
+        try:
+            separator = words.index("--", 4)
+        except ValueError:
+            return None
+        source_words = words[separator + 1:]
+        if not source_words or not source_words[0]:
+            return None
+        return _XtraceSourceInvocation(
+            source_path=source_words[0],
+            arguments=tuple(source_words[1:]),
+        )
+
+    if words[0] not in {"__modash_trace_builtin", "__modash_trace_command"}:
+        return None
+    try:
+        separator = words.index("--", 1)
+    except ValueError:
+        return None
+    wrapped_words = words[separator + 1:]
+    if len(wrapped_words) < 2 or wrapped_words[0] not in {"source", "."}:
+        return None
+    return _XtraceSourceInvocation(
+        source_path=wrapped_words[1],
+        arguments=tuple(wrapped_words[2:]),
     )
 
 
@@ -893,6 +996,8 @@ def _is_xtrace_source_like(command: str):
         or command.startswith("command source ")
         or command == "command ."
         or command.startswith("command . ")
+        or command == "__modash_trace_source_alias"
+        or command.startswith("__modash_trace_source_alias ")
         or command == "__modash_trace_dot_source"
         or command.startswith("__modash_trace_dot_source ")
         or command == "__modash_trace_builtin source"
@@ -932,6 +1037,19 @@ PS4=$'+MODASH_XTRACE\x1f${BASHPID}\x1f${PWD}\x1f${BASH_SOURCE[0]}\x1f${LINENO}\x
 
 __modash_source_stack=()
 declare -A __modash_source_file_map=()
+__modash_caller_positionals=()
+__modash_source_call_args=()
+__modash_caller_positionals_captured=0
+
+__modash_trace_abort() {
+  local code=$1 message=$2
+  {
+    printf '%s\n' "$code"
+    printf '%s\n' "$message"
+  } > "$MODASH_TRACE_FAILURE_FILE"
+  printf '%s\n' "$message" >&2
+  exit 125
+}
 
 __modash_emit_process_event() {
   local pid=$1 parent_pid=$2 cwd=$3 entrypoint=$4 command=$5
@@ -1055,6 +1173,91 @@ __modash_trace_process_command=${BASH_EXECUTION_STRING:-$__modash_trace_process_
 __modash_emit_process_event \
   "$BASHPID" "$PPID" "$PWD" "$__modash_trace_process_entrypoint" "$__modash_trace_process_command" "$@"
 
+__modash_capture_source_call() {
+  local caller_count=${1:-0}
+  shift
+
+  __modash_caller_positionals=()
+  __modash_source_call_args=()
+  __modash_caller_positionals_captured=1
+
+  local index
+  for ((index = 0; index < caller_count; index++)); do
+    __modash_caller_positionals+=("${1-}")
+    shift
+  done
+
+  if [[ ${1-} == -- ]]; then
+    shift
+  fi
+  __modash_source_call_args=("$@")
+}
+
+__modash_source_may_mutate_positionals() {
+  local path=${1-}
+  if [[ -z $path || ! -r $path ]]; then
+    return 1
+  fi
+  local scanner_status
+  awk '
+    function count_char(text, character, count, idx) {
+      count = 0
+      for (idx = 1; idx <= length(text); idx++) {
+        if (substr(text, idx, 1) == character) {
+          count++
+        }
+      }
+      return count
+    }
+    function normalized_line(text) {
+      if (text ~ /^[[:space:]]*#/) {
+        return ""
+      }
+      return text
+    }
+    function is_function_start(text) {
+      return text ~ /^[[:space:]]*([[:alpha:]_][[:alnum:]_]*[[:space:]]*\(\)[[:space:]]*|function[[:space:]]+[[:alpha:]_][[:alnum:]_]*([[:space:]]*\(\))?[[:space:]]*)\{/
+    }
+    function has_positional_mutation(text) {
+      return text ~ /(^|[[:space:];&|({])shift([[:space:];&|)}]|$)/ \
+        || text ~ /(^|[[:space:];&|({])set[[:space:]]+--([[:space:];&|)}]|$)/ \
+        || text ~ /(^|[[:space:];&|({])set[[:space:]]+([^[:space:]+-]|["$])/
+    }
+    {
+      line = normalized_line($0)
+      if (function_depth > 0) {
+        function_depth += count_char(line, "{") - count_char(line, "}")
+        if (function_depth < 0) {
+          function_depth = 0
+        }
+        next
+      }
+      if (is_function_start(line)) {
+        depth = count_char(line, "{") - count_char(line, "}")
+        if (depth > 0) {
+          function_depth = depth
+        }
+        next
+      }
+      if (has_positional_mutation(line)) {
+        found = 1
+        exit
+      }
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$path"
+  scanner_status=$?
+  if ((scanner_status == 0)); then
+    return 0
+  fi
+  if ((scanner_status == 1)); then
+    return 1
+  fi
+  return 0
+}
+
 __modash_trace_source_common() {
   local kind=$1 builtin_name=$2
   shift 2
@@ -1062,12 +1265,28 @@ __modash_trace_source_common() {
   local event_index
   event_index=$(__modash_next_source_index)
 
-  local caller_file caller_line cwd source_path resolved_path status
+  local caller_file caller_line cwd source_path resolved_path status source_arg_count
+  local -a source_args explicit_source_args
+  source_args=("$@")
+  source_arg_count=${#source_args[@]}
   caller_file=$(__modash_current_source_file "${BASH_SOURCE[2]:-}")
   caller_line=${BASH_LINENO[1]:-1}
   cwd=$PWD
-  source_path=${1-}
+  source_path=${source_args[0]-}
   resolved_path=$(__modash_resolve_source_path "$source_path")
+
+  if ((source_arg_count == 1)); then
+    if ((__modash_caller_positionals_captured == 0)); then
+      __modash_trace_abort \
+        "runtime.trace.nontransparent-source" \
+        "modash: runtime trace cannot transparently observe source after its tracing alias was removed: ${source_path}"
+    fi
+    if __modash_source_may_mutate_positionals "$resolved_path"; then
+      __modash_trace_abort \
+        "runtime.trace.nontransparent-source-positionals" \
+        "modash: runtime trace cannot transparently observe no-argument source of a file that may mutate caller positionals: ${resolved_path}"
+    fi
+  fi
 
   if [[ -n $source_path ]]; then
     __modash_source_file_map["$source_path"]=$resolved_path
@@ -1075,7 +1294,16 @@ __modash_trace_source_common() {
     __modash_source_stack+=("$resolved_path")
   fi
 
-  builtin "$builtin_name" "$@"
+  if ((source_arg_count == 1)); then
+    if ((${#__modash_caller_positionals[@]} > 0)); then
+      builtin "$builtin_name" "$source_path" "${__modash_caller_positionals[@]}"
+    else
+      set --
+      builtin "$builtin_name" "$source_path"
+    fi
+  else
+    builtin "$builtin_name" "${source_args[@]}"
+  fi
   status=$?
 
   if [[ -n $source_path ]]; then
@@ -1083,10 +1311,11 @@ __modash_trace_source_common() {
   fi
 
   if [[ -n $source_path ]]; then
-    if (($# > 1)); then
+    if ((source_arg_count > 1)); then
+      explicit_source_args=("${source_args[@]:1}")
       __modash_emit_source_event \
         "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$status" \
-        "${@:2}"
+        "${explicit_source_args[@]}"
     else
       __modash_emit_source_event \
         "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$status"
@@ -1096,51 +1325,59 @@ __modash_trace_source_common() {
   return "$status"
 }
 
+__modash_trace_source_alias() {
+  local kind=$1 builtin_name=$2 caller_count=$3
+  shift 3
+  __modash_capture_source_call "$caller_count" "$@"
+  __modash_trace_source_common "$kind" "$builtin_name" "${__modash_source_call_args[@]}"
+}
+
 source() {
+  __modash_caller_positionals=()
+  __modash_caller_positionals_captured=0
   __modash_trace_source_common source source "$@"
 }
 
-__modash_trace_dot_source() {
-  __modash_trace_source_common dot . "$@"
-}
-
 __modash_trace_builtin() {
-  local builtin_name=${1-}
+  local caller_count=$1
+  shift
+  __modash_capture_source_call "$caller_count" "$@"
+  local builtin_name=${__modash_source_call_args[0]-}
   case "$builtin_name" in
     source)
-      shift
-      __modash_trace_source_common source source "$@"
+      __modash_trace_source_common source source "${__modash_source_call_args[@]:1}"
       ;;
     .)
-      shift
-      __modash_trace_source_common dot . "$@"
+      __modash_trace_source_common dot . "${__modash_source_call_args[@]:1}"
       ;;
     *)
-      builtin "$@"
+      builtin "${__modash_source_call_args[@]}"
       ;;
   esac
 }
 
 __modash_trace_command() {
-  local command_name=${1-}
+  local caller_count=$1
+  shift
+  __modash_capture_source_call "$caller_count" "$@"
+  local command_name=${__modash_source_call_args[0]-}
   case "$command_name" in
     source)
-      shift
-      __modash_trace_source_common source source "$@"
+      __modash_trace_source_common source source "${__modash_source_call_args[@]:1}"
       ;;
     .)
-      shift
-      __modash_trace_source_common dot . "$@"
+      __modash_trace_source_common dot . "${__modash_source_call_args[@]:1}"
       ;;
     *)
-      command "$@"
+      command "${__modash_source_call_args[@]}"
       ;;
   esac
 }
 
-alias .='__modash_trace_dot_source'
-alias builtin='__modash_trace_builtin'
-alias command='__modash_trace_command'
+alias source='__modash_trace_source_alias source source "$#" "$@" --'
+alias .='__modash_trace_source_alias dot . "$#" "$@" --'
+alias builtin='__modash_trace_builtin "$#" "$@" --'
+alias command='__modash_trace_command "$#" "$@" --'
 shopt -s expand_aliases
 set -x
 '''

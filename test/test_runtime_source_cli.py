@@ -258,6 +258,7 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
             entrypoint = project.write(
                 "main.sh",
                 "\n".join([
+                    "unalias source",
                     "unset -f source",
                     "source ./dep.sh",
                     "",

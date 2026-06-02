@@ -90,7 +90,7 @@ Small example:
     "version": "GNU bash, version 5.2.21"
   },
   "trace": {
-    "version": "runtime-wrapper-v6"
+    "version": "runtime-wrapper-v8"
   },
   "environment": {
     "policy": "overlay",
@@ -221,12 +221,17 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - Generated graphs and supplements should be reviewed before use.
 - `observe-compile` is explicit and artifact-writing; normal compile never
   traces or auto-supplements silently.
+- No-argument `source file` tracing preserves inherited positional parameters
+  through the trace alias. If that alias is removed before the source call, or
+  if the sourced file may mutate caller positionals at top level with `shift`
+  or `set --`, tracing fails closed instead of recording a nontransparent
+  observation.
 
 ## Implemented Runtime Coverage
 
 - direct `source` and dot-source observations
 - `builtin source`, `builtin .`, `command source`, and `command .`
-- source arguments and failed source status
+- inherited positional parameters, source arguments, and failed source status
 - cwd-sensitive source resolution
 - makepkg-style helper calls such as `source_safe "$@"`
 - finite helper-local source path aliases such as

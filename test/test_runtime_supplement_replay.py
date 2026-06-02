@@ -1,3 +1,4 @@
+import copy
 import sys
 import unittest
 from pathlib import Path
@@ -60,7 +61,7 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         with ScriptProject() as project:
             entrypoint = project.write(
                 "main.sh",
-                'source ./helpers.sh\nsource_safe "$TARGET" "arg one"\necho "main:$VALUE"\n',
+                'source ./helpers.sh\nsource_safe "$MODASH_TEST_TARGET" "arg one"\necho "main:$VALUE"\n',
             )
             project.write(
                 "helpers.sh",
@@ -74,7 +75,7 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                 ]),
             )
             project.write("dep.sh", 'VALUE="$1"\necho "dep:$VALUE"\n')
-            trace = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))})
+            trace = project.trace("main.sh", env={"MODASH_TEST_TARGET": str(project.path("dep.sh"))})
             supplement = generate_source_supplement(entrypoint, trace.observation)
             supplement_path = project.path("generated/source-supplement.json")
             write_generated_supplement(supplement, supplement_path)
@@ -96,7 +97,7 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
             with self.subTest(name=name), ScriptProject() as project:
                 entrypoint = project.write(
                     "main.sh",
-                    'source ./helpers.sh\nsource_safe "$TARGET" "arg one"\necho "main:$VALUE"\n',
+                    'source ./helpers.sh\nsource_safe "$MODASH_TEST_TARGET" "arg one"\necho "main:$VALUE"\n',
                 )
                 project.write(
                     "helpers.sh",
@@ -108,7 +109,7 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                     ]),
                 )
                 project.write("dep.sh", 'VALUE="$1"\necho "dep:$VALUE"\n')
-                trace = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))})
+                trace = project.trace("main.sh", env={"MODASH_TEST_TARGET": str(project.path("dep.sh"))})
                 supplement = generate_source_supplement(entrypoint, trace.observation)
                 supplement_path = project.path("generated/source-supplement.json")
                 write_generated_supplement(supplement, supplement_path)
@@ -130,11 +131,11 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         with ScriptProject() as project:
             entrypoint = project.write(
                 "main.sh",
-                'source ./helpers.sh\nsource_second fast "$TARGET"\necho "main:$VALUE"\n',
+                'source ./helpers.sh\nsource_second fast "$MODASH_TEST_TARGET"\necho "main:$VALUE"\n',
             )
             project.write("helpers.sh", 'source_second() { source "$2" "$1"; }\n')
             project.write("dep.sh", 'VALUE="$1"\necho "dep:$VALUE"\n')
-            trace = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))})
+            trace = project.trace("main.sh", env={"MODASH_TEST_TARGET": str(project.path("dep.sh"))})
             supplement = generate_source_supplement(entrypoint, trace.observation)
             supplement_path = project.path("generated/source-supplement.json")
             write_generated_supplement(supplement, supplement_path)
@@ -157,7 +158,7 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         with ScriptProject() as project:
             entrypoint = project.write(
                 "main.sh",
-                'source ./helpers.sh\nsource_mode fast "$TARGET"\necho "main:$VALUE"\n',
+                'source ./helpers.sh\nsource_mode fast "$MODASH_TEST_TARGET"\necho "main:$VALUE"\n',
             )
             project.write(
                 "helpers.sh",
@@ -171,7 +172,7 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                 ]),
             )
             project.write("dep.sh", 'VALUE="$1"\necho "dep:$VALUE"\n')
-            trace = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))})
+            trace = project.trace("main.sh", env={"MODASH_TEST_TARGET": str(project.path("dep.sh"))})
             supplement = generate_source_supplement(entrypoint, trace.observation)
             supplement_path = project.path("generated/source-supplement.json")
             write_generated_supplement(supplement, supplement_path)
@@ -194,7 +195,7 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         with ScriptProject() as project:
             entrypoint = project.write(
                 "main.sh",
-                'source ./helpers.sh\nsource_case main "$TARGET"\necho "main:$VALUE"\n',
+                'source ./helpers.sh\nsource_case main "$MODASH_TEST_TARGET"\necho "main:$VALUE"\n',
             )
             project.write(
                 "helpers.sh",
@@ -208,7 +209,7 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                 ]),
             )
             project.write("dep.sh", 'VALUE=loaded\necho "dep:$VALUE"\n')
-            trace = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))})
+            trace = project.trace("main.sh", env={"MODASH_TEST_TARGET": str(project.path("dep.sh"))})
             supplement = generate_source_supplement(entrypoint, trace.observation)
             supplement_path = project.path("generated/source-supplement.json")
             write_generated_supplement(supplement, supplement_path)
@@ -272,6 +273,36 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "dep:loaded\nchild:loaded\nparent:unset\n")
+
+    def test_child_bash_c_graph_replay_preserves_child_positionals_and_zero(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                (
+                    "bash -c '. \"$1\"; printf \"after:%s:%s:%s\\n\" "
+                    "\"$0\" \"${1-unset}\" \"${2-unset}\"' "
+                    "child \"$DYNAMIC_DEP\" extra\n"
+                ),
+            )
+            dep = project.write(
+                "dep.sh",
+                'printf "dep:%s:%s\\n" "${1-unset}" "${2-unset}"\n',
+            )
+            expected = project.run("main.sh", env={"DYNAMIC_DEP": str(dep)})
+            trace = project.trace("main.sh", env={"DYNAMIC_DEP": str(dep)})
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled, env={"DYNAMIC_DEP": str(dep)})
+
+        self.assertEqual(expected.returncode, 0, expected.stdout)
+        self.assertEqual(trace.returncode, expected.returncode, trace.stderr)
+        self.assertEqual(trace.stdout, expected.stdout)
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
 
     def test_recursive_helper_graph_replays_through_compile_observed(self):
         with ScriptProject() as project:
@@ -339,6 +370,64 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         self.assertEqual(context.exception.diagnostic.code, "unsupported.source.function-recursion")
         self.assertFalse(output.exists())
 
+    def test_compile_observed_rejects_unconsumed_graph_edge(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source ./dep.sh\nprintf "main\\n"\n')
+            project.write("dep.sh", 'printf "dep\\n"\n')
+            trace = project.trace("main.sh")
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+
+            extra_edge = copy.deepcopy(graph["edges"][0])
+            extra_edge["index"] = 1
+            extra_edge["source_identity"] = "src:unconsumed0000000000000"
+            extra_edge["xtrace"]["index"] = 1
+            extra_edge["xtrace"]["source_identity"] = extra_edge["source_identity"]
+            graph["edges"].append(extra_edge)
+            graph["summary"]["edges"] = 2
+            graph["summary"]["trusted_xtrace_edges"] = 2
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            with self.assertRaises(NotImplementedError) as context:
+                compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+
+        self.assertEqual(context.exception.code, "unsupported.source.graph-unconsumed")
+        self.assertFalse(compiled.exists())
+
+    def test_compile_observed_rejects_unconsumed_child_process_graph_edge(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                (
+                    "bash -c '. \"$1\"; printf \"child:%s\\n\" \"$VALUE\"' "
+                    "child \"$DYNAMIC_DEP\"\n"
+                ),
+            )
+            dep = project.write("dep.sh", 'VALUE=loaded\nprintf "dep:%s\\n" "$VALUE"\n')
+            trace = project.trace("main.sh", env={"DYNAMIC_DEP": str(dep)})
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            self.assertEqual(len(graph["edges"]), 1)
+            self.assertTrue(graph["edges"][0]["from"].startswith("process-command:"))
+
+            extra_edge = copy.deepcopy(graph["edges"][0])
+            extra_edge["index"] = 1
+            extra_edge["source_identity"] = "src:unconsumedchild00000000"
+            extra_edge["xtrace"]["index"] = 1
+            extra_edge["xtrace"]["source_identity"] = extra_edge["source_identity"]
+            graph["edges"].append(extra_edge)
+            graph["summary"]["edges"] = 2
+            graph["summary"]["trusted_xtrace_edges"] = 2
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            with self.assertRaises(NotImplementedError) as context:
+                compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+
+        self.assertEqual(context.exception.code, "unsupported.source.graph-unconsumed")
+        self.assertFalse(compiled.exists())
+
     def test_recursive_helper_graph_replay_fails_when_observed_edge_is_missing(self):
         with ScriptProject() as project:
             entrypoint = project.write(
@@ -383,8 +472,8 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                 "main.sh",
                 "\n".join([
                     'load_one() { source "$1"; }',
-                    '"$HELPER" "$TARGET_ONE"',
-                    '"$HELPER" "$TARGET_TWO"',
+                    '"$MODASH_TEST_HELPER" "$MODASH_TEST_TARGET_ONE"',
+                    '"$MODASH_TEST_HELPER" "$MODASH_TEST_TARGET_TWO"',
                     "",
                 ]),
             )
@@ -393,9 +482,9 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
             trace = project.trace(
                 "main.sh",
                 env={
-                    "HELPER": "load_one",
-                    "TARGET_ONE": str(dependency_one),
-                    "TARGET_TWO": str(dependency_two),
+                    "MODASH_TEST_HELPER": "load_one",
+                    "MODASH_TEST_TARGET_ONE": str(dependency_one),
+                    "MODASH_TEST_TARGET_TWO": str(dependency_two),
                 },
             )
             graph = build_observed_source_graph(entrypoint, trace.observation)
@@ -407,9 +496,9 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
             result = project.run(
                 compiled,
                 env={
-                    "HELPER": "load_one",
-                    "TARGET_ONE": str(dependency_one),
-                    "TARGET_TWO": str(dependency_two),
+                    "MODASH_TEST_HELPER": "load_one",
+                    "MODASH_TEST_TARGET_ONE": str(dependency_one),
+                    "MODASH_TEST_TARGET_TWO": str(dependency_two),
                 },
             )
 
@@ -423,7 +512,7 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                 "main.sh",
                 "\n".join([
                     'load_one() { source "$1"; }',
-                    '"$HELPER" "$TARGET_ONE"',
+                    '"$MODASH_TEST_HELPER" "$MODASH_TEST_TARGET_ONE"',
                     "",
                 ]),
             )

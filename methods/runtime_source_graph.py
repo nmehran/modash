@@ -627,8 +627,12 @@ def _is_trusted_xtrace_source_command(command: str, call_site_command: str):
 def _is_trace_wrapper_source_command(command: str):
     command = command.strip()
     return (
-        command == "__modash_trace_dot_source"
+        command == "__modash_trace_source_alias"
+        or command.startswith("__modash_trace_source_alias ")
+        or command == "__modash_trace_dot_source"
         or command.startswith("__modash_trace_dot_source ")
+        or command.startswith("__modash_trace_builtin ")
+        or command.startswith("__modash_trace_command ")
         or command == "__modash_trace_builtin source"
         or command.startswith("__modash_trace_builtin source ")
         or command == "__modash_trace_builtin ."

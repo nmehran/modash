@@ -239,7 +239,10 @@ against small pinned pacman/makepkg-style and child Bash fixtures:
 2. write an observation artifact
 3. generate a source supplement candidate
 4. compile executable output with that supplement
-5. run the compiled output without relying on the original runtime environment
+5. run both an untraced original and the compiled output under the same runtime
+   environment
+6. require trace, original, and compiled exit status, stdout, and stderr to
+   match
 
 Generated supplement artifacts are retained under:
 
@@ -322,7 +325,8 @@ Trusted graph replay is also promoted for manifest-selected runtime fixtures
 when `MODASH_REALWORLD_GRAPH=1` is set, or when the broader supplement replay
 gate is enabled. The graph replay path traces the original wrapper, builds a
 trusted runtime source graph, writes the graph review report, compiles through
-`compile-observed`, and compares the compiled output with the traced run.
+`compile-observed`, and compares both the trace and compiled replay with a
+separate untraced original run under the same environment.
 Manifest probes can also require specific observed source path suffixes, so a
 record cannot pass merely by observing an arbitrary source count. Result
 records include graph edge counts plus paths to the observation, runtime graph,

@@ -46,6 +46,15 @@ def shell_quote(value: str):
 
 
 def replace_runtime_source_references(line: str, filepath: str, entry_point: str):
+    return ''.join(
+        _replace_runtime_source_references_segment(segment, filepath, entry_point)
+        if expandable
+        else segment
+        for segment, expandable in _single_quote_aware_segments(line)
+    )
+
+
+def _replace_runtime_source_references_segment(segment: str, filepath: str, entry_point: str):
     bash_source = shell_quote(os.path.abspath(filepath))
     entry_source = shell_quote(os.path.abspath(entry_point))
 
@@ -62,9 +71,46 @@ def replace_runtime_source_references(line: str, filepath: str, entry_point: str
     }
 
     for old, new in replacements.items():
-        line = line.replace(old, new)
+        segment = segment.replace(old, new)
 
-    return re.sub(r'\$0(?![0-9])', entry_source, line)
+    return re.sub(r'\$0(?![0-9])', entry_source, segment)
+
+
+def _single_quote_aware_segments(line: str):
+    segments = []
+    current = []
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    segment_expandable = True
+
+    def flush():
+        nonlocal current
+        if current:
+            segments.append((''.join(current), segment_expandable))
+            current = []
+
+    for char in line:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\" and not in_single_quote:
+            current.append(char)
+            escaped = True
+            continue
+        if char == "'" and not in_double_quote:
+            flush()
+            current.append(char)
+            in_single_quote = not in_single_quote
+            segment_expandable = not in_single_quote
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+        current.append(char)
+
+    flush()
+    return tuple(segments)
 
 
 def indent_block(content: str, prefix: str):
@@ -744,6 +790,7 @@ def render_bash_c_source_command(
     command_prefix = " ".join(words[:command_index])
     command_name = strip_shell_word_quotes(words[command_index])
     payload = strip_shell_word_quotes(words[command_index + 2])
+    child_argv_words = tuple(words[command_index + 3:])
     inner_source_site = source_declaration.source_value or f"source {source_declaration.source_expression.strip()}"
 
     rendered_source = indent_shell_block(
@@ -765,7 +812,8 @@ def render_bash_c_source_command(
     if inner_source_site not in payload:
         raise ValueError(f"Could not replace bash -c source payload: {inner_source_site}")
     payload = payload.replace(inner_source_site, replacement, 1)
-    rewritten = f"{command_name} -c {shell_quote(payload)}"
+    rewritten_words = [command_name, "-c", shell_quote(payload), *child_argv_words]
+    rewritten = " ".join(rewritten_words)
     if command_prefix:
         return f"{command_prefix} {rewritten}"
     return rewritten

@@ -66,7 +66,7 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
         self.assertEqual(edge["from"], f"file:{entrypoint.resolve(strict=False)}")
         self.assertEqual(edge["to"], f"file:{dependency.resolve(strict=False)}")
         self.assertEqual(edge["call_site"]["command"], ". ./dep.sh")
-        self.assertEqual(edge["xtrace"]["command"], "__modash_trace_dot_source ./dep.sh")
+        self.assertEqual(edge["xtrace"]["command"], ". ./dep.sh")
 
     def test_builds_process_command_node_for_child_bash_c_source(self):
         with ScriptProject() as project:

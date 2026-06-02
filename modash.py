@@ -33,7 +33,9 @@ from methods.runtime_source_supplements import (
     write_generated_supplement,
 )
 from methods.shell_line import get_commands
+from methods.source_effects import SourceSite
 from methods.source_evaluator import SourceOverride
+from methods.source_frontend import LineParserFrontend
 from methods.source_resolver import (
     UnsupportedSourceError,
     parse_shell_words_preserving_quotes,
@@ -170,17 +172,55 @@ def _source_overrides_from_graph_payload(graph_payload):
         SourceOverride(
             path=edge["call_site"]["file"],
             line=edge["call_site"]["line"],
-            command=edge["call_site"]["command"],
+            command=_source_override_command(edge),
             resolved_path=edge["resolved_path"],
             arguments=tuple(edge["arguments"]),
         )
         for edge in graph_payload["edges"]
-        if edge["to"].startswith("file:")
+        if edge["from"].startswith("file:") and edge["to"].startswith("file:")
     ]
     return tuple([
         *direct_overrides,
         *_child_process_command_overrides_from_graph_payload(graph_payload),
     ])
+
+
+def _source_override_command(edge):
+    parsed_sites = _source_sites_on_line(edge["call_site"]["file"], edge["call_site"]["line"])
+    if len(parsed_sites) == 1:
+        return parsed_sites[0]
+    source_site = _first_direct_source_site(edge["call_site"]["command"])
+    return source_site or edge["call_site"]["command"]
+
+
+def _source_sites_on_line(path: str, line: int):
+    candidate = Path(path)
+    try:
+        content = candidate.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+
+    try:
+        ir = LineParserFrontend().parse(candidate, content)
+    except Exception:
+        return ()
+
+    sites = []
+
+    def collect(nodes):
+        for node in nodes:
+            if isinstance(node, SourceSite) and node.location.line == line:
+                sites.append(node.text)
+            body = getattr(node, "body", None)
+            if body:
+                collect(body)
+            for branch in getattr(node, "branches", ()):
+                collect(getattr(branch, "body", ()))
+            for arm in getattr(node, "arms", ()):
+                collect(getattr(arm, "body", ()))
+
+    collect(ir.nodes)
+    return tuple(sites)
 
 
 def _child_process_command_overrides_from_graph_payload(graph_payload):

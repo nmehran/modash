@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -56,6 +57,171 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(fingerprints["main.sh"].roles, ("entrypoint", "call-site"))
         self.assertEqual(fingerprints["dep.sh"].roles, ("source",))
         self.assertTrue(all(len(file.sha256) == 64 for file in result.observation.files))
+
+    def test_trace_preserves_inherited_source_positionals(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                'source "$DEP"\nprintf "main:%s:%s\\n" "${1-unset}" "${2-unset}"\n',
+            )
+            dependency = project.write(
+                "dep.sh",
+                'printf "dep:%s:%s\\n" "${1-unset}" "${2-unset}"\n',
+            )
+            env = {**os.environ, "DEP": str(dependency)}
+            expected = subprocess.run(
+                ["bash", str(entrypoint), "A", "B"],
+                cwd=str(project.root),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+
+            result = project.trace("main.sh", argv=("A", "B"), env={"DEP": str(dependency)})
+
+        self.assertEqual(expected.returncode, 0, expected.stderr)
+        self.assertEqual(result.returncode, expected.returncode, result.stderr)
+        self.assertEqual(result.stdout, expected.stdout)
+        self.assertEqual(result.observation.sources[0].arguments, ())
+
+    def test_trace_fails_closed_when_source_alias_removed_before_inherited_positionals(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write(
+                "main.sh",
+                'unalias source\nsource "$DEP"\nprintf "main\\n"\n',
+            )
+            dependency = project.write(
+                "dep.sh",
+                f'touch {str(sentinel)!r}\nprintf "dep:%s\\n" "${{1-unset}}"\n',
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh", argv=("A",), env={"DEP": str(dependency)})
+
+        self.assertEqual(context.exception.code, "runtime.trace.nontransparent-source")
+        self.assertIn("alias was removed", str(context.exception))
+        self.assertFalse(sentinel.exists())
+
+    def test_trace_fails_closed_for_inherited_source_shift(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write(
+                "main.sh",
+                'source "$DEP"\nprintf "main:%s\\n" "${1-unset}"\n',
+            )
+            dependency = project.write(
+                "dep.sh",
+                f'touch {str(sentinel)!r}\nshift\nprintf "dep:%s\\n" "${{1-unset}}"\n',
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh", argv=("A", "B"), env={"DEP": str(dependency)})
+
+        self.assertEqual(context.exception.code, "runtime.trace.nontransparent-source-positionals")
+        self.assertIn("may mutate caller positionals", str(context.exception))
+        self.assertFalse(sentinel.exists())
+
+    def test_trace_fails_closed_for_inherited_source_set_positionals(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write("main.sh", 'source "$DEP"\nprintf "main:%s\\n" "${1-unset}"\n')
+            dependency = project.write(
+                "dep.sh",
+                f'touch {str(sentinel)!r}\nset -- changed\n',
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh", argv=("A",), env={"DEP": str(dependency)})
+
+        self.assertEqual(context.exception.code, "runtime.trace.nontransparent-source-positionals")
+        self.assertFalse(sentinel.exists())
+
+    def test_trace_allows_no_arg_source_of_helper_file_with_function_shift(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                'source ./helpers.sh\nsource_alias "$DEP" "arg one" arg-two\n',
+            )
+            project.write(
+                "helpers.sh",
+                "\n".join([
+                    "source_alias() {",
+                    "  local path=$1",
+                    "  shift",
+                    '  source "$path" "$@"',
+                    "}",
+                    "",
+                ]),
+            )
+            dependency = project.write("dep.sh", 'printf "dep:%s:%s\\n" "$1" "$2"\n')
+            env = {**os.environ, "DEP": str(dependency)}
+            expected = subprocess.run(
+                ["bash", str(entrypoint)],
+                cwd=str(project.root),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+
+            result = project.trace("main.sh", env={"DEP": str(dependency)})
+
+        self.assertEqual(expected.returncode, 0, expected.stderr)
+        self.assertEqual(result.returncode, expected.returncode, result.stderr)
+        self.assertEqual(result.stdout, expected.stdout)
+        self.assertEqual([event.arguments for event in result.observation.sources], [(), ("arg one", "arg-two")])
+
+    def test_trace_allows_explicit_source_args_to_shift_positionals(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                'source "$DEP" X Y\nprintf "main:%s:%s\\n" "${1-unset}" "${2-unset}"\n',
+            )
+            dependency = project.write(
+                "dep.sh",
+                'printf "before:%s:%s\\n" "${1-unset}" "${2-unset}"\n'
+                'shift\n'
+                'printf "after:%s:%s\\n" "${1-unset}" "${2-unset}"\n',
+            )
+            env = {**os.environ, "DEP": str(dependency)}
+            expected = subprocess.run(
+                ["bash", str(entrypoint), "A", "B"],
+                cwd=str(project.root),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+
+            result = project.trace("main.sh", argv=("A", "B"), env={"DEP": str(dependency)})
+
+        self.assertEqual(expected.returncode, 0, expected.stderr)
+        self.assertEqual(result.returncode, expected.returncode, result.stderr)
+        self.assertEqual(result.stdout, expected.stdout)
+        self.assertEqual(result.observation.sources[0].arguments, ("X", "Y"))
+
+    def test_trace_fails_closed_for_child_bash_c_inherited_source_shift(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write(
+                "main.sh",
+                'bash -c \'. "$1"; printf "child:%s:%s\\n" "${1-unset}" "${2-unset}"\' child "$DEP" extra\n',
+            )
+            dependency = project.write(
+                "dep.sh",
+                f'touch {str(sentinel)!r}\nshift\n',
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh", env={"DEP": str(dependency)})
+
+        self.assertEqual(context.exception.code, "runtime.trace.nontransparent-source-positionals")
+        self.assertFalse(sentinel.exists())
 
     def test_trace_resolves_relative_entrypoint_from_process_cwd(self):
         original_cwd = os.getcwd()
@@ -248,6 +414,7 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
             project.write(
                 "main.sh",
                 "\n".join([
+                    "unalias source",
                     "unset -f source",
                     "source ./dep.sh",
                     "",
@@ -435,7 +602,7 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(event.status, 0)
         xtrace = result.observation.xtrace[event.xtrace_index]
         self.assertEqual(xtrace.source_identity, event.source_identity)
-        self.assertEqual(xtrace.command, "__modash_trace_dot_source ./dep.sh")
+        self.assertEqual(xtrace.command, ". ./dep.sh")
 
     def test_trace_records_command_bash_child_sources(self):
         with ScriptProject() as project:

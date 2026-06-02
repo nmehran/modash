@@ -1296,14 +1296,18 @@ def run_runtime_supplement_replay_probe(
             **compile_result,
         }
 
+    original = run_runtime_command(entrypoint_path, cwd, trace_environment, timeout_seconds)
     compiled = run_runtime_command(compiled_path, cwd, trace_environment, timeout_seconds)
-    if compiled["status"] == "timeout":
+    if original["status"] == "timeout" or compiled["status"] == "timeout":
         status = "timeout"
     else:
         matched = (
-            trace_result.returncode == compiled["returncode"]
-            and trace_result.stdout == compiled["stdout"]
-            and trace_result.stderr == compiled["stderr"]
+            trace_result.returncode == original["returncode"]
+            and trace_result.stdout == original["stdout"]
+            and trace_result.stderr == original["stderr"]
+            and original["returncode"] == compiled["returncode"]
+            and original["stdout"] == compiled["stdout"]
+            and original["stderr"] == compiled["stderr"]
         )
         status = "match" if matched else "mismatch"
 
@@ -1315,6 +1319,7 @@ def run_runtime_supplement_replay_probe(
         "trace_returncode": trace_result.returncode,
         "trace_stdout": trace_result.stdout,
         "trace_stderr": trace_result.stderr,
+        "original": original,
         "compiled": compiled,
         "observation_path": str(observation_path),
         "source_supplement": str(supplement_path),
@@ -1381,14 +1386,18 @@ def run_runtime_graph_replay_probe(
             },
         }
 
+    original = run_runtime_command(entrypoint_path, cwd, trace_environment, timeout_seconds)
     compiled = run_runtime_command(compiled_path, cwd, trace_environment, timeout_seconds)
-    if compiled["status"] == "timeout":
+    if original["status"] == "timeout" or compiled["status"] == "timeout":
         status = "timeout"
     else:
         matched = (
-            trace_result.returncode == compiled["returncode"]
-            and trace_result.stdout == compiled["stdout"]
-            and trace_result.stderr == compiled["stderr"]
+            trace_result.returncode == original["returncode"]
+            and trace_result.stdout == original["stdout"]
+            and trace_result.stderr == original["stderr"]
+            and original["returncode"] == compiled["returncode"]
+            and original["stdout"] == compiled["stdout"]
+            and original["stderr"] == compiled["stderr"]
         )
         status = "match" if matched else "mismatch"
 
@@ -1401,6 +1410,7 @@ def run_runtime_graph_replay_probe(
         "trace_returncode": trace_result.returncode,
         "trace_stdout": trace_result.stdout,
         "trace_stderr": trace_result.stderr,
+        "original": original,
         "compiled": compiled,
         "observation_path": str(observation_path),
         "runtime_graph": str(graph_path),
@@ -1558,6 +1568,24 @@ def short_text(value, limit=160):
 
 
 class RealWorldHarnessHelperTestCase(unittest.TestCase):
+    def write_trace_sensitive_runtime_project(self, root):
+        entrypoint = root / "main.sh"
+        dependency = root / "dep.sh"
+        entrypoint.write_text(
+            "\n".join([
+                "source ./dep.sh",
+                'if [[ -n ${MODASH_TRACE_FILE-} ]]; then',
+                '  printf "mode:trace\\n"',
+                "else",
+                '  printf "mode:original\\n"',
+                "fi",
+                "",
+            ]),
+            encoding="utf-8",
+        )
+        dependency.write_text('printf "dep\\n"\n', encoding="utf-8")
+        return entrypoint
+
     def test_manifest_rejects_invalid_behavior_class(self):
         project = {
             "name": "sample",
@@ -1640,6 +1668,57 @@ class RealWorldHarnessHelperTestCase(unittest.TestCase):
                 {"stdout": "same\n", "stderr": ""},
             ),
         )
+
+    def test_supplement_replay_probe_detects_trace_original_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            entrypoint = self.write_trace_sensitive_runtime_project(root)
+
+            probe = run_runtime_supplement_replay_probe(
+                entrypoint,
+                root,
+                {},
+                DEFAULT_MODE_TIMEOUT_SECONDS,
+                root / "observation.json",
+                root / "source-supplement.json",
+                root / "review-report.json",
+                root / "compiled.sh",
+            )
+
+        self.assertEqual(probe["status"], "mismatch")
+        self.assertEqual(probe["source_events"], 1)
+        self.assertEqual(probe["trace_returncode"], 0)
+        self.assertEqual(probe["trace_stdout"], "dep\nmode:trace\n")
+        self.assertEqual(probe["original"]["returncode"], 0)
+        self.assertEqual(probe["original"]["stdout"], "dep\nmode:original\n")
+        self.assertEqual(probe["compiled"]["returncode"], 0)
+        self.assertEqual(probe["compiled"]["stdout"], probe["original"]["stdout"])
+
+    def test_graph_replay_probe_detects_trace_original_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            entrypoint = self.write_trace_sensitive_runtime_project(root)
+
+            probe = run_runtime_graph_replay_probe(
+                entrypoint,
+                root,
+                {},
+                DEFAULT_MODE_TIMEOUT_SECONDS,
+                root / "observation.json",
+                root / "runtime-source-graph.json",
+                root / "runtime-source-graph.txt",
+                root / "compiled.sh",
+            )
+
+        self.assertEqual(probe["status"], "mismatch")
+        self.assertEqual(probe["source_events"], 1)
+        self.assertEqual(probe["graph_edges"], 1)
+        self.assertEqual(probe["trace_returncode"], 0)
+        self.assertEqual(probe["trace_stdout"], "dep\nmode:trace\n")
+        self.assertEqual(probe["original"]["returncode"], 0)
+        self.assertEqual(probe["original"]["stdout"], "dep\nmode:original\n")
+        self.assertEqual(probe["compiled"]["returncode"], 0)
+        self.assertEqual(probe["compiled"]["stdout"], probe["original"]["stdout"])
 
 
 @unittest.skipUnless(

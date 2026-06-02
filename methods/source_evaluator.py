@@ -514,6 +514,7 @@ class SourceEvaluator:
         self._function_dispatch_signature_indexes.clear()
         self._evaluate_file(entrypoint, state, ())
         self._ensure_retained_helpers_resolved()
+        self._ensure_source_overrides_consumed()
         return EvaluationResult(
             events=self._with_occurrence_models(self.events),
             disabled_sources=tuple(self.disabled_sources),
@@ -4518,6 +4519,20 @@ class SourceEvaluator:
             return SOURCE_OVERRIDE_EXHAUSTED
         self._source_override_indexes[key] += 1
         return overrides[index]
+
+    def _ensure_source_overrides_consumed(self):
+        for key, overrides in sorted(self.source_overrides.items(), key=lambda item: (str(item[0][0]), item[0][1], item[0][2])):
+            consumed = self._source_override_indexes[key]
+            if consumed >= len(overrides):
+                continue
+            path, line, command = key
+            remaining = len(overrides) - consumed
+            plural = "edge" if remaining == 1 else "edges"
+            raise UnsupportedSourceError(
+                "trusted runtime graph replay did not consume "
+                f"{remaining} source {plural}: {path}:{line}: {command}",
+                code="unsupported.source.graph-unconsumed",
+            )
 
     def _resolve_source_invocation(
         self,
