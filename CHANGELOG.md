@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Expanded CI coverage to Python 3.10 through 3.14 and added the Python 3.14
+  package classifier after the full matrix passed.
+
 ## v0.4.1 - 2026-06-02
 
 Python 3.10 compatibility patch release.
