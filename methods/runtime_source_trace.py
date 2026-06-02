@@ -50,16 +50,13 @@ class _RawSourceEvent:
 
 
 def trace_sources(entrypoint: str | os.PathLike, *, argv=None, cwd=None, env=None, bash="bash"):
-    entrypoint_path = Path(entrypoint)
-    if cwd is None:
-        cwd_path = entrypoint_path.parent if entrypoint_path.parent != Path("") else Path.cwd()
-    else:
-        cwd_path = Path(cwd)
-    cwd_path = cwd_path.resolve(strict=False)
-
-    if not entrypoint_path.is_absolute():
-        entrypoint_path = cwd_path / entrypoint_path
-    entrypoint_path = entrypoint_path.resolve(strict=False)
+    cwd_is_explicit = cwd is not None
+    entrypoint_path, cwd_path = _resolve_trace_paths(entrypoint, cwd)
+    if cwd_is_explicit and not cwd_path.is_dir():
+        raise RuntimeSourceTraceError(
+            f"runtime trace cwd does not exist or is not a directory: {cwd_path}",
+            code="runtime.trace.cwd_missing",
+        )
     if not entrypoint_path.is_file():
         raise RuntimeSourceTraceError(
             f"runtime trace entrypoint does not exist: {entrypoint_path}",
@@ -91,6 +88,7 @@ def trace_sources(entrypoint: str | os.PathLike, *, argv=None, cwd=None, env=Non
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                errors="replace",
             )
         except OSError as exc:
             raise RuntimeSourceTraceError(
@@ -135,6 +133,22 @@ def _trace_environment(env):
     return run_env
 
 
+def _resolve_trace_paths(entrypoint, cwd):
+    entrypoint_path = Path(entrypoint)
+    if cwd is None:
+        base = Path.cwd()
+        resolved_entrypoint = (
+            entrypoint_path if entrypoint_path.is_absolute() else base / entrypoint_path
+        ).resolve(strict=False)
+        return resolved_entrypoint, resolved_entrypoint.parent
+
+    cwd_path = Path(cwd).resolve(strict=False)
+    resolved_entrypoint = (
+        entrypoint_path if entrypoint_path.is_absolute() else cwd_path / entrypoint_path
+    ).resolve(strict=False)
+    return resolved_entrypoint, cwd_path
+
+
 def _artifact_stem(entrypoint):
     stem = Path(entrypoint).name or "trace"
     safe = []
@@ -153,6 +167,7 @@ def _bash_version(bash):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            errors="replace",
             check=False,
         )
     except OSError as exc:

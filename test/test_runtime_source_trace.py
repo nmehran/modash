@@ -1,3 +1,4 @@
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -28,6 +29,36 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(event.resolved_path, str(dependency.resolve(strict=False)))
         self.assertEqual(event.arguments, ())
         self.assertEqual(event.status, 0)
+
+    def test_trace_resolves_relative_entrypoint_from_process_cwd(self):
+        original_cwd = os.getcwd()
+        try:
+            with ScriptProject() as project:
+                entrypoint = project.write("scripts/main.sh", 'source ./dep.sh\n')
+                dependency = project.write("scripts/dep.sh", "echo dep\n")
+                os.chdir(project.root)
+
+                result = trace_sources("scripts/main.sh")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.observation.entrypoint, str(entrypoint.resolve(strict=False)))
+            self.assertEqual(result.observation.cwd, str(entrypoint.parent.resolve(strict=False)))
+            self.assertEqual(result.observation.sources[0].resolved_path, str(dependency.resolve(strict=False)))
+        finally:
+            os.chdir(original_cwd)
+
+    def test_trace_resolves_relative_entrypoint_from_explicit_cwd(self):
+        with ScriptProject() as project:
+            workdir = project.mkdir("work")
+            entrypoint = project.write("work/main.sh", 'source ./dep.sh\n')
+            dependency = project.write("work/dep.sh", "echo dep\n")
+
+            result = trace_sources("main.sh", cwd=workdir)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.observation.entrypoint, str(entrypoint.resolve(strict=False)))
+        self.assertEqual(result.observation.cwd, str(workdir.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[0].resolved_path, str(dependency.resolve(strict=False)))
 
     def test_trace_records_dot_source_arguments(self):
         with ScriptProject() as project:
@@ -150,6 +181,15 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
                 trace_sources(project.path("missing.sh"))
 
         self.assertEqual(context.exception.code, "runtime.trace.entrypoint_missing")
+
+    def test_trace_rejects_missing_cwd_with_stable_code(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "echo main\n")
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                trace_sources("main.sh", cwd=project.path("missing-cwd"))
+
+        self.assertEqual(context.exception.code, "runtime.trace.cwd_missing")
 
     def test_trace_rejects_unavailable_bash_with_stable_code(self):
         with ScriptProject() as project:

@@ -98,6 +98,34 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
         self.assertEqual(result.stdout, "dep\n")
         self.assertEqual(len(artifacts), 1)
 
+    def test_trace_cli_resolves_relative_entrypoint_from_process_cwd(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("scripts/main.sh", "source ./dep.sh\n")
+            dependency = project.write("scripts/dep.sh", "echo dep\n")
+            output = project.path("trace.json")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modashc.py"),
+                    "trace",
+                    "scripts/main.sh",
+                    "--output",
+                    str(output),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            data = json.loads(output.read_text())
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(data["entrypoint"], str(entrypoint.resolve(strict=False)))
+        self.assertEqual(data["cwd"], str(entrypoint.parent.resolve(strict=False)))
+        self.assertEqual(data["sources"][0]["resolved_path"], str(dependency.resolve(strict=False)))
+
     def test_trace_cli_rejects_bad_environment_overlay(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", "echo main\n")
@@ -119,6 +147,30 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
 
         self.assertEqual(result.returncode, 2)
         self.assertIn("invalid --env value", result.stderr)
+
+    def test_trace_cli_rejects_output_and_output_dir_together(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "echo main\n")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modashc.py"),
+                    "trace",
+                    str(entrypoint),
+                    "--output",
+                    str(project.path("trace.json")),
+                    "--output-dir",
+                    str(project.path("trace-output")),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("mutually exclusive", result.stderr)
 
     def test_existing_compile_cli_still_uses_original_positional_form(self):
         with ScriptProject() as project:
