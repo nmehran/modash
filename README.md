@@ -75,34 +75,39 @@ Runtime tracing is explicit because it runs the target script.
 
 ```sh
 modash trace scripts/main.sh --output observation.json -- --flag
-modash supplement scripts/main.sh --from-observation observation.json --output source-supplement.json
+modash graph scripts/main.sh --from-observation observation.json --output runtime-graph.json
+modash supplement scripts/main.sh --from-graph runtime-graph.json --output source-supplement.json
 modash scripts/main.sh merged.sh --mode executable --source-supplement source-supplement.json
 ```
 
 `modash trace` writes an observation JSON artifact. Current observations include
-process provenance, resolved source events, and schema `3` file fingerprints for
-stale-observation detection.
+process provenance, resolved source events, linked xtrace source provenance, and
+schema `4` file fingerprints for stale-observation detection.
+
+`modash graph` validates a trace observation and writes a trusted runtime source
+graph. Graph edges link wrapper-observed source events to sanitized xtrace
+provenance and fail closed if that trust link is missing or stale.
 
 `modash supplement` writes:
 
 - a schema `1` JSON source supplement candidate
 - an observation review report, defaulting to `OUTPUT.report.json`
 
-Generated supplements are exact data, not shell code. Review the supplement and
-report before compiling with `--source-supplement`. Observation reports can warn
-about unobserved source-capable sites, but one traced run is not proof of every
-branch.
+Generated supplements are exact data, not shell code. Review the graph,
+supplement, and report before compiling with `--source-supplement`.
+Observation reports can warn about unobserved source-capable sites, but one
+traced run is not proof of every branch.
 
-Trusted xtrace graph construction and automatic compile-from-trace remain future
-work. Today, runtime discovery is a review aid that feeds deterministic
-compilation only after the supplement is made explicit.
+Automatic compile-from-trace remains future work. Runtime discovery still feeds
+deterministic compilation only after the supplement is made explicit.
 
 ## Commands
 
 ```sh
 modash <entrypoint> <output> [--mode context|executable] [--source-supplement FILE]
 modash trace <entrypoint> [--cwd DIR] [--env KEY=VALUE] [--output FILE] [--timeout SECONDS] [--] [args...]
-modash supplement <entrypoint> --from-observation observation.json --output source-supplement.json [--report report.json]
+modash graph <entrypoint> --from-observation observation.json --output runtime-graph.json
+modash supplement <entrypoint> (--from-observation observation.json [--report report.json] | --from-graph runtime-graph.json) --output source-supplement.json
 ```
 
 Useful options:
@@ -113,6 +118,8 @@ Useful options:
 - `trace --cwd DIR`: run the target script from a specific directory.
 - `trace --env KEY=VALUE`: add an environment overlay for the traced run.
 - `trace --timeout SECONDS`: bound target execution. Default: `30`.
+- `graph --from-observation FILE`: build a trusted source graph from a trace
+  observation.
 - `supplement --report FILE`: choose the review report path.
 
 ## Development

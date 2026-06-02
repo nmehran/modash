@@ -16,9 +16,16 @@ from methods.runtime_observation_reports import (
     build_observation_report,
     write_observation_report,
 )
+from methods.runtime_source_graph import (
+    RuntimeSourceGraphError,
+    build_observed_source_graph,
+    load_observed_source_graph,
+    write_observed_source_graph,
+)
 from methods.runtime_source_supplements import (
     RuntimeSupplementGenerationError,
     generate_source_supplement,
+    generate_source_supplement_from_graph,
     write_generated_supplement,
 )
 from methods.source_resolver import UnsupportedSourceError
@@ -62,6 +69,20 @@ def supplement_main(entrypoint, *, observation, output, report=None):
     report_path = write_observation_report(report_payload, report or f"{supplement_path}.report.json")
     print(f"modash: source supplement: {supplement_path.resolve(strict=False)}", file=sys.stderr)
     print(f"modash: observation review report: {report_path.resolve(strict=False)}", file=sys.stderr)
+
+
+def graph_main(entrypoint, *, observation, output):
+    observation_payload = load_observation(observation)
+    graph = build_observed_source_graph(entrypoint, observation_payload)
+    graph_path = write_observed_source_graph(graph, output)
+    print(f"modash: runtime source graph: {graph_path.resolve(strict=False)}", file=sys.stderr)
+
+
+def supplement_from_graph_main(entrypoint, *, graph, output):
+    graph_payload = load_observed_source_graph(graph)
+    supplement = generate_source_supplement_from_graph(entrypoint, graph_payload)
+    supplement_path = write_generated_supplement(supplement, output)
+    print(f"modash: source supplement: {supplement_path.resolve(strict=False)}", file=sys.stderr)
 
 
 def parse_env_overlay(values):
@@ -136,10 +157,14 @@ def trace_cli(argv):
 def supplement_cli(argv):
     parser = argparse.ArgumentParser(description='Generate a source supplement candidate from a trace observation.')
     parser.add_argument('entrypoint', type=str, help='The Bash script that was traced.')
-    parser.add_argument(
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument(
         '--from-observation',
-        required=True,
         help='Runtime source observation JSON produced by the trace command.',
+    )
+    source_group.add_argument(
+        '--from-graph',
+        help='Trusted runtime source graph JSON produced by the graph command.',
     )
     parser.add_argument(
         '--output',
@@ -151,7 +176,29 @@ def supplement_cli(argv):
         help='Observation review report JSON file to write. Defaults to OUTPUT.report.json.',
     )
     args = parser.parse_args(argv)
-    supplement_main(args.entrypoint, observation=args.from_observation, output=args.output, report=args.report)
+    if args.from_observation:
+        supplement_main(args.entrypoint, observation=args.from_observation, output=args.output, report=args.report)
+        return
+    if args.report:
+        parser.error('--report is only valid with --from-observation')
+    supplement_from_graph_main(args.entrypoint, graph=args.from_graph, output=args.output)
+
+
+def graph_cli(argv):
+    parser = argparse.ArgumentParser(description='Build a trusted runtime source graph from a trace observation.')
+    parser.add_argument('entrypoint', type=str, help='The Bash script that was traced.')
+    parser.add_argument(
+        '--from-observation',
+        required=True,
+        help='Runtime source observation JSON produced by the trace command.',
+    )
+    parser.add_argument(
+        '--output',
+        required=True,
+        help='Runtime source graph JSON file to write.',
+    )
+    args = parser.parse_args(argv)
+    graph_main(args.entrypoint, observation=args.from_observation, output=args.output)
 
 
 def cli_main(argv=None):
@@ -167,7 +214,20 @@ def cli_main(argv=None):
     if len(argv) > 0 and argv[0] == "supplement":
         try:
             supplement_cli(argv[1:])
-        except (RuntimeSupplementGenerationError, RuntimeObservationReportError, RuntimeSourceObservationError) as exc:
+        except (
+            RuntimeSupplementGenerationError,
+            RuntimeObservationReportError,
+            RuntimeSourceGraphError,
+            RuntimeSourceObservationError,
+        ) as exc:
+            print(f"modash: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    if len(argv) > 0 and argv[0] == "graph":
+        try:
+            graph_cli(argv[1:])
+        except (RuntimeSourceGraphError, RuntimeSourceObservationError) as exc:
             print(f"modash: {exc}", file=sys.stderr)
             return 1
         return 0

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Runtime observations now use schema `4` and persist sanitized xtrace source
+  provenance linked to wrapper-observed source events.
+- Added `modash graph` to build a trusted runtime source graph from trace
+  observations.
+- `modash supplement` can now generate deterministic source supplements from a
+  trusted runtime graph.
+
 ## v0.4.5 - 2026-06-02
 
 ### Added

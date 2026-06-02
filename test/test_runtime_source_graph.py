@@ -10,6 +10,7 @@ if str(REPO_ROOT) not in sys.path:
 from methods.runtime_source_graph import (  # noqa: E402
     RuntimeSourceGraphError,
     build_observed_source_graph,
+    load_observed_source_graph,
     write_observed_source_graph,
 )
 from methods.runtime_source_observations import (  # noqa: E402
@@ -134,9 +135,18 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
             written = write_observed_source_graph(graph, path)
             text = written.read_text()
             payload = json.loads(text)
+            loaded = load_observed_source_graph(path)
 
             self.assertEqual(payload["version"], 1)
+            self.assertEqual(loaded["version"], 1)
             self.assertTrue(text.endswith("\n"))
+
+    def test_load_graph_rejects_missing_file_with_stable_code(self):
+        with ScriptProject() as project:
+            with self.assertRaises(RuntimeSourceGraphError) as context:
+                load_observed_source_graph(project.path("missing-graph.json"))
+
+        self.assertEqual(context.exception.code, "runtime.graph.missing")
 
 
 if __name__ == "__main__":

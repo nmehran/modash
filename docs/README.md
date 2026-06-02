@@ -12,8 +12,9 @@ by tests, changelog entries, and user-facing docs.
 - [Source Supplements](source-supplements.md): JSON supplement format and exact
   helper-source workflow for runtime-dynamic values.
 - [Runtime Source Discovery](runtime-source-discovery.md): north-star runtime
-  observe -> review -> supplement -> deterministic compile workflow, current
-  observation schema, safety model, and remaining runtime-discovery roadmap.
+  observe -> graph -> review/supplement -> deterministic compile workflow,
+  current observation and graph schemas, safety model, and remaining
+  runtime-discovery roadmap.
 - [Real-World Internal Test Suite](real-world-test-suite.md): opt-in pinned
   corpus, generated artifact, runtime parity, trace, and supplement replay
   gates.

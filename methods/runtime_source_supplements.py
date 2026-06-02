@@ -13,6 +13,11 @@ from methods.runtime_source_observations import (
     load_observation,
     validate_observation,
 )
+from methods.runtime_source_graph import (
+    ensure_graph_fingerprints_current,
+    load_observed_source_graph,
+    validate_observed_source_graph,
+)
 from methods.source_resolver import parse_shell_words_preserving_quotes, strip_shell_word_quotes
 from methods.source_supplements import SUPPLEMENT_VERSION, load_source_supplement
 
@@ -47,6 +52,15 @@ class GeneratedSourceSupplement:
         }
 
 
+@dataclass(frozen=True)
+class _SupplementSourceEvent:
+    call_site_file: str
+    call_site_line: int
+    call_site_command: str
+    resolved_path: str
+    arguments: tuple[str, ...]
+
+
 def generate_source_supplement(entrypoint: str | os.PathLike, observation, *, validate_fingerprints=True):
     entrypoint_path = Path(entrypoint).resolve(strict=False)
     observation = _coerce_observation(observation)
@@ -54,12 +68,50 @@ def generate_source_supplement(entrypoint: str | os.PathLike, observation, *, va
     if validate_fingerprints:
         _ensure_observation_fingerprints_current(observation)
 
+    return _generate_source_supplement_from_events(
+        entrypoint_path,
+        (
+            _SupplementSourceEvent(
+                call_site_file=event.call_site.file,
+                call_site_line=event.call_site.line,
+                call_site_command=event.call_site.command,
+                resolved_path=event.resolved_path,
+                arguments=event.arguments,
+            )
+            for event in observation.sources
+        ),
+    )
+
+
+def generate_source_supplement_from_graph(entrypoint: str | os.PathLike, graph, *, validate_fingerprints=True):
+    entrypoint_path = Path(entrypoint).resolve(strict=False)
+    graph = _coerce_graph(graph)
+    _ensure_graph_matches_entrypoint(entrypoint_path, graph)
+    if validate_fingerprints:
+        ensure_graph_fingerprints_current(graph)
+
+    return _generate_source_supplement_from_events(
+        entrypoint_path,
+        (
+            _SupplementSourceEvent(
+                call_site_file=edge["call_site"]["file"],
+                call_site_line=edge["call_site"]["line"],
+                call_site_command=edge["call_site"]["command"],
+                resolved_path=edge["resolved_path"],
+                arguments=tuple(edge["arguments"]),
+            )
+            for edge in graph["edges"]
+        ),
+    )
+
+
+def _generate_source_supplement_from_events(entrypoint_path: Path, source_events):
     entrypoint_directory = entrypoint_path.parent
     variables = {}
     functions: dict[str, list[dict[str, list[str]]]] = {}
 
-    for event in observation.sources:
-        source_word = _source_word_from_command(event.call_site.command)
+    for event in source_events:
+        source_word = _source_word_from_command(event.call_site_command)
         if not source_word:
             continue
 
@@ -75,7 +127,7 @@ def generate_source_supplement(entrypoint: str | os.PathLike, observation, *, va
             variables[name] = value
 
         if _is_positional_source_word(source_word):
-            function_name = _enclosing_function_name(event.call_site.file, event.call_site.line)
+            function_name = _enclosing_function_name(event.call_site_file, event.call_site_line)
             if function_name:
                 arguments = [
                     _review_path(event.resolved_path, entrypoint_directory),
@@ -102,6 +154,10 @@ def generate_source_supplement_from_observation_file(entrypoint: str | os.PathLi
     return generate_source_supplement(entrypoint, load_observation(observation_path))
 
 
+def generate_source_supplement_from_graph_file(entrypoint: str | os.PathLike, graph_path: str | os.PathLike):
+    return generate_source_supplement_from_graph(entrypoint, load_observed_source_graph(graph_path))
+
+
 def write_generated_supplement(supplement: GeneratedSourceSupplement | dict, path: str | os.PathLike):
     payload = _coerce_supplement(supplement).to_dict()
     target = Path(path)
@@ -121,6 +177,10 @@ def _coerce_observation(observation):
     return validate_observation(observation)
 
 
+def _coerce_graph(graph):
+    return validate_observed_source_graph(graph)
+
+
 def _coerce_supplement(supplement):
     if isinstance(supplement, GeneratedSourceSupplement):
         return supplement
@@ -134,6 +194,15 @@ def _ensure_observation_matches_entrypoint(entrypoint_path: Path, observation: R
     if observed_entrypoint != entrypoint_path:
         raise RuntimeSupplementGenerationError(
             f"observation entrypoint does not match requested entrypoint: {observed_entrypoint}",
+            code="runtime.supplement.entrypoint_mismatch",
+        )
+
+
+def _ensure_graph_matches_entrypoint(entrypoint_path: Path, graph: dict):
+    observed_entrypoint = Path(graph["entrypoint"]).resolve(strict=False)
+    if observed_entrypoint != entrypoint_path:
+        raise RuntimeSupplementGenerationError(
+            f"runtime source graph entrypoint does not match requested entrypoint: {observed_entrypoint}",
             code="runtime.supplement.entrypoint_mismatch",
         )
 

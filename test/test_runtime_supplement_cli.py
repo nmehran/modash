@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -13,6 +14,41 @@ from test.support import ScriptProject  # noqa: E402
 
 
 class RuntimeSupplementCliTestCase(unittest.TestCase):
+    def test_graph_cli_writes_trusted_runtime_graph(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./dep.sh arg\n")
+            dependency = project.write("dep.sh", 'printf "dep:%s\\n" "$1"\n')
+            observation = trace_sources(entrypoint)
+            observation_path = project.path("observation.json")
+            graph_path = project.path("runtime-graph.json")
+            write_trace_observation(observation, observation_path)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "graph",
+                    str(entrypoint),
+                    "--from-observation",
+                    str(observation_path),
+                    "--output",
+                    str(graph_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            graph = json.loads(graph_path.read_text())
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("modash: runtime source graph:", result.stderr)
+        self.assertEqual(graph["version"], 1)
+        self.assertEqual(graph["observation_version"], 4)
+        self.assertEqual(graph["edges"][0]["resolved_path"], str(dependency.resolve(strict=False)))
+        self.assertEqual(graph["edges"][0]["xtrace"]["command"], "source ./dep.sh arg")
+
     def test_supplement_cli_generates_candidate_from_observation(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", 'source "$LIB_DIR/dep.sh"\n')
@@ -56,6 +92,88 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
         self.assertEqual(report["version"], 1)
         self.assertEqual(report["observation_version"], 4)
         self.assertEqual(report["summary"]["warnings"], 0)
+
+    def test_supplement_cli_generates_candidate_from_graph(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source "$LIB_DIR/dep.sh"\n')
+            project.write("lib/dep.sh", "echo dep\n")
+            observation = trace_sources(entrypoint, env={"LIB_DIR": str(project.path("lib"))})
+            observation_path = project.path("observation.json")
+            graph_path = project.path("runtime-graph.json")
+            supplement_path = project.path("source-supplement.json")
+            output_path = project.path("compiled.sh")
+            write_trace_observation(observation, observation_path)
+
+            graph_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "graph",
+                    str(entrypoint),
+                    "--from-observation",
+                    str(observation_path),
+                    "--output",
+                    str(graph_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            supplement_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "supplement",
+                    str(entrypoint),
+                    "--from-graph",
+                    str(graph_path),
+                    "--output",
+                    str(supplement_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            compile_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    str(entrypoint),
+                    str(output_path),
+                    "--mode",
+                    "executable",
+                    "--source-supplement",
+                    str(supplement_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            run_result = subprocess.run(
+                ["bash", str(output_path)],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env={**os.environ, "LIB_DIR": str(project.path("lib"))},
+            )
+            payload = json.loads(supplement_path.read_text())
+
+        self.assertEqual(graph_result.returncode, 0, graph_result.stderr)
+        self.assertEqual(supplement_result.returncode, 0, supplement_result.stderr)
+        self.assertEqual(compile_result.returncode, 0, compile_result.stderr)
+        self.assertEqual(run_result.returncode, 0, run_result.stderr)
+        self.assertEqual(run_result.stdout, "dep\n")
+        self.assertEqual(payload, {
+            "version": 1,
+            "variables": {
+                "LIB_DIR": "lib",
+            },
+            "functions": {},
+        })
 
     def test_supplement_cli_writes_explicit_report_path(self):
         with ScriptProject() as project:

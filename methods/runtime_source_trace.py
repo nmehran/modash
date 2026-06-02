@@ -548,9 +548,10 @@ def _xtrace_source_commands(raw_xtrace: bytes, *, prelude_path: str):
         record = _parse_xtrace_line(line)
         if record is None:
             continue
-        if record.file == prelude_path:
+        record_file = _normalized_xtrace_file(record, None)
+        if record_file == prelude_path:
             continue
-        source_line = _source_line(record.file, record.line)
+        source_line = _source_line(record_file, record.line)
         if _is_xtrace_source_like(record.command) or _is_xtrace_source_like(source_line):
             commands.append(record)
     return tuple(
