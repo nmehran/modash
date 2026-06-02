@@ -39,7 +39,7 @@ The separation matters:
 
 1. `trace` runs the original program and records what happened.
 2. `graph` validates observed source events against sanitized xtrace provenance
-   and writes a trusted graph artifact.
+   and writes a trusted graph artifact plus a compact text review report.
 3. `supplement` turns reviewed observations or graphs into explicit compiler
    input.
 4. normal executable compile consumes only deterministic supplement data.
@@ -161,6 +161,17 @@ hand-edited graph cannot weaken the observed trust relationship without being
 rejected. A graph is a trusted representation of one observed execution, not
 proof that every branch was exercised.
 
+`modash graph` writes a text report beside the graph by default:
+
+```sh
+modash graph ./entry.sh --from-observation observation.json --output runtime-graph.json
+# report: runtime-graph.json.report.txt
+```
+
+The report summarizes why the graph is trusted, lists the source edges with
+their identities and xtrace commands, and records the file fingerprints that
+must remain current for replay.
+
 ## Review Report
 
 `modash supplement` also writes an observation review report. The report is a
@@ -200,6 +211,7 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
   rejection
 - trusted runtime source graph construction
 - strict graph invariant validation for reviewed graph replay
+- compact human-readable graph review reports
 - source supplement generation from trusted graphs
 - explicit self-supplemented executable compile from a trusted graph
 - review reports for unobserved source-capable file-backed sites

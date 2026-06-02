@@ -14,6 +14,7 @@ from methods.runtime_source_graph import (  # noqa: E402
     ensure_graph_fingerprints_current,
     load_observed_source_graph,
     validate_observed_source_graph,
+    write_observed_source_graph_review,
     write_observed_source_graph,
 )
 from methods.runtime_source_observations import (  # noqa: E402
@@ -282,8 +283,25 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
             loaded = load_observed_source_graph(path)
 
             self.assertEqual(payload["version"], 1)
-            self.assertEqual(loaded["version"], 1)
-            self.assertTrue(text.endswith("\n"))
+        self.assertEqual(loaded["version"], 1)
+        self.assertTrue(text.endswith("\n"))
+
+    def test_writes_human_readable_graph_review_report(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./dep.sh arg\n")
+            dependency = project.write("dep.sh", "echo dep\n")
+            graph = build_observed_source_graph(entrypoint, project.trace("main.sh").observation)
+            report_path = project.path("reports/runtime-graph.txt")
+
+            written = write_observed_source_graph_review(graph, report_path)
+            text = written.read_text()
+
+        self.assertIn("modash runtime source graph review", text)
+        self.assertIn("trusted: yes", text)
+        self.assertIn("source identity", text.replace("_", " "))
+        self.assertIn(str(dependency.resolve(strict=False)), text)
+        self.assertIn("xtrace:", text)
+        self.assertTrue(text.endswith("\n"))
 
     def test_load_graph_rejects_missing_file_with_stable_code(self):
         with ScriptProject() as project:

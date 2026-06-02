@@ -7,7 +7,7 @@
 - Runtime observations now use schema `5` and persist source identities linking
   wrapper-observed source events to sanitized xtrace source provenance.
 - Added `modash graph` to build a trusted runtime source graph from trace
-  observations.
+  observations and write a compact human-readable graph review report.
 - `modash supplement` can now generate deterministic source supplements from a
   trusted runtime graph.
 - Added `modash compile-observed` to compile executable output from a trusted

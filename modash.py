@@ -22,6 +22,7 @@ from methods.runtime_source_graph import (
     build_observed_source_graph,
     load_observed_source_graph,
     write_observed_source_graph,
+    write_observed_source_graph_review,
 )
 from methods.runtime_source_supplements import (
     RuntimeSupplementGenerationError,
@@ -73,11 +74,13 @@ def supplement_main(entrypoint, *, observation, output, report=None):
     print(f"modash: observation review report: {report_path.resolve(strict=False)}", file=sys.stderr)
 
 
-def graph_main(entrypoint, *, observation, output):
+def graph_main(entrypoint, *, observation, output, report=None):
     observation_payload = load_observation(observation)
     graph = build_observed_source_graph(entrypoint, observation_payload)
     graph_path = write_observed_source_graph(graph, output)
+    report_path = write_observed_source_graph_review(graph, report or f"{graph_path}.report.txt")
     print(f"modash: runtime source graph: {graph_path.resolve(strict=False)}", file=sys.stderr)
+    print(f"modash: runtime graph review report: {report_path.resolve(strict=False)}", file=sys.stderr)
 
 
 def supplement_from_graph_main(entrypoint, *, graph, output):
@@ -214,8 +217,12 @@ def graph_cli(argv):
         required=True,
         help='Runtime source graph JSON file to write.',
     )
+    parser.add_argument(
+        '--report',
+        help='Human-readable graph review report file to write. Defaults to OUTPUT.report.txt.',
+    )
     args = parser.parse_args(argv)
-    graph_main(args.entrypoint, observation=args.from_observation, output=args.output)
+    graph_main(args.entrypoint, observation=args.from_observation, output=args.output, report=args.report)
 
 
 def compile_observed_cli(argv):

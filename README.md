@@ -95,7 +95,8 @@ detection.
 `modash graph` validates a trace observation and writes a trusted runtime source
 graph. Graph edges link wrapper-observed source events to sanitized xtrace
 provenance and fail closed if that trust link is missing, stale, or inconsistent
-with the graph's process, file, edge, and fingerprint invariants.
+with the graph's process, file, edge, and fingerprint invariants. It also writes
+a compact text review report beside the graph by default.
 
 `modash supplement` writes:
 
@@ -115,7 +116,7 @@ deterministic compilation only after the trusted graph is made explicit.
 ```sh
 modash <entrypoint> <output> [--mode context|executable] [--source-supplement FILE]
 modash trace <entrypoint> [--cwd DIR] [--env KEY=VALUE] [--output FILE] [--timeout SECONDS] [--] [args...]
-modash graph <entrypoint> --from-observation observation.json --output runtime-graph.json
+modash graph <entrypoint> --from-observation observation.json --output runtime-graph.json [--report graph-review.txt]
 modash supplement <entrypoint> (--from-observation observation.json [--report report.json] | --from-graph runtime-graph.json) --output source-supplement.json
 modash compile-observed <entrypoint> <output> --from-graph runtime-graph.json
 ```
@@ -130,6 +131,7 @@ Useful options:
 - `trace --timeout SECONDS`: bound target execution. Default: `30`.
 - `graph --from-observation FILE`: build a trusted source graph from a trace
   observation.
+- `graph --report FILE`: choose the human-readable graph review report path.
 - `compile-observed --from-graph FILE`: compile executable output using a
   trusted graph and an in-memory generated supplement.
 - `supplement --report FILE`: choose the review report path.
