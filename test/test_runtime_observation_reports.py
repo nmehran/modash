@@ -59,6 +59,33 @@ class RuntimeObservationReportTestCase(unittest.TestCase):
         self.assertEqual(report["summary"]["observed_sources"], 2)
         self.assertEqual(report["summary"]["file_backed_source_sites"], 2)
         self.assertEqual(report["summary"]["warnings"], 0)
+        self.assertEqual(
+            [site["source_expression"] for site in report["observed_source_sites"]],
+            ["./one.sh", "./two.sh"],
+        )
+        self.assertEqual(
+            [site["xtrace_command"] for site in report["observed_source_sites"]],
+            ["source ./one.sh", "source ./two.sh"],
+        )
+        self.assertTrue(all(site["source_identity"].startswith("src:") for site in report["observed_source_sites"]))
+
+    def test_warns_for_unobserved_source_on_partially_covered_same_line(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                '[[ "${LOAD_SECOND:-0}" == 1 ]] && source ./second.sh; source ./first.sh\n',
+            )
+            project.write("first.sh", "echo first\n")
+            project.write("second.sh", "echo second\n")
+
+            observation = project.trace("main.sh", env={"LOAD_SECOND": "0"}).observation
+            report = build_observation_report(entrypoint, observation)
+
+        self.assertEqual(report["summary"]["observed_sources"], 1)
+        self.assertEqual(report["summary"]["file_backed_source_sites"], 2)
+        self.assertEqual(report["summary"]["warnings"], 1)
+        self.assertEqual(report["observed_source_sites"][0]["source_expression"], "./first.sh")
+        self.assertEqual(report["unobserved_source_sites"][0]["source_expression"], "./second.sh")
 
     def test_reports_child_bash_c_source_as_process_command_provenance(self):
         with ScriptProject() as project:

@@ -12,6 +12,7 @@ from methods.runtime_source_observations import (
     validate_observation,
 )
 from methods.source_frontend import LineParserFrontend
+from methods.source_resolver import parse_shell_words_preserving_quotes, strip_shell_word_quotes
 
 REPORT_VERSION = 1
 UNOBSERVED_SOURCE_SITE = "runtime.coverage.unobserved_source_site"
@@ -30,7 +31,7 @@ def build_observation_report(entrypoint: str | os.PathLike, observation, *, vali
         _ensure_fingerprints_current(observation)
 
     static_sites = _static_source_sites(observation)
-    observed_file_sites, process_command_sites = _observed_source_sites(observation)
+    observed_file_sites, process_command_sites = _observed_source_sites(observation, static_sites)
     unobserved_sites = _unobserved_source_sites(static_sites, observed_file_sites)
     warnings = [_unobserved_warning(site) for site in unobserved_sites]
 
@@ -120,18 +121,13 @@ def _file_backed_paths(observation: RuntimeSourceObservation):
     return tuple(sorted(set(paths), key=lambda path: path.as_posix()))
 
 
-def _observed_source_sites(observation: RuntimeSourceObservation):
+def _observed_source_sites(observation: RuntimeSourceObservation, static_sites):
     file_backed_paths = {path.as_posix() for path in _file_backed_paths(observation)}
     observed = []
     process_command_sites = []
     for event in observation.sources:
-        site = _ReportSourceSite(
-            file=event.call_site.file,
-            line=event.call_site.line,
-            column=1,
-            command=event.call_site.command,
-            source_expression="",
-        )
+        xtrace = observation.xtrace[event.xtrace_index] if event.xtrace_index is not None else None
+        site = _observed_report_site(event, xtrace, static_sites)
         if Path(event.call_site.file).resolve(strict=False).as_posix() in file_backed_paths:
             observed.append(site)
             continue
@@ -141,6 +137,7 @@ def _observed_source_sites(observation: RuntimeSourceObservation):
             "process_index": event.process_index,
             "process_command": process.command,
             "xtrace_index": event.xtrace_index,
+            "source_identity": event.source_identity,
             "call_site": event.call_site.to_dict(),
             "resolved_path": event.resolved_path,
             "arguments": list(event.arguments),
@@ -149,7 +146,65 @@ def _observed_source_sites(observation: RuntimeSourceObservation):
     return tuple(observed), process_command_sites
 
 
+def _observed_report_site(event, xtrace, static_sites):
+    static_site = _matching_static_site(event, xtrace, static_sites)
+    if static_site is not None:
+        return _ReportSourceSite(
+            file=static_site.file,
+            line=static_site.line,
+            column=static_site.column,
+            command=static_site.command,
+            source_expression=static_site.source_expression,
+            source_identity=event.source_identity,
+            xtrace_command=xtrace.command if xtrace is not None else "",
+            resolved_path=event.resolved_path,
+            arguments=event.arguments,
+        )
+    return _ReportSourceSite(
+        file=event.call_site.file,
+        line=event.call_site.line,
+        column=1,
+        command=xtrace.command if xtrace is not None else event.call_site.command,
+        source_expression="",
+        source_identity=event.source_identity,
+        xtrace_command=xtrace.command if xtrace is not None else "",
+        resolved_path=event.resolved_path,
+        arguments=event.arguments,
+    )
+
+
+def _matching_static_site(event, xtrace, static_sites):
+    candidates = [
+        site for site in static_sites
+        if site.file == str(Path(event.call_site.file).resolve(strict=False))
+        and site.line == event.call_site.line
+    ]
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    if xtrace is None:
+        return None
+
+    xtrace_invocation = _source_invocation_words(xtrace.command)
+    if xtrace_invocation is None:
+        return None
+    for site in candidates:
+        site_invocation = _source_expression_words(site.source_expression)
+        if site_invocation == xtrace_invocation:
+            return site
+    for site in candidates:
+        if _commands_match(site.command, xtrace.command):
+            return site
+    return None
+
+
 def _unobserved_source_sites(static_sites, observed_sites):
+    observed_precise = {
+        (site.file, site.line, site.column)
+        for site in observed_sites
+        if site.source_expression
+    }
     observed_by_line = {}
     for site in observed_sites:
         observed_by_line.setdefault((site.file, site.line), []).append(site)
@@ -160,11 +215,16 @@ def _unobserved_source_sites(static_sites, observed_sites):
 
     unobserved = []
     for site in static_sites:
+        if (site.file, site.line, site.column) in observed_precise:
+            continue
         observed_for_line = observed_by_line.get((site.file, site.line), ())
         if not observed_for_line:
             unobserved.append(site)
             continue
-        if len(observed_for_line) >= static_count_by_line[(site.file, site.line)]:
+        if (
+            len(observed_for_line) >= static_count_by_line[(site.file, site.line)]
+            and not all(observed.source_expression for observed in observed_for_line)
+        ):
             continue
         if static_count_by_line[(site.file, site.line)] == 1:
             continue
@@ -175,6 +235,46 @@ def _unobserved_source_sites(static_sites, observed_sites):
 
 def _commands_match(left: str, right: str):
     return " ".join(left.split()) == " ".join(right.split())
+
+
+def _source_expression_words(source_expression: str):
+    try:
+        words = parse_shell_words_preserving_quotes(source_expression)
+    except Exception:
+        return None
+    return tuple(_clean_shell_word(word) for word in words)
+
+
+def _source_invocation_words(command: str):
+    try:
+        words = parse_shell_words_preserving_quotes(command)
+    except Exception:
+        return None
+    stripped = [_clean_shell_word(word) for word in words]
+    if not stripped:
+        return None
+    index = _source_command_index(stripped)
+    if index is None or index + 1 >= len(stripped):
+        return None
+    return tuple(stripped[index + 1:])
+
+
+def _source_command_index(words):
+    if words[0] in {"source", "."}:
+        return 0
+    if len(words) > 1 and words[0] in {"builtin", "command"} and words[1] in {"source", "."}:
+        return 1
+    if words[0] == "__modash_trace_dot_source":
+        return 0
+    if len(words) > 1 and words[0] in {"__modash_trace_builtin", "__modash_trace_command"} and words[1] in {"source", "."}:
+        return 1
+    return None
+
+
+def _clean_shell_word(word):
+    while word.endswith(";"):
+        word = word[:-1]
+    return strip_shell_word_quotes(word)
 
 
 def _unobserved_warning(site):
@@ -191,20 +291,55 @@ def _unobserved_warning(site):
 
 
 class _ReportSourceSite:
-    __slots__ = ("file", "line", "column", "command", "source_expression")
+    __slots__ = (
+        "file",
+        "line",
+        "column",
+        "command",
+        "source_expression",
+        "source_identity",
+        "xtrace_command",
+        "resolved_path",
+        "arguments",
+    )
 
-    def __init__(self, *, file, line, column, command, source_expression):
+    def __init__(
+        self,
+        *,
+        file,
+        line,
+        column,
+        command,
+        source_expression,
+        source_identity="",
+        xtrace_command="",
+        resolved_path="",
+        arguments=(),
+    ):
         self.file = str(Path(file).resolve(strict=False))
         self.line = int(line)
         self.column = int(column)
         self.command = command.strip()
         self.source_expression = source_expression.strip()
+        self.source_identity = source_identity
+        self.xtrace_command = xtrace_command.strip()
+        self.resolved_path = str(Path(resolved_path).resolve(strict=False)) if resolved_path else ""
+        self.arguments = tuple(arguments)
 
     def to_dict(self):
-        return {
+        payload = {
             "file": self.file,
             "line": self.line,
             "column": self.column,
             "command": self.command,
             "source_expression": self.source_expression,
         }
+        if self.source_identity:
+            payload["source_identity"] = self.source_identity
+        if self.xtrace_command:
+            payload["xtrace_command"] = self.xtrace_command
+        if self.resolved_path:
+            payload["resolved_path"] = self.resolved_path
+        if self.arguments:
+            payload["arguments"] = list(self.arguments)
+        return payload

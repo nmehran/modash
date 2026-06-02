@@ -55,6 +55,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                 sources=(
                     RuntimeSourceEvent(
                         index=0,
+                        source_identity="",
                         process_index=0,
                         call_site=SourceCallSite(
                             file=str(entrypoint),
@@ -79,7 +80,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
 
         self.assertEqual(loaded, observation)
         self.assertTrue(text.endswith("\n"))
-        self.assertTrue(text.startswith('{\n  "version": 4,\n  "entrypoint": '))
+        self.assertTrue(text.startswith('{\n  "version": 5,\n  "entrypoint": '))
         self.assertEqual(data["environment"]["recorded_keys"], ["A_VAR", "Z_VAR"])
         self.assertEqual(data["processes"][0]["pid"], 100)
         self.assertIsNone(data["processes"][0]["parent_index"])
@@ -97,7 +98,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             dependency = project.write("dep.sh", "echo dep\n")
 
             observation = validate_observation({
-                "version": 4,
+                "version": 5,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
@@ -119,6 +120,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                 "sources": [
                         {
                             "index": 0,
+                            "source_identity": "",
                             "process_index": 0,
                             "xtrace_index": None,
                             "call_site": {
@@ -175,7 +177,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             entrypoint = project.write("main.sh", "source ./dep.sh\n")
             dependency = project.write("dep.sh", "echo dep\n")
             valid = {
-                "version": 4,
+                "version": 5,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
@@ -197,6 +199,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                 "sources": [
                         {
                             "index": 0,
+                            "source_identity": "",
                             "process_index": 0,
                             "xtrace_index": None,
                             "call_site": {
@@ -217,7 +220,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             }
 
             cases = [
-                ("wrong version", {**valid, "version": 1}, "version must be 4"),
+                ("wrong version", {**valid, "version": 1}, "version must be 5"),
                 ("unknown top-level key", {**valid, "extra": True}, "unknown keys"),
                 (
                     "missing argv",
@@ -299,7 +302,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
     def test_write_observation_validates_plain_json_before_writing(self):
         with ScriptProject() as project:
             with self.assertRaises(RuntimeSourceObservationError):
-                write_observation(project.observation_path(), {"version": 4})
+                write_observation(project.observation_path(), {"version": 5})
 
             self.assertFalse(project.observation_path().exists())
 
@@ -329,6 +332,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                 sources=(
                     RuntimeSourceEvent(
                         index=0,
+                        source_identity="src:test",
                         process_index=0,
                         xtrace_index=0,
                         call_site=SourceCallSite(
@@ -343,6 +347,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                 xtrace=(
                     RuntimeXtraceSourceCommand(
                         index=0,
+                        source_identity="src:test",
                         process_index=0,
                         file=str(entrypoint),
                         line=1,
@@ -367,7 +372,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             entrypoint = project.write("main.sh", "source ./dep.sh\n")
             dependency = project.write("dep.sh", "echo dep\n")
             valid = {
-                "version": 4,
+                "version": 5,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
@@ -389,6 +394,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                 "sources": [
                     {
                         "index": 0,
+                        "source_identity": "src:test",
                         "process_index": 0,
                         "xtrace_index": 0,
                         "call_site": {
@@ -404,6 +410,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                 "xtrace": [
                     {
                         "index": 0,
+                        "source_identity": "src:test",
                         "process_index": 0,
                         "file": str(entrypoint),
                         "line": 1,
@@ -433,6 +440,11 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                     "xtrace bad process",
                     _replace_xtrace(valid, process_index=1),
                     "process_index must reference an existing process",
+                ),
+                (
+                    "xtrace identity mismatch",
+                    _replace_xtrace(valid, source_identity="src:other"),
+                    "source_identity must match",
                 ),
                 (
                     "xtrace unreferenced",

@@ -133,6 +133,7 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
                 sources=(
                     RuntimeSourceEvent(
                         index=0,
+                        source_identity="",
                         process_index=0,
                         call_site=SourceCallSite(
                             file=str(entrypoint),
@@ -143,6 +144,7 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
                     ),
                     RuntimeSourceEvent(
                         index=1,
+                        source_identity="",
                         process_index=0,
                         call_site=SourceCallSite(
                             file=str(entrypoint),

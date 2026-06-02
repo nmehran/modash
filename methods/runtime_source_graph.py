@@ -28,6 +28,7 @@ GRAPH_TOP_LEVEL_KEYS = frozenset({
 GRAPH_SUMMARY_KEYS = frozenset({"processes", "nodes", "edges", "trusted_xtrace_edges"})
 GRAPH_EDGE_KEYS = frozenset({
     "index",
+    "source_identity",
     "process_index",
     "from",
     "to",
@@ -91,6 +92,7 @@ def build_observed_source_graph(entrypoint: str | os.PathLike, observation, *, v
         _add_node(nodes, to_node)
         edges.append({
             "index": event.index,
+            "source_identity": event.source_identity,
             "process_index": event.process_index,
             "from": from_node["id"],
             "to": to_node["id"],
@@ -217,6 +219,7 @@ def validate_observed_source_graph(data):
         _require_keys(edge, GRAPH_EDGE_KEYS, "edge")
         if _nonnegative_int(edge.get("index"), "edges[].index") != expected_index:
             raise RuntimeSourceGraphError("edges must be indexed contiguously from 0")
+        source_identity = _nonempty_string(edge.get("source_identity"), "edges[].source_identity")
         if edge.get("from") not in node_ids:
             raise RuntimeSourceGraphError("edges[].from must reference an existing node")
         if edge.get("to") not in node_ids:
@@ -232,7 +235,7 @@ def validate_observed_source_graph(data):
         xtrace_indexes.append(xtrace["index"])
         _validate_edge_from_node(edge, node_ids[edge["from"]], process_index, call_site, file_roles)
         _validate_edge_to_node(edge, node_ids[edge["to"]], resolved_path, status, file_roles)
-        _validate_edge_xtrace(edge, xtrace, process_index, call_site)
+        _validate_edge_xtrace(edge, xtrace, process_index, call_site, source_identity)
         if node_ids[edge["from"]]["kind"] == "process-command":
             referenced_process_command_nodes.add(edge["from"])
         if node_ids[edge["to"]]["kind"] == "missing-source":
@@ -427,7 +430,9 @@ def _validate_edge_to_node(edge, to_node, resolved_path, status, file_roles):
     raise RuntimeSourceGraphError("edges[].to must reference a file or missing-source node")
 
 
-def _validate_edge_xtrace(edge, xtrace, process_index, call_site):
+def _validate_edge_xtrace(edge, xtrace, process_index, call_site, source_identity):
+    if xtrace["source_identity"] != source_identity:
+        raise RuntimeSourceGraphError("edges[].xtrace.source_identity must match edge source_identity")
     if xtrace["process_index"] != process_index:
         raise RuntimeSourceGraphError("edges[].xtrace.process_index must match edge process_index")
     if xtrace["file"] != call_site["file"] or xtrace["line"] != call_site["line"]:
@@ -639,11 +644,12 @@ def _call_site(value):
 def _xtrace(value):
     _require_keys(
         value,
-        frozenset({"index", "process_index", "file", "line", "function", "cwd", "command"}),
+        frozenset({"index", "source_identity", "process_index", "file", "line", "function", "cwd", "command"}),
         "edges[].xtrace",
     )
     return {
         "index": _nonnegative_int(value["index"], "edges[].xtrace.index"),
+        "source_identity": _nonempty_string(value["source_identity"], "edges[].xtrace.source_identity"),
         "process_index": _nonnegative_int(value["process_index"], "edges[].xtrace.process_index"),
         "file": _absolute_path(value["file"], "edges[].xtrace.file"),
         "line": _positive_int(value["line"], "edges[].xtrace.line"),

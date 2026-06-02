@@ -4,8 +4,8 @@
 
 ### Added
 
-- Runtime observations now use schema `4` and persist sanitized xtrace source
-  provenance linked to wrapper-observed source events.
+- Runtime observations now use schema `5` and persist source identities linking
+  wrapper-observed source events to sanitized xtrace source provenance.
 - Added `modash graph` to build a trusted runtime source graph from trace
   observations.
 - `modash supplement` can now generate deterministic source supplements from a
@@ -19,6 +19,8 @@
   xtrace invariants before graph replay.
 - Runtime observations now fingerprint file-backed source files even when the
   source command returns non-zero.
+- Runtime tracing now reconciles wrapper and xtrace source events by observed
+  invocation identity instead of relying on global sequence order.
 
 ## v0.4.5 - 2026-06-02
 

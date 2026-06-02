@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import subprocess
@@ -21,8 +22,12 @@ from methods.runtime_source_observations import (
     fingerprint_file,
     write_observation,
 )
+from methods.source_resolver import (
+    parse_shell_words_preserving_quotes,
+    strip_shell_word_quotes,
+)
 
-TRACE_VERSION = "runtime-wrapper-v4"
+TRACE_VERSION = "runtime-wrapper-v5"
 PROCESS_MARKER = "MODASH_PROCESS_EVENT"
 TRACE_MARKER = "MODASH_SOURCE_EVENT"
 XTRACE_MARKER = "MODASH_XTRACE"
@@ -84,6 +89,21 @@ class _XtraceSourceCommand:
     function: str
     cwd: str
     command: str
+
+
+@dataclass(frozen=True)
+class _SourceInvocationKey:
+    pid: int
+    file: str
+    line: int
+    source_path: str
+    arguments: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _XtraceSourceInvocation:
+    source_path: str
+    arguments: tuple[str, ...]
 
 
 def trace_sources(
@@ -159,14 +179,29 @@ def trace_sources(
             xtrace_path.read_bytes(),
             prelude_path=str(prelude_path),
         )
-        xtrace_indexes_by_source_index, raw_events_by_xtrace_index = _reconcile_xtrace_source_coverage(
+        (
+            xtrace_indexes_by_source_index,
+            raw_events_by_xtrace_index,
+            source_identities_by_source_index,
+            source_identities_by_xtrace_index,
+        ) = _reconcile_xtrace_source_coverage(
             raw_trace.sources,
             xtrace_commands,
         )
         processes = _observation_processes(raw_trace.processes)
 
-        source_events = _observation_events(raw_trace.sources, processes, xtrace_indexes_by_source_index)
-        xtrace = _observation_xtrace_commands(xtrace_commands, processes, raw_events_by_xtrace_index)
+        source_events = _observation_events(
+            raw_trace.sources,
+            processes,
+            xtrace_indexes_by_source_index,
+            source_identities_by_source_index,
+        )
+        xtrace = _observation_xtrace_commands(
+            xtrace_commands,
+            processes,
+            raw_events_by_xtrace_index,
+            source_identities_by_xtrace_index,
+        )
         observation = RuntimeSourceObservation(
             entrypoint=str(entrypoint_path),
             cwd=str(cwd_path),
@@ -310,8 +345,14 @@ def _observation_processes(raw_processes):
     )
 
 
-def _observation_events(raw_events, processes, xtrace_indexes_by_source_index=None):
+def _observation_events(
+    raw_events,
+    processes,
+    xtrace_indexes_by_source_index=None,
+    source_identities_by_source_index=None,
+):
     xtrace_indexes_by_source_index = xtrace_indexes_by_source_index or {}
+    source_identities_by_source_index = source_identities_by_source_index or {}
     process_index_by_pid = {process.pid: process.index for process in processes}
     process_by_pid = {process.pid: process for process in processes}
     events = []
@@ -328,6 +369,7 @@ def _observation_events(raw_events, processes, xtrace_indexes_by_source_index=No
             command = _source_command_from_event(event)
         events.append(RuntimeSourceEvent(
             index=index,
+            source_identity=source_identities_by_source_index.get(event.index, ""),
             process_index=process_index_by_pid[event.pid],
             xtrace_index=xtrace_indexes_by_source_index.get(event.index),
             call_site=SourceCallSite(
@@ -342,7 +384,12 @@ def _observation_events(raw_events, processes, xtrace_indexes_by_source_index=No
     return tuple(events)
 
 
-def _observation_xtrace_commands(xtrace_commands, processes, raw_events_by_xtrace_index):
+def _observation_xtrace_commands(
+    xtrace_commands,
+    processes,
+    raw_events_by_xtrace_index,
+    source_identities_by_xtrace_index,
+):
     process_index_by_pid = {process.pid: process.index for process in processes}
     commands = []
     for index, command in enumerate(xtrace_commands):
@@ -354,6 +401,7 @@ def _observation_xtrace_commands(xtrace_commands, processes, raw_events_by_xtrac
         event = raw_events_by_xtrace_index.get(index)
         commands.append(RuntimeXtraceSourceCommand(
             index=index,
+            source_identity=source_identities_by_xtrace_index[index],
             process_index=process_index_by_pid[command.pid],
             file=_normalized_xtrace_file(command, event),
             line=command.line,
@@ -489,42 +537,208 @@ def _parse_raw_trace(raw_trace: bytes):
 
 def _reconcile_xtrace_source_coverage(raw_events, xtrace_commands):
     ordered_events = tuple(sorted(raw_events, key=lambda item: item.index))
-    if len(xtrace_commands) > len(ordered_events):
-        missed = xtrace_commands[len(ordered_events)]
-        raise RuntimeSourceTraceError(
-            "runtime source trace missed source-like command: "
-            f"{missed.file}:{missed.line}: {missed.command}",
-            code="runtime.trace.incomplete",
-        )
-    if len(xtrace_commands) < len(ordered_events):
-        event = ordered_events[len(xtrace_commands)]
+    event_groups = _group_raw_events_by_source_key(ordered_events)
+    command_groups = _group_xtrace_commands_by_source_key(xtrace_commands)
+
+    missing_keys = sorted(set(event_groups) - set(command_groups), key=_loose_source_key_sort_tuple)
+    if missing_keys:
+        event = event_groups[missing_keys[0]][0]
         raise RuntimeSourceTraceError(
             "runtime source trace recorded source event without xtrace provenance: "
             f"{event.caller_file}:{event.caller_line}: {event.source_path}",
             code="runtime.trace.incomplete",
         )
 
+    extra_keys = sorted(set(command_groups) - set(event_groups), key=_loose_source_key_sort_tuple)
+    if extra_keys:
+        missed = command_groups[extra_keys[0]][0]
+        raise RuntimeSourceTraceError(
+            "runtime source trace missed source-like command: "
+            f"{missed.file}:{missed.line}: {missed.command}",
+            code="runtime.trace.incomplete",
+        )
+
+    for key in sorted(event_groups, key=_loose_source_key_sort_tuple):
+        if len(event_groups[key]) > len(command_groups[key]):
+            event = event_groups[key][len(command_groups[key])]
+            raise RuntimeSourceTraceError(
+                "runtime source trace recorded source event without xtrace provenance: "
+                f"{event.caller_file}:{event.caller_line}: {event.source_path}",
+                code="runtime.trace.incomplete",
+            )
+        if len(command_groups[key]) > len(event_groups[key]):
+            missed = command_groups[key][len(event_groups[key])]
+            raise RuntimeSourceTraceError(
+                "runtime source trace missed source-like command: "
+                f"{missed.file}:{missed.line}: {missed.command}",
+                code="runtime.trace.incomplete",
+            )
+
+    if len(xtrace_commands) != len(ordered_events):
+        # Defensive fallback; key-level diagnostics above should normally catch this.
+        raise RuntimeSourceTraceError(
+            "runtime source trace/xtrace source command count mismatch",
+            code="runtime.trace.incomplete",
+        )
+
     xtrace_indexes_by_source_index = {}
     raw_events_by_xtrace_index = {}
-    for xtrace_index, (event, command) in enumerate(zip(ordered_events, xtrace_commands)):
-        if event.pid != command.pid:
-            raise RuntimeSourceTraceError(
-                "runtime source trace/xtrace process mismatch: "
-                f"{event.caller_file}:{event.caller_line}: {event.source_path}",
-                code="runtime.trace.xtrace_mismatch",
-            )
-        event_file = str(Path(event.caller_file).resolve(strict=False))
-        command_file = _normalized_xtrace_file(command, event)
-        if event_file != command_file or event.caller_line != command.line:
-            raise RuntimeSourceTraceError(
-                "runtime source trace/xtrace call-site mismatch: "
-                f"source event {event.caller_file}:{event.caller_line} "
-                f"vs xtrace {command.file}:{command.line}",
-                code="runtime.trace.xtrace_mismatch",
-            )
-        xtrace_indexes_by_source_index[event.index] = xtrace_index
-        raw_events_by_xtrace_index[xtrace_index] = event
-    return xtrace_indexes_by_source_index, raw_events_by_xtrace_index
+    source_identities_by_source_index = {}
+    source_identities_by_xtrace_index = {}
+    for key in sorted(event_groups, key=_loose_source_key_sort_tuple):
+        events = sorted(event_groups[key], key=lambda item: item.index)
+        commands = sorted(command_groups[key], key=lambda item: item.index)
+        for occurrence, (event, command) in enumerate(zip(events, commands)):
+            event_file = str(Path(event.caller_file).resolve(strict=False))
+            command_file = _normalized_xtrace_file(command, event)
+            if command.file and event_file != command_file:
+                raise RuntimeSourceTraceError(
+                    "runtime source trace/xtrace call-site mismatch: "
+                    f"source event {event.caller_file}:{event.caller_line} "
+                    f"vs xtrace {command.file}:{command.line}",
+                    code="runtime.trace.xtrace_mismatch",
+                )
+            identity = _source_identity(_raw_event_source_key(event), occurrence)
+            xtrace_indexes_by_source_index[event.index] = command.index
+            raw_events_by_xtrace_index[command.index] = event
+            source_identities_by_source_index[event.index] = identity
+            source_identities_by_xtrace_index[command.index] = identity
+
+    return (
+        xtrace_indexes_by_source_index,
+        raw_events_by_xtrace_index,
+        source_identities_by_source_index,
+        source_identities_by_xtrace_index,
+    )
+
+
+def _group_raw_events_by_source_key(raw_events):
+    groups = {}
+    for event in raw_events:
+        key = _loose_source_key(_raw_event_source_key(event))
+        groups.setdefault(key, []).append(event)
+    return groups
+
+
+def _group_xtrace_commands_by_source_key(xtrace_commands):
+    groups = {}
+    for command in xtrace_commands:
+        invocation = _parse_xtrace_source_invocation(command.command)
+        if invocation is None:
+            key = _loose_source_key(_xtrace_unknown_source_key(command))
+        else:
+            key = _loose_source_key(_xtrace_source_key(command, invocation))
+        groups.setdefault(key, []).append(command)
+    return groups
+
+
+def _raw_event_source_key(event: _RawSourceEvent):
+    return _SourceInvocationKey(
+        pid=event.pid,
+        file=str(Path(event.caller_file).resolve(strict=False)),
+        line=event.caller_line,
+        source_path=event.source_path,
+        arguments=event.arguments,
+    )
+
+
+def _xtrace_source_key(command: _XtraceSourceCommand, invocation: _XtraceSourceInvocation):
+    return _SourceInvocationKey(
+        pid=command.pid,
+        file=_normalized_xtrace_file(command, None),
+        line=command.line,
+        source_path=invocation.source_path,
+        arguments=invocation.arguments,
+    )
+
+
+def _xtrace_unknown_source_key(command: _XtraceSourceCommand):
+    return _SourceInvocationKey(
+        pid=command.pid,
+        file=_normalized_xtrace_file(command, None),
+        line=command.line,
+        source_path=f"<unparsed:{command.command}>",
+        arguments=(),
+    )
+
+
+def _parse_xtrace_source_invocation(command: str):
+    try:
+        words = parse_shell_words_preserving_quotes(command)
+    except Exception:
+        return None
+    stripped_words = [_strip_shell_word_quotes(word) for word in words]
+    if not stripped_words:
+        return None
+    index = _xtrace_source_command_index(stripped_words)
+    if index is None:
+        return None
+    if index + 1 >= len(stripped_words):
+        return None
+    source_path = stripped_words[index + 1]
+    if not source_path:
+        return None
+    return _XtraceSourceInvocation(
+        source_path=source_path,
+        arguments=tuple(stripped_words[index + 2:]),
+    )
+
+
+def _xtrace_source_command_index(words):
+    if words[0] in {"source", "."}:
+        return 0
+    if len(words) > 1 and words[0] in {"builtin", "command"} and words[1] in {"source", "."}:
+        return 1
+    if words[0] == "__modash_trace_dot_source":
+        return 0
+    if len(words) > 1 and words[0] in {"__modash_trace_builtin", "__modash_trace_command"} and words[1] in {"source", "."}:
+        return 1
+    return None
+
+
+def _strip_shell_word_quotes(word: str):
+    return strip_shell_word_quotes(_strip_shell_punctuation(word))
+
+
+def _strip_shell_punctuation(word: str):
+    while word.endswith(";"):
+        word = word[:-1]
+    return word
+
+
+def _source_identity(key: _SourceInvocationKey, occurrence: int):
+    payload = "\0".join((
+        str(key.pid),
+        key.file,
+        str(key.line),
+        key.source_path,
+        "\0".join(key.arguments),
+        str(occurrence),
+    ))
+    return "src:" + hashlib.sha256(payload.encode("utf-8", errors="surrogateescape")).hexdigest()[:24]
+
+
+def _loose_source_key(key: _SourceInvocationKey):
+    return (
+        key.pid,
+        key.line,
+        key.source_path,
+        key.arguments,
+    )
+
+
+def _loose_source_key_sort_tuple(key):
+    return key
+
+
+def _source_key_sort_tuple(key: _SourceInvocationKey):
+    return (
+        key.pid,
+        key.file,
+        key.line,
+        key.source_path,
+        key.arguments,
+    )
 
 
 def _normalized_xtrace_file(command: _XtraceSourceCommand, event: _RawSourceEvent | None):

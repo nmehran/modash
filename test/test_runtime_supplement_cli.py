@@ -45,7 +45,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn("modash: runtime source graph:", result.stderr)
         self.assertEqual(graph["version"], 1)
-        self.assertEqual(graph["observation_version"], 4)
+        self.assertEqual(graph["observation_version"], 5)
         self.assertEqual(graph["edges"][0]["resolved_path"], str(dependency.resolve(strict=False)))
         self.assertEqual(graph["edges"][0]["xtrace"]["command"], "source ./dep.sh arg")
 
@@ -90,7 +90,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             "functions": {},
         })
         self.assertEqual(report["version"], 1)
-        self.assertEqual(report["observation_version"], 4)
+        self.assertEqual(report["observation_version"], 5)
         self.assertEqual(report["summary"]["warnings"], 0)
 
     def test_supplement_cli_generates_candidate_from_graph(self):

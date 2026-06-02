@@ -40,10 +40,12 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(event.arguments, ())
         self.assertEqual(event.status, 0)
         fingerprints = {Path(file.path).name: file for file in result.observation.files}
-        self.assertEqual(result.observation.version, 4)
+        self.assertEqual(result.observation.version, 5)
         self.assertEqual(len(result.observation.xtrace), 1)
         self.assertEqual(event.xtrace_index, 0)
+        self.assertTrue(event.source_identity.startswith("src:"))
         xtrace = result.observation.xtrace[0]
+        self.assertEqual(xtrace.source_identity, event.source_identity)
         self.assertEqual(xtrace.process_index, event.process_index)
         self.assertEqual(xtrace.file, str(entrypoint.resolve(strict=False)))
         self.assertEqual(xtrace.line, 1)
@@ -97,6 +99,10 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(event.resolved_path, str(dependency.resolve(strict=False)))
         self.assertEqual(event.arguments, ("one arg", "two"))
         self.assertEqual(event.status, 0)
+        self.assertEqual(
+            result.observation.xtrace[event.xtrace_index].source_identity,
+            event.source_identity,
+        )
 
     def test_trace_records_builtin_and_command_source_invocations(self):
         with ScriptProject() as project:
@@ -153,6 +159,35 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         entrypoint_path = str(entrypoint.resolve(strict=False))
         self.assertTrue(
             all(event.call_site.file == entrypoint_path for event in result.observation.sources)
+        )
+        self.assertEqual(
+            [event.source_identity for event in result.observation.sources],
+            [command.source_identity for command in result.observation.xtrace],
+        )
+
+    def test_trace_links_same_line_source_events_by_identity(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "source ./a.sh; source ./b.sh\n")
+            first = project.write("a.sh", "echo a\n")
+            second = project.write("b.sh", "echo b\n")
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            [event.resolved_path for event in result.observation.sources],
+            [
+                str(first.resolve(strict=False)),
+                str(second.resolve(strict=False)),
+            ],
+        )
+        self.assertEqual(
+            [event.source_identity for event in result.observation.sources],
+            [command.source_identity for command in result.observation.xtrace],
+        )
+        self.assertNotEqual(
+            result.observation.sources[0].source_identity,
+            result.observation.sources[1].source_identity,
         )
 
     def test_trace_preserves_non_source_builtin_and_command_invocations(self):

@@ -39,7 +39,7 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
             graph = build_observed_source_graph(entrypoint, observation)
 
         self.assertEqual(graph["version"], 1)
-        self.assertEqual(graph["observation_version"], 4)
+        self.assertEqual(graph["observation_version"], 5)
         self.assertEqual(graph["summary"]["processes"], 1)
         self.assertEqual(graph["summary"]["edges"], 1)
         self.assertEqual(graph["summary"]["trusted_xtrace_edges"], 1)
@@ -47,6 +47,8 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
         self.assertEqual(edge["from"], f"file:{entrypoint.resolve(strict=False)}")
         self.assertEqual(edge["to"], f"file:{dependency.resolve(strict=False)}")
         self.assertEqual(edge["arguments"], ["one"])
+        self.assertTrue(edge["source_identity"].startswith("src:"))
+        self.assertEqual(edge["xtrace"]["source_identity"], edge["source_identity"])
         self.assertEqual(edge["xtrace"]["command"], "source ./dep.sh one")
 
     def test_builds_process_command_node_for_child_bash_c_source(self):
@@ -126,6 +128,7 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
                 sources=(
                     RuntimeSourceEvent(
                         index=0,
+                        source_identity="",
                         process_index=0,
                         xtrace_index=None,
                         call_site=SourceCallSite(
@@ -198,6 +201,15 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
             validate_observed_source_graph(graph)
 
         self.assertIn("xtrace.index values must be unique and contiguous", str(context.exception))
+
+    def test_validate_graph_rejects_source_identity_tampering(self):
+        graph = self._direct_source_graph()
+        graph["edges"][0]["xtrace"]["source_identity"] = "src:tampered"
+
+        with self.assertRaises(RuntimeSourceGraphError) as context:
+            validate_observed_source_graph(graph)
+
+        self.assertIn("source_identity must match", str(context.exception))
 
     def test_validate_graph_rejects_missing_source_target_tampering(self):
         graph = self._missing_source_graph()

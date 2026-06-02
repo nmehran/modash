@@ -17,7 +17,7 @@ than silently changing compiler behavior.
   compiler input.
 - Executable compile remains deterministic and fail-closed.
 - Xtrace source provenance is persisted and reconciled with wrapper-observed
-  source events before a graph is trusted.
+  source events by observed invocation identity before a graph is trusted.
 
 ## User Flow
 
@@ -48,12 +48,13 @@ The separation matters:
 
 ## Observation Schema
 
-Current observations use schema `4`. They record:
+Current observations use schema `5`. They record:
 
 - entrypoint, cwd, argv, Bash version, trace implementation version
 - environment policy and recorded overlay keys
 - traced Bash processes and parent linkage
 - source events in execution order
+- source identities that link wrapper-observed events to xtrace provenance
 - linked xtrace source provenance for every trusted trace source event
 - source call-site provenance
 - resolved source paths, source arguments, and source status
@@ -68,7 +69,7 @@ Small example:
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "entrypoint": "/abs/project/entry.sh",
   "cwd": "/abs/project",
   "argv": ["--flag"],
@@ -76,7 +77,7 @@ Small example:
     "version": "GNU bash, version 5.2.21"
   },
   "trace": {
-    "version": "runtime-wrapper-v4"
+    "version": "runtime-wrapper-v5"
   },
   "environment": {
     "policy": "overlay",
@@ -97,6 +98,7 @@ Small example:
   "sources": [
     {
       "index": 0,
+      "source_identity": "src:aaaaaaaaaaaaaaaaaaaaaaaa",
       "process_index": 0,
       "xtrace_index": 0,
       "call_site": {
@@ -112,6 +114,7 @@ Small example:
   "xtrace": [
     {
       "index": 0,
+      "source_identity": "src:aaaaaaaaaaaaaaaaaaaaaaaa",
       "process_index": 0,
       "file": "/abs/project/entry.sh",
       "line": 12,
@@ -141,14 +144,14 @@ Small example:
 
 ## Trusted Source Graph
 
-`modash graph` consumes a schema `4` observation and writes a graph artifact.
+`modash graph` consumes a schema `5` observation and writes a graph artifact.
 The graph is still data, not executable shell code. It contains:
 
 - process nodes
 - file nodes with fingerprint roles
 - process-command nodes for child `bash -c` style source sites
 - source edges with call-site text, resolved paths, source arguments, status,
-  and linked xtrace provenance
+  source identity, and linked xtrace provenance
 - the file fingerprints needed for stale graph rejection
 
 Graph construction fails closed when source events lack xtrace provenance, when
@@ -167,12 +170,12 @@ review aid, not compiler truth. It can show:
 - unobserved source-capable sites in fingerprinted files
 - child `bash -c` source provenance as process command text
 - xtrace source command counts and linked source-event counts
+- source identities for observed events
 - summary counts for warnings and observed source events
 
-Same-line multi-source coverage is still line-level. If every static source site
-on a line produced an observed event, the report treats the line as covered.
-Partial same-line execution remains review-only ambiguous until source event
-provenance records columns or stronger command identity.
+Same-line multi-source coverage is precise when the observed xtrace command can
+be matched back to a static source site on the same line. Ambiguous same-line
+runtime-dynamic sites remain review warnings instead of compiler truth.
 
 ## Safety Model
 
@@ -193,7 +196,8 @@ provenance records columns or stronger command identity.
 - makepkg-style helper calls such as `source_safe "$@"`
 - child Bash process propagation and parent/child process provenance
 - persisted xtrace provenance linked to wrapper-observed source events
-- schema `4` file fingerprints and stale observation rejection
+- schema `5` source identities, file fingerprints, and stale observation
+  rejection
 - trusted runtime source graph construction
 - strict graph invariant validation for reviewed graph replay
 - source supplement generation from trusted graphs
@@ -205,7 +209,6 @@ provenance records columns or stronger command identity.
 
 Useful remaining steps are:
 
-- richer source event identity, including source columns or command ordinals
 - clearer environment/run metadata for reproducibility
 - supplement generation for a broader but still finite set of runtime-dynamic
   source helpers

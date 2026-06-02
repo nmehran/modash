@@ -6,7 +6,7 @@ import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-OBSERVATION_VERSION = 4
+OBSERVATION_VERSION = 5
 TOP_LEVEL_KEYS = frozenset({
     "version",
     "entrypoint",
@@ -35,6 +35,7 @@ PROCESS_KEYS = frozenset({
 })
 SOURCE_EVENT_KEYS = frozenset({
     "index",
+    "source_identity",
     "process_index",
     "call_site",
     "xtrace_index",
@@ -45,6 +46,7 @@ SOURCE_EVENT_KEYS = frozenset({
 CALL_SITE_KEYS = frozenset({"file", "line", "command"})
 XTRACE_SOURCE_KEYS = frozenset({
     "index",
+    "source_identity",
     "process_index",
     "file",
     "line",
@@ -263,6 +265,7 @@ class RuntimeSourceEvent:
     index: int
     call_site: SourceCallSite
     resolved_path: str
+    source_identity: str = ""
     arguments: tuple[str, ...] = field(default_factory=tuple)
     status: int = 0
     process_index: int = 0
@@ -270,6 +273,11 @@ class RuntimeSourceEvent:
 
     def __post_init__(self):
         object.__setattr__(self, "index", _nonnegative_int(self.index, "sources[].index"))
+        object.__setattr__(
+            self,
+            "source_identity",
+            _exact_string(self.source_identity, "sources[].source_identity"),
+        )
         object.__setattr__(
             self,
             "process_index",
@@ -299,6 +307,7 @@ class RuntimeSourceEvent:
         _require_keys(data, SOURCE_EVENT_KEYS, "source event")
         return cls(
             index=data["index"],
+            source_identity=data["source_identity"],
             process_index=data["process_index"],
             xtrace_index=data["xtrace_index"],
             call_site=SourceCallSite.from_dict(data["call_site"]),
@@ -310,6 +319,7 @@ class RuntimeSourceEvent:
     def to_dict(self):
         return {
             "index": self.index,
+            "source_identity": self.source_identity,
             "process_index": self.process_index,
             "xtrace_index": self.xtrace_index,
             "call_site": self.call_site.to_dict(),
@@ -322,6 +332,7 @@ class RuntimeSourceEvent:
 @dataclass(frozen=True)
 class RuntimeXtraceSourceCommand:
     index: int
+    source_identity: str
     process_index: int
     file: str
     line: int
@@ -331,6 +342,11 @@ class RuntimeXtraceSourceCommand:
 
     def __post_init__(self):
         object.__setattr__(self, "index", _nonnegative_int(self.index, "xtrace[].index"))
+        object.__setattr__(
+            self,
+            "source_identity",
+            _nonempty_string(self.source_identity, "xtrace[].source_identity"),
+        )
         object.__setattr__(
             self,
             "process_index",
@@ -347,6 +363,7 @@ class RuntimeXtraceSourceCommand:
         _require_keys(data, XTRACE_SOURCE_KEYS, "xtrace source command")
         return cls(
             index=data["index"],
+            source_identity=data["source_identity"],
             process_index=data["process_index"],
             file=data["file"],
             line=data["line"],
@@ -358,6 +375,7 @@ class RuntimeXtraceSourceCommand:
     def to_dict(self):
         return {
             "index": self.index,
+            "source_identity": self.source_identity,
             "process_index": self.process_index,
             "file": self.file,
             "line": self.line,
@@ -554,6 +572,10 @@ def _validate_xtrace_links(sources, xtrace):
         command = xtrace[event.xtrace_index]
         if command.process_index != event.process_index:
             raise _schema_error("sources[].xtrace_index must reference the same process")
+        if not event.source_identity:
+            raise _schema_error("sources[].source_identity is required when xtrace provenance is present")
+        if event.source_identity != command.source_identity:
+            raise _schema_error("sources[].source_identity must match linked xtrace source command")
         referenced.append(event.xtrace_index)
 
     if sorted(referenced) != list(range(len(xtrace))):
