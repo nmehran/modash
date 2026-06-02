@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.5 - 2026-06-02
 
 ### Added
 
@@ -31,6 +31,14 @@
 - Reworked README and docs into a smaller user-facing set, removing stale
   implementation-tranche specs that are already represented by release history
   and tests.
+- Removed detached/dead internal helpers from the 0.4.5 polish branch.
+
+### Validation
+
+- Full unit suite: `407` tests, `6` skipped.
+- Opt-in real-world suite with runtime trace, supplement replay, and runtime
+  parity gates: `9` tests.
+- PyPI distribution build: sdist and wheel passed `twine check`.
 
 ## v0.4.1 - 2026-06-02
 

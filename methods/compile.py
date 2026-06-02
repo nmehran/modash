@@ -847,42 +847,6 @@ def render_source_site_replacement(
     return f"{separator}{{\n{rendered_source}\n{indent}}}"
 
 
-def replace_source_site_substrings(
-    line: str,
-    source_declarations,
-    render_source,
-    positional_frame_names: dict[str, str] | None = None,
-):
-    search_start = 0
-    index = 0
-
-    while index < len(source_declarations):
-        declaration = source_declarations[index]
-        source_site = declaration.source_site.strip()
-        source_index = find_unquoted_substring(line, source_site, search_start)
-        if source_index < 0:
-            raise ValueError(f"Could not replace resolved source declaration: {source_site}")
-
-        grouped_declarations = [declaration]
-        index += 1
-        while index < len(source_declarations) and source_declarations[index].source_site.strip() == source_site:
-            grouped_declarations.append(source_declarations[index])
-            index += 1
-
-        indent = re.match(r'\s*', line[:source_index]).group(0)
-        replacement = render_source_site_replacement(
-            "",
-            grouped_declarations,
-            render_source,
-            indent,
-            positional_frame_names,
-        )
-        line = line[:source_index] + replacement + line[source_index + len(source_site):]
-        search_start = source_index + len(replacement)
-
-    return line
-
-
 def source_declaration_groups(source_declarations):
     groups = []
     index = 0

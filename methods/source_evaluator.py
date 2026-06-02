@@ -56,7 +56,6 @@ from methods.source_resolver import (
     has_unsupported_shell_operator,
     has_unquoted_brace_expansion,
     has_unquoted_extglob,
-    contains_unquoted_token,
     has_unquoted_glob,
     is_missing_source_replacement_kind,
     is_source_expansion_failure_replacement_kind,

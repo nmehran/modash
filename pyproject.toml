@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "modash"
-version = "0.4.1"
+version = "0.4.5"
 description = "Merge Bash script projects into a single output file"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -35,36 +35,6 @@ def extract_bash_commands(command, input_string, pattern=None, search_comments=F
     return matches
 
 
-def replace_bash_command(command: str, replacement: str, input_string: str, pattern=None, search_comments=False):
-    if pattern is None:
-        pattern = create_command_pattern(command)
-
-    if not search_comments:
-        input_string = remove_comments(input_string, ['#'])
-
-    updated_string_parts = []
-    last_end = 0
-
-    # Iterate over all matches using finditer for single-pass processing.
-    for match in pattern.finditer(input_string):
-        # Group 1 is the command separator, if any, followed by the replacement substitution
-        if match.group(2):
-            # Append the text before the match.
-            updated_string_parts.append(input_string[last_end:match.start()])
-
-            separator = match.group(1)
-            updated_string_parts.append(separator)
-            updated_string_parts.append(replacement)
-
-            # Update the last processed end.
-            last_end = match.end()
-
-    # Append the remaining part of the string after the last match.
-    updated_string_parts.append(input_string[last_end:])
-
-    return ''.join(updated_string_parts)
-
-
 def remove_comments(text, comment_patterns, exclusion_patterns=None, escape_exclusions=True) -> str:
     """
     Removes comments from text, taking into account quoted strings and optional exclusions.

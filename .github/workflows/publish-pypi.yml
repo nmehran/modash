@@ -6,7 +6,7 @@ on:
       tag:
         description: Git tag to publish
         required: true
-        default: v0.4.1
+        default: v0.4.5
   release:
     types:
       - published
