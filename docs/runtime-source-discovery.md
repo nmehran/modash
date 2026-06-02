@@ -98,7 +98,7 @@ Small example:
   },
   "run": {
     "observed_at_utc": "2026-06-02T12:00:00Z",
-    "modash_version": "0.5.0",
+    "modash_version": "0.6.0",
     "platform": "Linux-6.x-x86_64-with-glibc2.x",
     "python_version": "3.14.0",
     "shell": "/usr/bin/bash",
@@ -253,10 +253,10 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - real-world replay probes against pinned pacman and mkinitcpio fixtures,
   including mkinitcpio runtime hook-dispatch graph replay
 
-## Next Roadmap
+## Release Scope
 
-The post-0.5 work is tracked in [modash 0.6 Roadmap](roadmap-0.6.md). 0.6 is
-the coverage-completion milestone for broader real-world `observe-compile`
-promotion, finite runtime-dynamic helper shapes, recursive/runtime-dynamic
-dispatch through trusted finite graphs, deterministic static edge semantics, and
-maintainability cleanup.
+The 0.6 coverage-completion scope is tracked in
+[modash 0.6 Release Scope](roadmap-0.6.md). It covers broader real-world
+`observe-compile` promotion, finite runtime-dynamic helper shapes,
+recursive/runtime-dynamic dispatch through trusted finite graphs, deterministic
+static edge semantics, and maintainability cleanup.

@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.6.0 - 2026-06-02
+
+### Added
+
+- Runtime graph replay now supports finite runtime-selected helper names when a
+  trusted graph identifies the observed helper signature and source edge.
+- Runtime graph replay now supports finite recursive helper dispatch, including
+  mkinitcpio-style hook loops observed through a trusted graph.
+- Runtime source supplements can represent source path arguments that are not
+  the first helper argument.
+- Added real-world coverage for Git dynamic helper dispatch and recursive
+  mkinitcpio hook dispatch through trace, trusted graph replay, observe-compile,
+  and runtime parity probes.
+- Added exact positional-count guard modeling for function-return guards such as
+  `[ "$#" -eq 0 ]`.
+- Added the 0.6 coverage-completion release scope document.
+
+### Changed
+
+- Trusted runtime graph replay now consumes observed helper aliases more
+  efficiently without rebuilding alias maps for each lookup.
+- The real-world harness now distinguishes promoted static expectations from
+  graph-backed runtime expectations for hard runtime-dynamic cases.
+- README and runtime discovery docs now present the observe-compile workflow as
+  the explicit path for runtime-dependent sources while keeping normal compile
+  deterministic and trace-free.
+
+### Validation
+
+- Full unit suite: `477` tests, `8` skipped.
+- Opt-in real-world suite with runtime trace, supplement replay, runtime
+  parity, trusted graph replay, and observe-compile gates: `13` tests, `1`
+  skipped, covering `62` pinned compile expectations, `10` trusted graph replay
+  probes, and `11` observe-compile probes.
+- Generated promoted graph and observe-compile executable artifacts were
+  spot-checked for source-free executable output.
+- PyPI distribution build: sdist and wheel passed `twine check`.
+
 ## v0.5.0 - 2026-06-02
 
 ### Added

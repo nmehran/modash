@@ -1,4 +1,6 @@
-# modash 0.6 Roadmap
+# modash 0.6 Release Scope
+
+Status: 0.6.0 release candidate.
 
 0.6 is the coverage-completion milestone after the 0.5 trusted runtime graph
 release. The goal is not another diagnostic layer. The goal is to make the
@@ -7,7 +9,8 @@ gaps well enough that real shell-heavy projects can be merged with confidence.
 
 ## Release Bar
 
-0.6 is not ready while any of these are still merely documented as future work:
+During implementation, 0.6 was not ready while any of these were still merely
+documented as future work:
 
 - broader real-world `observe-compile` promotion beyond the controlled
   pacman/mkinitcpio fixtures
