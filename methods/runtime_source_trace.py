@@ -5,7 +5,7 @@ import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from methods.runtime_source_observations import (
@@ -136,7 +136,7 @@ def trace_sources(
 
 def default_observation_path(entrypoint: str | os.PathLike, *, output_dir=None, run_id=None):
     directory = Path(output_dir) if output_dir is not None else Path(".modash") / "observations"
-    run_id = run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     return directory / f"{_artifact_stem(entrypoint)}-{run_id}.json"
 
 

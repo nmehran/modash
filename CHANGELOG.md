@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.4.1 - 2026-06-02
+
+Python 3.10 compatibility patch release.
+
+### Fixed
+
+- Replaced a Python 3.11-only `datetime.UTC` import in runtime source tracing
+  with the Python 3.10-compatible `datetime.timezone.utc` API.
+
+### Validation
+
+- Full unit suite: `386` tests, `6` skipped.
+- PyPI distribution build: sdist and wheel passed `twine check`, and the built
+  wheel installed a working `modash` console script.
+
 ## v0.4.0 - 2026-06-02
 
 Runtime source discovery and supplement replay release.

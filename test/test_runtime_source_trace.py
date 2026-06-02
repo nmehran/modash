@@ -7,11 +7,21 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from methods.runtime_source_trace import RuntimeSourceTraceError, trace_sources  # noqa: E402
+from methods.runtime_source_trace import (  # noqa: E402
+    RuntimeSourceTraceError,
+    default_observation_path,
+    trace_sources,
+)
 from test.support import ScriptProject  # noqa: E402
 
 
 class RuntimeSourceTraceTestCase(unittest.TestCase):
+    def test_default_observation_path_uses_timestamp_when_run_id_omitted(self):
+        path = default_observation_path("scripts/main.sh", output_dir="observations")
+
+        self.assertEqual(path.parent, Path("observations"))
+        self.assertRegex(path.name, r"^main\.sh-\d{8}T\d{12}Z\.json$")
+
     def test_trace_records_direct_source(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", 'source ./dep.sh\nprintf "main\\n"\n')
