@@ -9,6 +9,11 @@ from methods.runtime_source_trace import (
     write_trace_observation,
 )
 from methods.runtime_source_observations import RuntimeSourceObservationError
+from methods.runtime_source_supplements import (
+    RuntimeSupplementGenerationError,
+    generate_source_supplement_from_observation_file,
+    write_generated_supplement,
+)
 from methods.source_resolver import UnsupportedSourceError
 
 
@@ -27,6 +32,12 @@ def trace_main(entrypoint, *, script_args=None, cwd=None, env=None, output=None,
         print(result.stderr, end="", file=sys.stderr)
     print(f"modashc: trace observation: {observation_path.resolve(strict=False)}", file=sys.stderr)
     return result.returncode
+
+
+def supplement_main(entrypoint, *, observation, output):
+    supplement = generate_source_supplement_from_observation_file(entrypoint, observation)
+    supplement_path = write_generated_supplement(supplement, output)
+    print(f"modashc: source supplement: {supplement_path.resolve(strict=False)}", file=sys.stderr)
 
 
 def parse_env_overlay(values):
@@ -81,6 +92,23 @@ def trace_cli(argv):
     )
 
 
+def supplement_cli(argv):
+    parser = argparse.ArgumentParser(description='Generate a source supplement candidate from a trace observation.')
+    parser.add_argument('entrypoint', type=str, help='The Bash script that was traced.')
+    parser.add_argument(
+        '--from-observation',
+        required=True,
+        help='Runtime source observation JSON produced by modashc trace.',
+    )
+    parser.add_argument(
+        '--output',
+        required=True,
+        help='Source supplement JSON file to write.',
+    )
+    args = parser.parse_args(argv)
+    supplement_main(args.entrypoint, observation=args.from_observation, output=args.output)
+
+
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == "trace":
         try:
@@ -88,6 +116,14 @@ if __name__ == '__main__':
         except (RuntimeSourceTraceError, RuntimeSourceObservationError) as exc:
             print(f"modashc: {exc}", file=sys.stderr)
             sys.exit(1)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "supplement":
+        try:
+            supplement_cli(sys.argv[2:])
+        except (RuntimeSupplementGenerationError, RuntimeSourceObservationError) as exc:
+            print(f"modashc: {exc}", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
 
     parser = argparse.ArgumentParser(description='Merge Bash scripts into a single script.')
     parser.add_argument('entrypoint', type=str, help='The entry-point Bash script that initiates the merging process.')

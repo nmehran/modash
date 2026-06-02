@@ -79,7 +79,7 @@ Expose supplement generation as an explicit workflow step.
 CLI:
 
 ```sh
-modashc.py supplement ENTRY --from-observation observation.json --output source-supplement.json
+python modashc.py supplement ENTRY --from-observation observation.json --output source-supplement.json
 ```
 
 API:

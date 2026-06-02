@@ -69,6 +69,7 @@ checked against real shell projects as well as synthetic regressions.
 ```sh
 python modashc.py <entrypoint> <output> [--mode context|executable] [--source-supplement FILE]
 python modashc.py trace <entrypoint> [--cwd DIR] [--env KEY=VALUE] [--output FILE] [--] [args...]
+python modashc.py supplement <entrypoint> --from-observation observation.json --output source-supplement.json
 ```
 
 Arguments:
@@ -94,12 +95,23 @@ and reports the observation path on stderr. Trace observations are data for
 review and later supplement generation; they are not used automatically during
 compile.
 
+Supplement command:
+
+- `supplement`: reads a trace observation and writes a source supplement
+  candidate.
+- `--from-observation`: observation JSON produced by `trace`.
+- `--output`: source supplement JSON to review and pass to executable compile.
+
+Generated supplements are candidates from one observed run. Review them before
+using them with `--source-supplement`.
+
 Examples:
 
 ```sh
 python modashc.py test/sample_dir/script_main.sh sample-context.sh
 python modashc.py test/sample_dir/script_main.sh sample-runnable.sh --mode executable
 python modashc.py trace test/sample_dir/script_main.sh --output observation.json
+python modashc.py supplement test/sample_dir/script_main.sh --from-observation observation.json --output source-supplement.json
 ```
 
 ## Architecture
@@ -110,6 +122,8 @@ python modashc.py trace test/sample_dir/script_main.sh --output observation.json
   trace parser.
 - `methods/runtime_source_observations.py`: runtime source observation schema
   and JSON validation helpers.
+- `methods/runtime_source_supplements.py`: observation-to-source-supplement
+  candidate generator.
 - `methods/source_frontend.py`: parser frontend that emits source-effect IR.
 - `methods/source_evaluator.py`: abstract evaluator for cwd, variables, arrays,
   shell options, source events, and structured unsupported diagnostics.
