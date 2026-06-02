@@ -74,7 +74,10 @@ class _FunctionSourceAlias:
     variable_positions: tuple[tuple[str, int], ...] = ()
 
     def position_for_variable(self, name: str):
-        return dict(self.variable_positions).get(name)
+        for variable_name, position in self.variable_positions:
+            if variable_name == name:
+                return position
+        return None
 
 
 @dataclass(frozen=True)
