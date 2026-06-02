@@ -231,6 +231,9 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - makepkg-style helper calls such as `source_safe "$@"`
 - finite helper-local source path aliases such as
   `local path=$1; shift; source "$path" "$@"`
+- finite helper signatures where the observed source path is not the first
+  helper argument, including direct `$2`, helper-local aliases, and exact
+  `case` arms
 - repeated guarded runtime-selected source sites from a trusted graph, such as
   a mkinitcpio-style `. "$root/$hook"` hook loop observed for a finite hook list
 - child Bash process propagation and parent/child process provenance

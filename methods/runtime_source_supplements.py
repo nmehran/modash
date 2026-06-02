@@ -45,7 +45,10 @@ class GeneratedSourceSupplement:
             "variables": dict(self.payload.get("variables", {})),
             "functions": {
                 name: [
-                    {"arguments": list(entry["arguments"])}
+                    {
+                        "arguments": list(entry["arguments"]),
+                        **({"source_index": entry["source_index"]} if entry.get("source_index", 0) else {}),
+                    }
                     for entry in entries
                 ]
                 for name, entries in self.payload.get("functions", {}).items()
@@ -68,6 +71,16 @@ class _FunctionSourceAlias:
     has_function_local_assignment: bool = False
     has_first_positional_alias: bool = False
     shifted_after_alias: bool = False
+    variable_positions: tuple[tuple[str, int], ...] = ()
+
+    def position_for_variable(self, name: str):
+        return dict(self.variable_positions).get(name)
+
+
+@dataclass(frozen=True)
+class _HelperSignature:
+    arguments: tuple[str, ...]
+    source_index: int = 0
 
 
 def generate_source_supplement(entrypoint: str | os.PathLike, observation, *, validate_fingerprints=True):
@@ -125,7 +138,7 @@ def _generate_source_supplement_from_events(entrypoint_path: Path, source_events
             continue
         source_word, source_arg_words = invocation
         alias = _function_source_alias(event.call_site_file, event.call_site_line, source_word)
-        helper_arguments = _helper_signature_arguments(event, source_word, source_arg_words, alias)
+        signature_arguments = _helper_signature_arguments(event, source_word, source_arg_words, alias, entrypoint_directory)
 
         variable = None if alias.has_function_local_assignment else _variable_candidate(
             source_word,
@@ -142,13 +155,11 @@ def _generate_source_supplement_from_events(entrypoint_path: Path, source_events
                 )
             variables[name] = value
 
-        if alias.function_name and helper_arguments is not None:
-            arguments = [
-                _review_path(event.resolved_path, entrypoint_directory),
-                *helper_arguments,
-            ]
+        if alias.function_name and signature_arguments is not None:
             functions.setdefault(alias.function_name, [])
-            entry = {"arguments": arguments}
+            entry = {"arguments": list(signature_arguments.arguments)}
+            if signature_arguments.source_index:
+                entry["source_index"] = signature_arguments.source_index
             if entry not in functions[alias.function_name]:
                 functions[alias.function_name].append(entry)
 
@@ -249,6 +260,8 @@ def _source_invocation_from_command(command: str):
         source_arguments = []
         for argument in words[index + 2:]:
             cleaned = _clean_source_word(argument)
+            if not cleaned:
+                break
             if cleaned in {"then", "do", "else", "fi", "done", "}"}:
                 break
             if cleaned in {"&&", "||", "|"}:
@@ -301,40 +314,83 @@ def _is_positional_source_word(source_word: str):
     return source_word in POSITIONAL_SOURCE_WORDS
 
 
-def _helper_signature_arguments(event: _SupplementSourceEvent, source_word: str, source_arg_words, alias: _FunctionSourceAlias):
+def _helper_signature_arguments(
+    event: _SupplementSourceEvent,
+    source_word: str,
+    source_arg_words,
+    alias: _FunctionSourceAlias,
+    entrypoint_directory: Path,
+):
     if _is_positional_source_word(source_word):
-        return event.arguments
+        return _HelperSignature((
+            _review_path(event.resolved_path, entrypoint_directory),
+            *event.arguments,
+        ))
 
-    if not alias.has_first_positional_alias:
+    source_position = _helper_word_position(source_word, alias)
+    if source_position is None:
         return None
-
-    if not source_arg_words:
-        return ()
 
     if len(source_arg_words) == 1 and _is_variadic_positional_word(source_arg_words[0]):
         if alias.shifted_after_alias:
-            return event.arguments
+            return _HelperSignature((
+                _review_path(event.resolved_path, entrypoint_directory),
+                *event.arguments,
+            ))
         return None
 
-    if _are_direct_positional_argument_words(source_arg_words):
-        if len(source_arg_words) == len(event.arguments):
-            return event.arguments
+    signature = {source_position: _review_path(event.resolved_path, entrypoint_directory)}
+    event_argument_index = 0
+    for word in source_arg_words:
+        position = _helper_word_position(word, alias)
+        if position is None:
+            return None
+        if event_argument_index >= len(event.arguments):
+            return None
+        signature[position] = event.arguments[event_argument_index]
+        event_argument_index += 1
+    if event_argument_index != len(event.arguments):
         return None
 
-    return None
+    if 1 not in signature:
+        case_value = _case_arm_signature_value(event.call_site_command)
+        if case_value is not None:
+            signature[1] = case_value
+
+    signature_length = max(signature)
+    if any(index not in signature for index in range(1, signature_length + 1)):
+        return None
+    return _HelperSignature(
+        tuple(signature[index] for index in range(1, signature_length + 1)),
+        source_index=source_position - 1,
+    )
+
+
+def _helper_word_position(word: str, alias: _FunctionSourceAlias):
+    if position := _positional_word_index(word):
+        return position
+    variable_name = _exact_variable_reference_name(word)
+    if variable_name is None:
+        return None
+    return alias.position_for_variable(variable_name)
 
 
 def _is_variadic_positional_word(word: str):
     return word in {"$@", "${@}", "$*", "${*}"}
 
 
-def _are_direct_positional_argument_words(words):
-    expected = 2
-    for word in words:
-        if word not in {f"${expected}", f"${{{expected}}}"}:
-            return False
-        expected += 1
-    return bool(words)
+def _positional_word_index(word: str):
+    match = re.fullmatch(r'\$(?:\{([1-9][0-9]*)\}|([1-9][0-9]*))', word)
+    if match:
+        return int(match.group(1) or match.group(2))
+    return None
+
+
+def _case_arm_signature_value(command: str):
+    match = re.match(r'\s*([a-zA-Z0-9_./:+-]+)\)\s+', command)
+    if not match:
+        return None
+    return match.group(1)
 
 
 def _function_source_alias(path: str, line: int, source_word: str):
@@ -349,6 +405,8 @@ def _function_source_alias(path: str, line: int, source_word: str):
     has_function_local_assignment = False
     aliased_from_first_positional = False
     shifted_after_alias = False
+    shifted_count = 0
+    variable_positions = {}
     index = 0
     while index < len(words):
         word = words[index]
@@ -360,6 +418,7 @@ def _function_source_alias(path: str, line: int, source_word: str):
                 shifted = True
                 continue
             shifted = True
+            shifted_count += 1
             if aliased_from_first_positional:
                 shifted_after_alias = True
             continue
@@ -370,8 +429,16 @@ def _function_source_alias(path: str, line: int, source_word: str):
             continue
         name, value = assignment
         if name != variable_name:
+            if position := _positional_word_index(value):
+                variable_positions[name] = position + shifted_count
+            else:
+                variable_positions.pop(name, None)
             continue
         has_function_local_assignment = True
+        if position := _positional_word_index(value):
+            variable_positions[name] = position + shifted_count
+        else:
+            variable_positions.pop(name, None)
         if not shifted and _is_first_positional_word(value):
             aliased_from_first_positional = True
             shifted_after_alias = False
@@ -384,6 +451,7 @@ def _function_source_alias(path: str, line: int, source_word: str):
         has_function_local_assignment=has_function_local_assignment,
         has_first_positional_alias=aliased_from_first_positional,
         shifted_after_alias=shifted_after_alias,
+        variable_positions=tuple(sorted(variable_positions.items())),
     )
 
 

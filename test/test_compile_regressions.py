@@ -3984,7 +3984,7 @@ class CompileRegressionTestCase(unittest.TestCase):
             )
             self.assertEqual(output.read_text(), "existing output\n")
 
-    def test_retained_source_helper_rejects_invalid_supplement_vectors(self):
+    def test_source_supplement_rejects_empty_helper_signature(self):
         cases = {
             "zero args": [],
         }
@@ -4005,10 +4005,10 @@ class CompileRegressionTestCase(unittest.TestCase):
                 }))
                 output = project.path("compiled.sh")
 
-                with self.assertRaisesRegex(NotImplementedError, "retained source helper") as cm:
+                with self.assertRaisesRegex(NotImplementedError, "source supplement") as cm:
                     project.compile("helpers.sh", output=output, mode="executable", source_supplement=supplement)
 
-                self.assertEqual(cm.exception.diagnostic.code, "unsupported.source.retained-helper")
+                self.assertEqual(cm.exception.code, "unsupported.source.supplement")
                 self.assertFalse(output.exists())
 
     def test_retained_first_positional_helper_rejects_multi_argument_supplement(self):
@@ -4233,6 +4233,14 @@ class CompileRegressionTestCase(unittest.TestCase):
             "non-string argument": json.dumps({
                 "version": 1,
                 "functions": {"source_safe": [{"arguments": [1]}]},
+            }),
+            "boolean source index": json.dumps({
+                "version": 1,
+                "functions": {"source_safe": [{"arguments": ["./dep.sh"], "source_index": True}]},
+            }),
+            "out-of-range source index": json.dumps({
+                "version": 1,
+                "functions": {"source_safe": [{"arguments": ["./dep.sh"], "source_index": 1}]},
             }),
         }
         for name, content in cases.items():

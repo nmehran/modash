@@ -122,10 +122,16 @@ Supplements are declarative exact data:
 - every supplied path value must exist after resolving relative to the
   entrypoint directory
 
-Function entries define finite allowed source-path argument vectors for named
-source helpers. The first argument is treated as the source path; subsequent
-arguments are exact strings passed to the sourced file. They do not make
-arbitrary dynamic dispatch safe.
+Function entries define finite allowed argument vectors for named source
+helpers. By default, the first argument is treated as the source path and
+subsequent arguments are exact strings passed to the sourced file. Advanced
+generated supplements may set `source_index` to point at a non-leading source
+path argument, for helper shapes such as `source "$2" "$1"` or exact `case`
+dispatch that selects a non-first positional source path. The value is zero
+based and defaults to `0`; it must identify an existing path in the argument
+vector.
+
+They do not make arbitrary dynamic dispatch safe.
 
 Retained source helpers that remain callable in generated executable output use
 same-scope dispatch lowering for the supported V1 subset. Unknown helper

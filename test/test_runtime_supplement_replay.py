@@ -126,6 +126,107 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                 ],
             })
 
+    def test_second_positional_helper_observation_replays_through_executable_compile(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                'source ./helpers.sh\nsource_second fast "$TARGET"\necho "main:$VALUE"\n',
+            )
+            project.write("helpers.sh", 'source_second() { source "$2" "$1"; }\n')
+            project.write("dep.sh", 'VALUE="$1"\necho "dep:$VALUE"\n')
+            trace = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))})
+            supplement = generate_source_supplement(entrypoint, trace.observation)
+            supplement_path = project.path("generated/source-supplement.json")
+            write_generated_supplement(supplement, supplement_path)
+
+            compiled = project.compile("main.sh", mode="executable", source_supplement=supplement_path)
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "dep:fast\nmain:fast\n")
+        self.assertEqual(supplement.to_dict()["functions"], {
+            "source_second": [
+                {
+                    "arguments": ["fast", "dep.sh"],
+                    "source_index": 1,
+                },
+            ],
+        })
+
+    def test_local_alias_helper_observation_replays_through_executable_compile(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                'source ./helpers.sh\nsource_mode fast "$TARGET"\necho "main:$VALUE"\n',
+            )
+            project.write(
+                "helpers.sh",
+                "\n".join([
+                    "source_mode() {",
+                    '  local mode="$1"',
+                    '  local path="$2"',
+                    '  source "$path" "$mode"',
+                    "}",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", 'VALUE="$1"\necho "dep:$VALUE"\n')
+            trace = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))})
+            supplement = generate_source_supplement(entrypoint, trace.observation)
+            supplement_path = project.path("generated/source-supplement.json")
+            write_generated_supplement(supplement, supplement_path)
+
+            compiled = project.compile("main.sh", mode="executable", source_supplement=supplement_path)
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "dep:fast\nmain:fast\n")
+        self.assertEqual(supplement.to_dict()["functions"], {
+            "source_mode": [
+                {
+                    "arguments": ["fast", "dep.sh"],
+                    "source_index": 1,
+                },
+            ],
+        })
+
+    def test_case_dispatch_helper_observation_replays_through_executable_compile(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                'source ./helpers.sh\nsource_case main "$TARGET"\necho "main:$VALUE"\n',
+            )
+            project.write(
+                "helpers.sh",
+                "\n".join([
+                    "source_case() {",
+                    '  case "$1" in',
+                    '    main) source "$2" ;;',
+                    "  esac",
+                    "}",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", 'VALUE=loaded\necho "dep:$VALUE"\n')
+            trace = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))})
+            supplement = generate_source_supplement(entrypoint, trace.observation)
+            supplement_path = project.path("generated/source-supplement.json")
+            write_generated_supplement(supplement, supplement_path)
+
+            compiled = project.compile("main.sh", mode="executable", source_supplement=supplement_path)
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "dep:loaded\nmain:loaded\n")
+        self.assertEqual(supplement.to_dict()["functions"], {
+            "source_case": [
+                {
+                    "arguments": ["main", "dep.sh"],
+                    "source_index": 1,
+                },
+            ],
+        })
+
     def test_child_bash_c_observation_replays_through_executable_compile(self):
         with ScriptProject() as project:
             entrypoint = project.write(

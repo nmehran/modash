@@ -12,7 +12,7 @@ SUPPLEMENT_VERSION = 1
 VARIABLE_NAME_PATTERN = re.compile(r'^[a-zA-Z_]\w*$')
 FUNCTION_NAME_PATTERN = re.compile(r'^[a-zA-Z_]\w*$')
 TOP_LEVEL_KEYS = frozenset({"version", "variables", "functions"})
-FUNCTION_ENTRY_KEYS = frozenset({"arguments"})
+FUNCTION_ENTRY_KEYS = frozenset({"arguments", "source_index"})
 
 
 @dataclass(frozen=True)
@@ -125,9 +125,18 @@ def _load_functions(raw_functions, entrypoint_directory: Path):
             arguments = entry.get("arguments")
             if not isinstance(arguments, list):
                 raise _supplement_error(f"invalid source supplement function entry for {name}: arguments must be a list")
+            source_index = entry.get("source_index", 0)
+            if not isinstance(source_index, int) or isinstance(source_index, bool):
+                raise _supplement_error(
+                    f"invalid source supplement function entry for {name}: source_index must be an integer"
+                )
+            if source_index < 0 or source_index >= len(arguments):
+                raise _supplement_error(
+                    f"invalid source supplement function entry for {name}: source_index is out of range"
+                )
             signatures.append(tuple(
                 _normalize_path_value(argument, entrypoint_directory, f"function {name} source argument")
-                if index == 0
+                if index == source_index
                 else _normalize_exact_value(argument, f"function {name} argument")
                 for index, argument in enumerate(arguments)
             ))

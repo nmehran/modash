@@ -242,6 +242,83 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
         })
         self.assertEqual(supplement.to_dict()["variables"], {})
 
+    def test_generates_function_signature_from_second_positional_source(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_second fast "$TARGET"\n')
+            project.write("helpers.sh", 'source_second() { source "$2" "$1"; }\n')
+            project.write("dep.sh", 'echo "dep:$1"\n')
+            observation = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))}).observation
+
+            supplement = generate_source_supplement(entrypoint, observation)
+
+        self.assertEqual(supplement.to_dict()["functions"], {
+            "source_second": [
+                {
+                    "arguments": ["fast", "dep.sh"],
+                    "source_index": 1,
+                },
+            ],
+        })
+        self.assertEqual(supplement.to_dict()["variables"], {})
+
+    def test_generates_function_signature_from_second_positional_alias(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_mode fast "$TARGET"\n')
+            project.write(
+                "helpers.sh",
+                "\n".join([
+                    "source_mode() {",
+                    '  local mode="$1"',
+                    '  local path="$2"',
+                    '  source "$path" "$mode"',
+                    "}",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", 'echo "dep:$1"\n')
+            observation = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))}).observation
+
+            supplement = generate_source_supplement(entrypoint, observation)
+
+        self.assertEqual(supplement.to_dict()["functions"], {
+            "source_mode": [
+                {
+                    "arguments": ["fast", "dep.sh"],
+                    "source_index": 1,
+                },
+            ],
+        })
+        self.assertEqual(supplement.to_dict()["variables"], {})
+
+    def test_generates_function_signature_from_exact_case_arm_dispatch(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_case main "$TARGET"\n')
+            project.write(
+                "helpers.sh",
+                "\n".join([
+                    "source_case() {",
+                    '  case "$1" in',
+                    '    main) source "$2" ;;',
+                    "  esac",
+                    "}",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", "echo dep\n")
+            observation = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))}).observation
+
+            supplement = generate_source_supplement(entrypoint, observation)
+
+        self.assertEqual(supplement.to_dict()["functions"], {
+            "source_case": [
+                {
+                    "arguments": ["main", "dep.sh"],
+                    "source_index": 1,
+                },
+            ],
+        })
+        self.assertEqual(supplement.to_dict()["variables"], {})
+
     def test_does_not_generate_variable_or_function_for_local_alias_with_literal_source_args(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_alias "$TARGET"\n')
