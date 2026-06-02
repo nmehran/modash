@@ -410,6 +410,8 @@ The remaining source-resolution surface is narrower than general Bash support:
   [Source Supplements](source-supplements.md). Retained helper definitions that
   remain callable after merging are supported only for finite exact or
   supplement-backed argument vectors.
-- Runtime source discovery and observed supplement generation. The intended
-  observe-to-supplement-to-deterministic-compile workflow is captured in
-  [Runtime Source Discovery](runtime-source-discovery.md).
+- Broader runtime-discovered helper shapes. The implemented
+  observe-to-graph-to-deterministic-compile workflow is captured in
+  [Runtime Source Discovery](runtime-source-discovery.md), but recursive or
+  runtime-dynamic dispatch still needs a finite, reviewable graph before it can
+  be merged safely.
