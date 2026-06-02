@@ -40,6 +40,8 @@ def build_observation_report(entrypoint: str | os.PathLike, observation, *, vali
         "observation_version": observation.version,
         "summary": {
             "observed_sources": len(observation.sources),
+            "xtrace_source_commands": len(observation.xtrace),
+            "trusted_xtrace_links": sum(1 for event in observation.sources if event.xtrace_index is not None),
             "file_backed_source_sites": len(static_sites),
             "observed_file_backed_source_sites": len(observed_file_sites),
             "unobserved_source_sites": len(unobserved_sites),
@@ -50,6 +52,7 @@ def build_observation_report(entrypoint: str | os.PathLike, observation, *, vali
         "observed_source_sites": [site.to_dict() for site in observed_file_sites],
         "unobserved_source_sites": [site.to_dict() for site in unobserved_sites],
         "process_command_source_sites": process_command_sites,
+        "xtrace_source_commands": [command.to_dict() for command in observation.xtrace],
     }
 
 
@@ -137,6 +140,7 @@ def _observed_source_sites(observation: RuntimeSourceObservation):
         process_command_sites.append({
             "process_index": event.process_index,
             "process_command": process.command,
+            "xtrace_index": event.xtrace_index,
             "call_site": event.call_site.to_dict(),
             "resolved_path": event.resolved_path,
             "arguments": list(event.arguments),

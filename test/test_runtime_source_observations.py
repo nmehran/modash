@@ -13,6 +13,7 @@ from methods.runtime_source_observations import (  # noqa: E402
     RuntimeProcess,
     RuntimeSourceEvent,
     RuntimeSourceObservation,
+    RuntimeXtraceSourceCommand,
     RuntimeSourceObservationError,
     SourceCallSite,
     TraceInfo,
@@ -78,7 +79,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
 
         self.assertEqual(loaded, observation)
         self.assertTrue(text.endswith("\n"))
-        self.assertTrue(text.startswith('{\n  "version": 3,\n  "entrypoint": '))
+        self.assertTrue(text.startswith('{\n  "version": 4,\n  "entrypoint": '))
         self.assertEqual(data["environment"]["recorded_keys"], ["A_VAR", "Z_VAR"])
         self.assertEqual(data["processes"][0]["pid"], 100)
         self.assertIsNone(data["processes"][0]["parent_index"])
@@ -96,7 +97,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             dependency = project.write("dep.sh", "echo dep\n")
 
             observation = validate_observation({
-                "version": 3,
+                "version": 4,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
@@ -116,12 +117,13 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                     }
                 ],
                 "sources": [
-                    {
-                        "index": 0,
-                        "process_index": 0,
-                        "call_site": {
-                            "file": str(entrypoint),
-                            "line": 1,
+                        {
+                            "index": 0,
+                            "process_index": 0,
+                            "xtrace_index": None,
+                            "call_site": {
+                                "file": str(entrypoint),
+                                "line": 1,
                             "command": "source ./dep.sh",
                         },
                         "resolved_path": str(dependency),
@@ -129,6 +131,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                         "status": 0,
                     }
                 ],
+                "xtrace": [],
                 "files": [
                     fingerprint_file(entrypoint, roles=("entrypoint", "call-site")).to_dict(),
                     fingerprint_file(dependency, roles=("source",)).to_dict(),
@@ -172,7 +175,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             entrypoint = project.write("main.sh", "source ./dep.sh\n")
             dependency = project.write("dep.sh", "echo dep\n")
             valid = {
-                "version": 3,
+                "version": 4,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
@@ -192,12 +195,13 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                     }
                 ],
                 "sources": [
-                    {
-                        "index": 0,
-                        "process_index": 0,
-                        "call_site": {
-                            "file": str(entrypoint),
-                            "line": 1,
+                        {
+                            "index": 0,
+                            "process_index": 0,
+                            "xtrace_index": None,
+                            "call_site": {
+                                "file": str(entrypoint),
+                                "line": 1,
                             "command": "source ./dep.sh",
                         },
                         "resolved_path": str(dependency),
@@ -205,6 +209,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                         "status": 0,
                     }
                 ],
+                "xtrace": [],
                 "files": [
                     fingerprint_file(entrypoint, roles=("entrypoint", "call-site")).to_dict(),
                     fingerprint_file(dependency, roles=("source",)).to_dict(),
@@ -212,7 +217,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             }
 
             cases = [
-                ("wrong version", {**valid, "version": 1}, "version must be 3"),
+                ("wrong version", {**valid, "version": 1}, "version must be 4"),
                 ("unknown top-level key", {**valid, "extra": True}, "unknown keys"),
                 (
                     "missing argv",
@@ -294,9 +299,153 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
     def test_write_observation_validates_plain_json_before_writing(self):
         with ScriptProject() as project:
             with self.assertRaises(RuntimeSourceObservationError):
-                write_observation(project.observation_path(), {"version": 3})
+                write_observation(project.observation_path(), {"version": 4})
 
             self.assertFalse(project.observation_path().exists())
+
+    def test_schema_links_xtrace_source_provenance_to_source_events(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./dep.sh\n")
+            dependency = project.write("dep.sh", "echo dep\n")
+            observation = RuntimeSourceObservation(
+                entrypoint=str(entrypoint),
+                cwd=str(project.root),
+                argv=(),
+                bash=BashInfo(version="test"),
+                trace=TraceInfo(version="test"),
+                environment=EnvironmentInfo(policy="inherit", recorded_keys=()),
+                processes=(
+                    RuntimeProcess(
+                        index=0,
+                        pid=100,
+                        parent_pid=50,
+                        parent_index=None,
+                        entrypoint=str(entrypoint),
+                        cwd=str(project.root),
+                        argv=(),
+                        command=str(entrypoint),
+                    ),
+                ),
+                sources=(
+                    RuntimeSourceEvent(
+                        index=0,
+                        process_index=0,
+                        xtrace_index=0,
+                        call_site=SourceCallSite(
+                            file=str(entrypoint),
+                            line=1,
+                            command="source ./dep.sh",
+                        ),
+                        resolved_path=str(dependency),
+                        status=0,
+                    ),
+                ),
+                xtrace=(
+                    RuntimeXtraceSourceCommand(
+                        index=0,
+                        process_index=0,
+                        file=str(entrypoint),
+                        line=1,
+                        function="",
+                        cwd=str(project.root),
+                        command="source ./dep.sh",
+                    ),
+                ),
+                files=(
+                    fingerprint_file(entrypoint, roles=("entrypoint", "call-site")),
+                    fingerprint_file(dependency, roles=("source",)),
+                ),
+            )
+            payload = observation.to_dict()
+            loaded = validate_observation(payload)
+
+        self.assertEqual(loaded.sources[0].xtrace_index, 0)
+        self.assertEqual(loaded.xtrace[0].command, "source ./dep.sh")
+
+    def test_schema_rejects_untrusted_xtrace_links(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./dep.sh\n")
+            dependency = project.write("dep.sh", "echo dep\n")
+            valid = {
+                "version": 4,
+                "entrypoint": str(entrypoint),
+                "cwd": str(project.root),
+                "argv": [],
+                "bash": {"version": "test"},
+                "trace": {"version": "test"},
+                "environment": {"policy": "inherit", "recorded_keys": []},
+                "processes": [
+                    {
+                        "index": 0,
+                        "pid": 100,
+                        "parent_index": None,
+                        "parent_pid": 50,
+                        "entrypoint": str(entrypoint),
+                        "cwd": str(project.root),
+                        "argv": [],
+                        "command": str(entrypoint),
+                    },
+                ],
+                "sources": [
+                    {
+                        "index": 0,
+                        "process_index": 0,
+                        "xtrace_index": 0,
+                        "call_site": {
+                            "file": str(entrypoint),
+                            "line": 1,
+                            "command": "source ./dep.sh",
+                        },
+                        "resolved_path": str(dependency),
+                        "arguments": [],
+                        "status": 0,
+                    },
+                ],
+                "xtrace": [
+                    {
+                        "index": 0,
+                        "process_index": 0,
+                        "file": str(entrypoint),
+                        "line": 1,
+                        "function": "",
+                        "cwd": str(project.root),
+                        "command": "source ./dep.sh",
+                    },
+                ],
+                "files": [
+                    fingerprint_file(entrypoint, roles=("entrypoint", "call-site")).to_dict(),
+                    fingerprint_file(dependency, roles=("source",)).to_dict(),
+                ],
+            }
+
+            cases = [
+                (
+                    "source missing xtrace index",
+                    _replace_source(valid, xtrace_index=None),
+                    "xtrace_index is required",
+                ),
+                (
+                    "source bad xtrace index",
+                    _replace_source(valid, xtrace_index=1),
+                    "reference an existing xtrace",
+                ),
+                (
+                    "xtrace bad process",
+                    _replace_xtrace(valid, process_index=1),
+                    "process_index must reference an existing process",
+                ),
+                (
+                    "xtrace unreferenced",
+                    {**valid, "sources": [{**valid["sources"][0], "xtrace_index": None}]},
+                    "xtrace_index is required",
+                ),
+            ]
+
+            for name, data, expected_message in cases:
+                with self.subTest(name=name):
+                    with self.assertRaises(RuntimeSourceObservationError) as context:
+                        validate_observation(data)
+                    self.assertIn(expected_message, str(context.exception))
 
 
 def _replace_source(observation, **updates):
@@ -308,6 +457,12 @@ def _replace_source(observation, **updates):
 def _replace_file(observation, index=0, **updates):
     copied = json.loads(json.dumps(observation))
     copied["files"][index].update(updates)
+    return copied
+
+
+def _replace_xtrace(observation, index=0, **updates):
+    copied = json.loads(json.dumps(observation))
+    copied["xtrace"][index].update(updates)
     return copied
 
 

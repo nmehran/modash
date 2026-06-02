@@ -36,6 +36,8 @@ class RuntimeObservationReportTestCase(unittest.TestCase):
             report = build_observation_report(entrypoint, observation)
 
         self.assertEqual(report["summary"]["observed_sources"], 1)
+        self.assertEqual(report["summary"]["xtrace_source_commands"], 1)
+        self.assertEqual(report["summary"]["trusted_xtrace_links"], 1)
         self.assertEqual(report["summary"]["file_backed_source_sites"], 2)
         self.assertEqual(report["summary"]["unobserved_source_sites"], 1)
         self.assertEqual(report["summary"]["warnings"], 1)
@@ -72,8 +74,10 @@ class RuntimeObservationReportTestCase(unittest.TestCase):
         self.assertEqual(report["summary"]["warnings"], 0)
         process_site = report["process_command_source_sites"][0]
         self.assertEqual(process_site["process_command"], "source ./dep.sh child")
+        self.assertEqual(process_site["xtrace_index"], 0)
         self.assertEqual(process_site["resolved_path"], str(dependency.resolve(strict=False)))
         self.assertEqual(process_site["arguments"], ["child"])
+        self.assertEqual(report["xtrace_source_commands"][0]["command"], "source ./dep.sh child")
 
     def test_rejects_stale_observation_before_building_report(self):
         with ScriptProject() as project:

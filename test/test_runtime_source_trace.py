@@ -40,7 +40,14 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(event.arguments, ())
         self.assertEqual(event.status, 0)
         fingerprints = {Path(file.path).name: file for file in result.observation.files}
-        self.assertEqual(result.observation.version, 3)
+        self.assertEqual(result.observation.version, 4)
+        self.assertEqual(len(result.observation.xtrace), 1)
+        self.assertEqual(event.xtrace_index, 0)
+        xtrace = result.observation.xtrace[0]
+        self.assertEqual(xtrace.process_index, event.process_index)
+        self.assertEqual(xtrace.file, str(entrypoint.resolve(strict=False)))
+        self.assertEqual(xtrace.line, 1)
+        self.assertEqual(xtrace.command, "source ./dep.sh")
         self.assertEqual(fingerprints["main.sh"].roles, ("entrypoint", "call-site"))
         self.assertEqual(fingerprints["dep.sh"].roles, ("source",))
         self.assertTrue(all(len(file.sha256) == 64 for file in result.observation.files))

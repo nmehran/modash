@@ -54,7 +54,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             "functions": {},
         })
         self.assertEqual(report["version"], 1)
-        self.assertEqual(report["observation_version"], 3)
+        self.assertEqual(report["observation_version"], 4)
         self.assertEqual(report["summary"]["warnings"], 0)
 
     def test_supplement_cli_writes_explicit_report_path(self):

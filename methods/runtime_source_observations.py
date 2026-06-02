@@ -6,7 +6,7 @@ import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-OBSERVATION_VERSION = 3
+OBSERVATION_VERSION = 4
 TOP_LEVEL_KEYS = frozenset({
     "version",
     "entrypoint",
@@ -17,6 +17,7 @@ TOP_LEVEL_KEYS = frozenset({
     "environment",
     "processes",
     "sources",
+    "xtrace",
     "files",
 })
 BASH_KEYS = frozenset({"version"})
@@ -36,11 +37,21 @@ SOURCE_EVENT_KEYS = frozenset({
     "index",
     "process_index",
     "call_site",
+    "xtrace_index",
     "resolved_path",
     "arguments",
     "status",
 })
 CALL_SITE_KEYS = frozenset({"file", "line", "command"})
+XTRACE_SOURCE_KEYS = frozenset({
+    "index",
+    "process_index",
+    "file",
+    "line",
+    "function",
+    "cwd",
+    "command",
+})
 FILE_FINGERPRINT_KEYS = frozenset({"path", "size", "mtime_ns", "sha256", "roles"})
 FILE_FINGERPRINT_ROLE_ORDER = ("entrypoint", "call-site", "source")
 FILE_FINGERPRINT_ROLES = frozenset(FILE_FINGERPRINT_ROLE_ORDER)
@@ -255,6 +266,7 @@ class RuntimeSourceEvent:
     arguments: tuple[str, ...] = field(default_factory=tuple)
     status: int = 0
     process_index: int = 0
+    xtrace_index: int | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "index", _nonnegative_int(self.index, "sources[].index"))
@@ -263,6 +275,12 @@ class RuntimeSourceEvent:
             "process_index",
             _nonnegative_int(self.process_index, "sources[].process_index"),
         )
+        if self.xtrace_index is not None:
+            object.__setattr__(
+                self,
+                "xtrace_index",
+                _nonnegative_int(self.xtrace_index, "sources[].xtrace_index"),
+            )
         if not isinstance(self.call_site, SourceCallSite):
             raise _schema_error("sources[].call_site must be a SourceCallSite")
         object.__setattr__(self, "resolved_path", _absolute_path(self.resolved_path, "sources[].resolved_path"))
@@ -282,6 +300,7 @@ class RuntimeSourceEvent:
         return cls(
             index=data["index"],
             process_index=data["process_index"],
+            xtrace_index=data["xtrace_index"],
             call_site=SourceCallSite.from_dict(data["call_site"]),
             resolved_path=data["resolved_path"],
             arguments=_string_list(data["arguments"], "sources[].arguments"),
@@ -292,10 +311,59 @@ class RuntimeSourceEvent:
         return {
             "index": self.index,
             "process_index": self.process_index,
+            "xtrace_index": self.xtrace_index,
             "call_site": self.call_site.to_dict(),
             "resolved_path": self.resolved_path,
             "arguments": list(self.arguments),
             "status": self.status,
+        }
+
+
+@dataclass(frozen=True)
+class RuntimeXtraceSourceCommand:
+    index: int
+    process_index: int
+    file: str
+    line: int
+    function: str
+    cwd: str
+    command: str
+
+    def __post_init__(self):
+        object.__setattr__(self, "index", _nonnegative_int(self.index, "xtrace[].index"))
+        object.__setattr__(
+            self,
+            "process_index",
+            _nonnegative_int(self.process_index, "xtrace[].process_index"),
+        )
+        object.__setattr__(self, "file", _nonempty_string(self.file, "xtrace[].file"))
+        object.__setattr__(self, "line", _positive_int(self.line, "xtrace[].line"))
+        object.__setattr__(self, "function", _exact_string(self.function, "xtrace[].function"))
+        object.__setattr__(self, "cwd", _absolute_path(self.cwd, "xtrace[].cwd"))
+        object.__setattr__(self, "command", _nonempty_string(self.command, "xtrace[].command"))
+
+    @classmethod
+    def from_dict(cls, data):
+        _require_keys(data, XTRACE_SOURCE_KEYS, "xtrace source command")
+        return cls(
+            index=data["index"],
+            process_index=data["process_index"],
+            file=data["file"],
+            line=data["line"],
+            function=data["function"],
+            cwd=data["cwd"],
+            command=data["command"],
+        )
+
+    def to_dict(self):
+        return {
+            "index": self.index,
+            "process_index": self.process_index,
+            "file": self.file,
+            "line": self.line,
+            "function": self.function,
+            "cwd": self.cwd,
+            "command": self.command,
         }
 
 
@@ -309,6 +377,7 @@ class RuntimeSourceObservation:
     environment: EnvironmentInfo
     processes: tuple[RuntimeProcess, ...]
     sources: tuple[RuntimeSourceEvent, ...] = field(default_factory=tuple)
+    xtrace: tuple[RuntimeXtraceSourceCommand, ...] = field(default_factory=tuple)
     files: tuple[RuntimeFileFingerprint, ...] = field(default_factory=tuple)
     version: int = OBSERVATION_VERSION
 
@@ -348,6 +417,16 @@ class RuntimeSourceObservation:
             if event.process_index >= len(processes):
                 raise _schema_error("sources[].process_index must reference an existing process")
         object.__setattr__(self, "sources", sources)
+        xtrace = tuple(_sequence(self.xtrace, "xtrace"))
+        for expected_index, command in enumerate(xtrace):
+            if not isinstance(command, RuntimeXtraceSourceCommand):
+                raise _schema_error("xtrace must contain RuntimeXtraceSourceCommand values")
+            if command.index != expected_index:
+                raise _schema_error("xtrace must be indexed contiguously from 0")
+            if command.process_index >= len(processes):
+                raise _schema_error("xtrace[].process_index must reference an existing process")
+        _validate_xtrace_links(sources, xtrace)
+        object.__setattr__(self, "xtrace", xtrace)
         files = tuple(_sequence(self.files, "files"))
         if not files:
             raise _schema_error("files must contain at least one file fingerprint")
@@ -377,6 +456,10 @@ class RuntimeSourceObservation:
             environment=EnvironmentInfo.from_dict(data["environment"]),
             processes=tuple(RuntimeProcess.from_dict(process) for process in _object_list(data["processes"], "processes")),
             sources=tuple(RuntimeSourceEvent.from_dict(event) for event in _object_list(data["sources"], "sources")),
+            xtrace=tuple(
+                RuntimeXtraceSourceCommand.from_dict(command)
+                for command in _object_list(data["xtrace"], "xtrace")
+            ),
             files=tuple(RuntimeFileFingerprint.from_dict(fingerprint) for fingerprint in _object_list(data["files"], "files")),
         )
 
@@ -391,6 +474,7 @@ class RuntimeSourceObservation:
             "environment": self.environment.to_dict(),
             "processes": [process.to_dict() for process in self.processes],
             "sources": [event.to_dict() for event in self.sources],
+            "xtrace": [command.to_dict() for command in self.xtrace],
             "files": [fingerprint.to_dict() for fingerprint in self.files],
         }
 
@@ -453,6 +537,27 @@ def _validate_fingerprint_coverage(entrypoint: str, processes, sources, files):
                 "call-site",
                 "sources[].call_site.file",
             )
+
+
+def _validate_xtrace_links(sources, xtrace):
+    if not xtrace:
+        if any(event.xtrace_index is not None for event in sources):
+            raise _schema_error("sources[].xtrace_index must be null when xtrace is empty")
+        return
+
+    referenced = []
+    for event in sources:
+        if event.xtrace_index is None:
+            raise _schema_error("sources[].xtrace_index is required when xtrace provenance is present")
+        if event.xtrace_index >= len(xtrace):
+            raise _schema_error("sources[].xtrace_index must reference an existing xtrace source command")
+        command = xtrace[event.xtrace_index]
+        if command.process_index != event.process_index:
+            raise _schema_error("sources[].xtrace_index must reference the same process")
+        referenced.append(event.xtrace_index)
+
+    if sorted(referenced) != list(range(len(xtrace))):
+        raise _schema_error("xtrace source commands must be referenced exactly once by sources")
 
 
 def _is_process_command_call_site(event: RuntimeSourceEvent, processes):
