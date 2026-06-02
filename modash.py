@@ -1,6 +1,7 @@
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 from methods.compile import compile_sources
@@ -31,8 +32,14 @@ from methods.runtime_source_supplements import (
     load_source_supplement_from_payload,
     write_generated_supplement,
 )
+from methods.shell_line import get_commands
 from methods.source_evaluator import SourceOverride
-from methods.source_resolver import UnsupportedSourceError
+from methods.source_resolver import (
+    UnsupportedSourceError,
+    parse_shell_words_preserving_quotes,
+    source_command_invocation,
+    strip_shell_word_quotes,
+)
 
 
 TOP_LEVEL_HELP_EPILOG = """\
@@ -43,6 +50,7 @@ runtime commands:
   compile-observed  compile executable output from a trusted runtime graph
   observe-compile   explicitly trace, write review artifacts, and compile
 """
+ASSIGNMENT_WORD_PATTERN = re.compile(r'^[a-zA-Z_]\w*(?:\+)?=.*$')
 
 
 def main(entry_point, output_file, mode="context", source_supplement=None):
@@ -158,7 +166,7 @@ def _compile_from_graph_payload(entrypoint, output, graph_payload):
 
 
 def _source_overrides_from_graph_payload(graph_payload):
-    return tuple(
+    direct_overrides = [
         SourceOverride(
             path=edge["call_site"]["file"],
             line=edge["call_site"]["line"],
@@ -168,7 +176,86 @@ def _source_overrides_from_graph_payload(graph_payload):
         )
         for edge in graph_payload["edges"]
         if edge["to"].startswith("file:")
+    ]
+    return tuple([
+        *direct_overrides,
+        *_child_process_command_overrides_from_graph_payload(graph_payload),
+    ])
+
+
+def _child_process_command_overrides_from_graph_payload(graph_payload):
+    process_commands = {
+        node["id"]: node
+        for node in graph_payload["nodes"]
+        if node["kind"] == "process-command"
+    }
+    candidate_files = _graph_parent_command_candidate_files(graph_payload)
+    overrides = []
+    for edge in graph_payload["edges"]:
+        if not edge["from"].startswith("process-command:") or not edge["to"].startswith("file:"):
+            continue
+        process_command = process_commands.get(edge["from"])
+        if process_command is None:
+            continue
+        source_site = _first_direct_source_site(process_command["command"])
+        if source_site is None:
+            continue
+        for path, line in _matching_bash_c_parent_sites(candidate_files, process_command["command"]):
+            overrides.append(SourceOverride(
+                path=path,
+                line=line,
+                command=source_site,
+                resolved_path=edge["resolved_path"],
+                arguments=tuple(edge["arguments"]),
+            ))
+    return tuple(overrides)
+
+
+def _graph_parent_command_candidate_files(graph_payload):
+    return tuple(
+        fingerprint["path"]
+        for fingerprint in graph_payload["files"]
+        if "entrypoint" in fingerprint["roles"] or "call-site" in fingerprint["roles"]
     )
+
+
+def _first_direct_source_site(command: str):
+    for segment in get_commands(command):
+        invocation = source_command_invocation(segment)
+        if invocation is not None:
+            return invocation.source_site
+    return None
+
+
+def _matching_bash_c_parent_sites(paths, payload: str):
+    matches = []
+    for path in paths:
+        candidate = Path(path)
+        try:
+            lines = candidate.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for index, line in enumerate(lines, start=1):
+            for command in get_commands(line):
+                if _bash_c_payload(command) == payload:
+                    matches.append((str(candidate), index))
+    return tuple(matches)
+
+
+def _bash_c_payload(command: str):
+    try:
+        words = parse_shell_words_preserving_quotes(command.strip())
+    except UnsupportedSourceError:
+        return None
+    index = 0
+    while index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[index]):
+        index += 1
+    if index + 2 >= len(words):
+        return None
+    command_name = strip_shell_word_quotes(words[index])
+    if command_name not in {"bash", "/bin/bash", "/usr/bin/bash"} or words[index + 1] != "-c":
+        return None
+    return strip_shell_word_quotes(words[index + 2])
 
 
 def _entrypoint_directory(entrypoint):

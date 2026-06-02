@@ -161,6 +161,23 @@ class LineParserFrontendTestCase(unittest.TestCase):
         self.assertEqual([type(node) for node in ir.nodes[0].body], [Assignment, SourceSite])
         self.assertEqual(ir.nodes[0].body[0].value, '"${ROOT}/dep.sh"')
 
+    def test_nested_function_definition_does_not_close_outer_function(self):
+        ir = self.parse("""\
+            outer() {
+              before=1
+              inner() {
+                echo inner
+              }
+              after=1
+            }
+            after_outer=1
+            """)
+
+        self.assertEqual([type(node) for node in ir.nodes], [FunctionDef, Assignment])
+        self.assertEqual(ir.nodes[0].name, "outer")
+        self.assertEqual([type(node) for node in ir.nodes[0].body], [Assignment, FunctionDef, Assignment])
+        self.assertEqual(ir.nodes[0].body[1].name, "inner")
+
     def test_emits_raw_commands_for_non_source_fragments(self):
         ir = self.parse('cd subdir && echo ready && source ./dep.sh\n')
 

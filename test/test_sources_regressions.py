@@ -153,9 +153,11 @@ class SourceRegressionTestCase(unittest.TestCase):
 
         self.assertEqual([item.value for item in extract_heredoc_delimiters('cat <<EOF')], ['EOF'])
         self.assertEqual([item.value for item in extract_heredoc_delimiters("cat <<'EOF'")], ['EOF'])
+        self.assertEqual([item.value for item in extract_heredoc_delimiters(r'cat <<-\EOF')], ['EOF'])
         self.assertEqual(extract_heredoc_delimiters('echo "<<EOF"'), [])
         self.assertEqual(extract_heredoc_delimiters('echo $((1 << 2))'), [])
         self.assertEqual(extract_heredoc_delimiters('(( value << 2 ))'), [])
+        self.assertEqual(extract_heredoc_delimiters('done <<< "$output"'), [])
 
     def test_static_source_discovery_matrix(self):
         with ScriptProject() as project:

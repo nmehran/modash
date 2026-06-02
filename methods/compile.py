@@ -72,6 +72,20 @@ def indent_block(content: str, prefix: str):
     return '\n'.join(f"{prefix}{line}" if line else line for line in lines)
 
 
+def indent_shell_block(content: str, prefix: str):
+    output = []
+    active_heredocs = []
+    for line in content.splitlines():
+        if active_heredocs:
+            output.append(line)
+            if is_heredoc_end(line, active_heredocs[0]):
+                active_heredocs.pop(0)
+            continue
+        output.append(f"{prefix}{line}" if line else line)
+        active_heredocs.extend(extract_heredoc_delimiters(line))
+    return '\n'.join(output)
+
+
 def shell_quote_words(words):
     return " ".join(shell_quote(word) for word in words)
 
@@ -543,7 +557,7 @@ def render_source_dispatch(
                 ),
             )
         else:
-            rendered_source = indent_block(
+            rendered_source = indent_shell_block(
                 render_source(
                     source_declaration.path,
                     source_arguments=source_declaration.source_arguments,
@@ -594,7 +608,7 @@ def render_retained_source_dispatch(
             continue
         seen_arguments.add(arguments)
 
-        rendered_source = indent_block(
+        rendered_source = indent_shell_block(
             render_source(
                 source_declaration.path,
                 source_arguments=source_declaration.source_arguments,
@@ -693,7 +707,7 @@ def replace_command_source_sites(
                 positional_frame_names,
             )
         else:
-            rendered_source = indent_block(
+            rendered_source = indent_shell_block(
                 render_source(
                     source_declaration.path,
                     source_arguments=source_declaration.source_arguments,
@@ -732,7 +746,7 @@ def render_bash_c_source_command(
     payload = strip_shell_word_quotes(words[command_index + 2])
     inner_source_site = source_declaration.source_value or f"source {source_declaration.source_expression.strip()}"
 
-    rendered_source = indent_block(
+    rendered_source = indent_shell_block(
         render_source(
             source_declaration.path,
             source_arguments=source_declaration.source_arguments,
@@ -829,7 +843,7 @@ def render_source_site_replacement(
             )
         return f"{separator}{{\n{render_source_expansion_failure(declaration, indent)}\n{indent}}} #"
 
-    rendered_source = indent_block(
+    rendered_source = indent_shell_block(
         render_source(
             declaration.path,
             source_arguments=declaration.source_arguments,

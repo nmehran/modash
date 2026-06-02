@@ -141,6 +141,16 @@ def validate_entrypoint(project, entrypoint):
     entrypoint_path = Path(entrypoint["path"])
     if entrypoint_path.is_absolute() or any(part == ".." for part in entrypoint_path.parts):
         raise ValueError(f"real-world project {project['name']} has unsafe entrypoint path")
+    behavior_class = entrypoint.get("behavior_class")
+    if behavior_class is not None and (
+        not isinstance(behavior_class, str)
+        or not behavior_class
+        or any(character.isspace() for character in behavior_class)
+    ):
+        raise ValueError(
+            f"real-world project {project['name']} entrypoint behavior_class "
+            "must be a non-empty token"
+        )
 
     modes = entrypoint.get("modes")
     if not isinstance(modes, dict):
@@ -582,6 +592,14 @@ def result_summary(records):
             "output_artifacts": sum(1 for record in expected_records if record.get("output_path")),
         })
 
+    behavior_classes = Counter(
+        record["behavior_class"]
+        for record in records
+        if isinstance(record.get("behavior_class"), str)
+    )
+    if behavior_classes:
+        summary["behavior_classes"] = dict(sorted(behavior_classes.items()))
+
     return summary
 
 
@@ -854,6 +872,10 @@ def runtime_probe_entries(project, probe_name):
         if spec is None:
             continue
         yield entrypoint, runtime, spec
+
+
+def entrypoint_behavior_class(entrypoint):
+    return entrypoint.get("behavior_class")
 
 
 def minimum_probe_events(spec):
@@ -1536,6 +1558,42 @@ def short_text(value, limit=160):
 
 
 class RealWorldHarnessHelperTestCase(unittest.TestCase):
+    def test_manifest_rejects_invalid_behavior_class(self):
+        project = {
+            "name": "sample",
+            "kind": "pinned",
+            "version": "1",
+            "source": {
+                "url": "https://example.invalid/sample.tar.gz",
+                "sha256": "0" * 64,
+                "strip_components": 1,
+            },
+            "entrypoints": [{
+                "path": "entry.sh",
+                "behavior_class": "bad class",
+                "modes": {
+                    "context": {"expected": "success"},
+                    "executable": {"expected": "success"},
+                },
+            }],
+        }
+
+        with self.assertRaisesRegex(ValueError, "behavior_class"):
+            validate_project(project)
+
+    def test_result_summary_counts_behavior_classes(self):
+        summary = result_summary([
+            {"status": "success", "behavior_class": "completion-loader"},
+            {"status": "success", "behavior_class": "completion-loader"},
+            {"status": "unsupported", "behavior_class": "dynamic-hook"},
+            {"status": "success"},
+        ])
+
+        self.assertEqual(summary["behavior_classes"], {
+            "completion-loader": 2,
+            "dynamic-hook": 1,
+        })
+
     def test_runtime_compile_failure_message_includes_diagnostics(self):
         message = runtime_failure_message({
             "project": "project",
@@ -1697,6 +1755,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                             "version": project["version"],
                             "kind": "pinned",
                             "entrypoint": str(entrypoint_path),
+                            "behavior_class": entrypoint_behavior_class(entrypoint),
                             **result,
                         }, root)
                         record["expected_status"] = expectation["expected"]
@@ -1790,6 +1849,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                             "version": project["version"],
                             "kind": "runtime",
                             "entrypoint": str(entrypoint_path),
+                            "behavior_class": entrypoint_behavior_class(entrypoint),
                             "expected_status": runtime["expected"],
                             "matched_expectation": False,
                             **compile_result,
@@ -1811,6 +1871,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                         "version": project["version"],
                         "kind": "runtime",
                         "entrypoint": str(entrypoint_path),
+                        "behavior_class": entrypoint_behavior_class(entrypoint),
                         "mode": "runtime",
                         **normalize_runtime_payload(probe, root),
                     }, root)
@@ -1878,6 +1939,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                     "version": project["version"],
                     "kind": "runtime-trace",
                     "entrypoint": str(entrypoint_path),
+                    "behavior_class": entrypoint_behavior_class(entrypoint),
                     **probe,
                 }, root)
                 if record.get("output_path"):
@@ -1967,6 +2029,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                     "version": project["version"],
                     "kind": "runtime-supplement",
                     "entrypoint": str(entrypoint_path),
+                    "behavior_class": entrypoint_behavior_class(entrypoint),
                     **probe,
                 }, root)
                 for key in ("output_path", "observation_path", "source_supplement", "review_report"):
@@ -2056,6 +2119,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                     "version": project["version"],
                     "kind": "runtime-graph",
                     "entrypoint": str(entrypoint_path),
+                    "behavior_class": entrypoint_behavior_class(entrypoint),
                     **probe,
                 }, root)
                 for key in ("output_path", "observation_path", "runtime_graph", "graph_review_report"):
@@ -2145,6 +2209,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                     "version": project["version"],
                     "kind": "runtime-observe-compile",
                     "entrypoint": str(entrypoint_path),
+                    "behavior_class": entrypoint_behavior_class(entrypoint),
                     **probe,
                 }, root)
                 for key in ("output_path", "observation_path", "runtime_graph", "graph_review_report"):

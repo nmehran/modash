@@ -417,6 +417,26 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
             {"main.sh", "dep.sh"},
         )
 
+    def test_trace_records_child_bash_c_positional_source(self):
+        with ScriptProject() as project:
+            dependency = project.write("dep.sh", 'printf "child-positional\\n"\n')
+            project.write("main.sh", 'bash -c \'. "$1"\' bash ./dep.sh\n')
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "child-positional\n")
+        self.assertEqual(len(result.observation.processes), 2)
+        self.assertEqual(len(result.observation.sources), 1)
+        event = result.observation.sources[0]
+        self.assertEqual(event.process_index, 1)
+        self.assertEqual(event.call_site.command, '. "$1"')
+        self.assertEqual(event.resolved_path, str(dependency.resolve(strict=False)))
+        self.assertEqual(event.status, 0)
+        xtrace = result.observation.xtrace[event.xtrace_index]
+        self.assertEqual(xtrace.source_identity, event.source_identity)
+        self.assertEqual(xtrace.command, "__modash_trace_dot_source ./dep.sh")
+
     def test_trace_records_command_bash_child_sources(self):
         with ScriptProject() as project:
             child = project.write("child.sh", 'source ./dep.sh\n')

@@ -10,9 +10,16 @@
         "sha256": "3369bd5e418a75fb990863925aed5b420398acebb320ec4c0306b3eae23f107a",
         "strip_components": 1
       },
+      "fixture_files": [
+        {
+          "source": "bash-completion/completion-loader-wrapper.sh",
+          "path": ".modash-fixtures/completion-loader-wrapper.sh"
+        }
+      ],
       "entrypoints": [
         {
           "path": "bash_completion",
+          "behavior_class": "completion-forest",
           "modes": {
             "context": {
               "expected": "timeout"
@@ -24,6 +31,7 @@
         },
         {
           "path": "bash_completion.d/000_bash_completion_compat.bash",
+          "behavior_class": "completion-compat-library",
           "modes": {
             "context": {
               "expected": "success"
@@ -35,12 +43,56 @@
         },
         {
           "path": "completions/cd",
+          "behavior_class": "completion-command-definition",
           "modes": {
             "context": {
               "expected": "success"
             },
             "executable": {
               "expected": "success"
+            }
+          }
+        },
+        {
+          "path": ".modash-fixtures/completion-loader-wrapper.sh",
+          "behavior_class": "completion-runtime-loader",
+          "modes": {
+            "context": {
+              "expected": "success"
+            },
+            "executable": {
+              "expected": "unsupported",
+              "diagnostic": {
+                "code": "unsupported.source.unresolved",
+                "fragment": ". \"$MODASH_COMPLETION_ROOT/$completion\""
+              }
+            }
+          },
+          "runtime": {
+            "cwd": ".modash-fixtures",
+            "environment": {
+              "MODASH_COMPLETION_ROOT": "{root}/completions"
+            },
+            "trace": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "completions/alias",
+                "completions/cd"
+              ]
+            },
+            "graph": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "completions/alias",
+                "completions/cd"
+              ]
+            },
+            "observe_compile": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "completions/alias",
+                "completions/cd"
+              ]
             }
           }
         }
@@ -643,6 +695,112 @@
           "runtime": {
             "expected": "match",
             "cwd": ".modash-fixtures"
+          }
+        }
+      ]
+    },
+    {
+      "name": "git",
+      "kind": "pinned",
+      "version": "2.45.2",
+      "source": {
+        "url": "https://github.com/git/git/archive/refs/tags/v2.45.2.tar.gz",
+        "archive": "git-2.45.2.tar.gz",
+        "sha256": "8422abc4a16e389220d8da15e12d712f4e6219846ddd8b112e9b31f3087ddf9b",
+        "strip_components": 1
+      },
+      "fixture_files": [
+        {
+          "source": "git/mergetool-loader-wrapper.sh",
+          "path": ".modash-fixtures/mergetool-loader-wrapper.sh"
+        },
+        {
+          "source": "git/child-bash-prompt-wrapper.sh",
+          "path": ".modash-fixtures/child-bash-prompt-wrapper.sh"
+        }
+      ],
+      "entrypoints": [
+        {
+          "path": ".modash-fixtures/mergetool-loader-wrapper.sh",
+          "behavior_class": "plugin-module-runtime-loader",
+          "modes": {
+            "context": {
+              "expected": "success"
+            },
+            "executable": {
+              "expected": "unsupported",
+              "diagnostic": {
+                "code": "unsupported.source.unresolved",
+                "fragment": ". \"$MODASH_GIT_MERGETOOLS_DIR/$tool\""
+              }
+            }
+          },
+          "runtime": {
+            "cwd": ".modash-fixtures",
+            "environment": {
+              "MODASH_GIT_MERGETOOLS_DIR": "{root}/mergetools"
+            },
+            "trace": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "mergetools/bc",
+                "mergetools/vimdiff"
+              ]
+            },
+            "graph": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "mergetools/bc",
+                "mergetools/vimdiff"
+              ]
+            },
+            "observe_compile": {
+              "minimum_events": 2,
+              "required_source_suffixes": [
+                "mergetools/bc",
+                "mergetools/vimdiff"
+              ]
+            }
+          }
+        },
+        {
+          "path": ".modash-fixtures/child-bash-prompt-wrapper.sh",
+          "behavior_class": "child-bash-command-string-source",
+          "modes": {
+            "context": {
+              "expected": "success"
+            },
+            "executable": {
+              "expected": "unsupported",
+              "diagnostic": {
+                "code": "unsupported.source.resolution",
+                "fragment": ". \"$1\""
+              }
+            }
+          },
+          "runtime": {
+            "cwd": ".modash-fixtures",
+            "environment": {
+              "MODASH_GIT_COMPLETION_DIR": "{root}/contrib/completion"
+            },
+            "trace": {
+              "minimum_events": 1,
+              "required_source_suffixes": [
+                "contrib/completion/git-prompt.sh"
+              ]
+            },
+            "graph": {
+              "minimum_events": 1,
+              "required_source_suffixes": [
+                "contrib/completion/git-prompt.sh"
+              ]
+            },
+            "observe_compile": {
+              "minimum_events": 1,
+              "required_source_suffixes": [
+                "contrib/completion/git-prompt.sh"
+              ]
+            }
           }
         }
       ]

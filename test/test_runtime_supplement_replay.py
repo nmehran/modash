@@ -10,6 +10,8 @@ from methods.runtime_source_supplements import (  # noqa: E402
     generate_source_supplement,
     write_generated_supplement,
 )
+from methods.runtime_source_graph import build_observed_source_graph, write_observed_source_graph  # noqa: E402
+from modash import compile_observed_main  # noqa: E402
 from test.support import ScriptProject  # noqa: E402
 
 
@@ -149,6 +151,26 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         })
         self.assertGreaterEqual(len(trace.observation.processes), 2)
         self.assertEqual(trace.observation.sources[0].process_index, 1)
+
+    def test_child_bash_c_positional_graph_replays_through_compile_observed(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "bash -c '. \"$1\"; printf \"child:%s\\n\" \"$VALUE\"' bash \"$DYNAMIC_DEP\"\n"
+                "printf \"parent:%s\\n\" \"${VALUE-unset}\"\n",
+            )
+            dep = project.write("dep.sh", 'VALUE=loaded\nprintf "dep:%s\\n" "$VALUE"\n')
+            trace = project.trace("main.sh", env={"DYNAMIC_DEP": str(dep)})
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled, env={"DYNAMIC_DEP": str(dep)})
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "dep:loaded\nchild:loaded\nparent:unset\n")
 
 
 if __name__ == "__main__":

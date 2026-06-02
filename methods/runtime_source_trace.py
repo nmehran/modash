@@ -563,36 +563,55 @@ def _parse_raw_trace(raw_trace: bytes):
 def _reconcile_xtrace_source_coverage(raw_events, xtrace_commands):
     ordered_events = tuple(sorted(raw_events, key=lambda item: item.index))
     event_groups = _group_raw_events_by_source_key(ordered_events)
-    command_groups = _group_xtrace_commands_by_source_key(xtrace_commands)
+    command_groups, dynamic_command_groups = _group_xtrace_commands_by_source_key(xtrace_commands)
+    matched_groups = []
 
-    missing_keys = sorted(set(event_groups) - set(command_groups), key=_loose_source_key_sort_tuple)
-    if missing_keys:
-        event = event_groups[missing_keys[0]][0]
-        raise RuntimeSourceTraceError(
-            "runtime source trace recorded source event without xtrace provenance: "
-            f"{event.caller_file}:{event.caller_line}: {event.source_path}",
-            code="runtime.trace.incomplete",
-        )
+    unmatched_event_groups = {}
+    for key in sorted(event_groups, key=_loose_source_key_sort_tuple):
+        commands = command_groups.pop(key, None)
+        if commands is None:
+            unmatched_event_groups.setdefault(_dynamic_xtrace_match_key(key), []).extend(event_groups[key])
+            continue
+        matched_groups.append((key, tuple(event_groups[key]), tuple(commands)))
 
-    extra_keys = sorted(set(command_groups) - set(event_groups), key=_loose_source_key_sort_tuple)
-    if extra_keys:
-        missed = command_groups[extra_keys[0]][0]
+    for dynamic_key in sorted(unmatched_event_groups):
+        events = tuple(sorted(unmatched_event_groups[dynamic_key], key=lambda item: item.index))
+        commands = dynamic_command_groups.pop(dynamic_key, ())
+        if not commands:
+            event = events[0]
+            raise RuntimeSourceTraceError(
+                "runtime source trace recorded source event without xtrace provenance: "
+                f"{event.caller_file}:{event.caller_line}: {event.source_path}",
+                code="runtime.trace.incomplete",
+            )
+        matched_groups.append((dynamic_key, events, tuple(commands)))
+
+    if command_groups:
+        missed = command_groups[sorted(command_groups, key=_loose_source_key_sort_tuple)[0]][0]
         raise RuntimeSourceTraceError(
             "runtime source trace missed source-like command: "
             f"{missed.file}:{missed.line}: {missed.command}",
             code="runtime.trace.incomplete",
         )
 
-    for key in sorted(event_groups, key=_loose_source_key_sort_tuple):
-        if len(event_groups[key]) > len(command_groups[key]):
-            event = event_groups[key][len(command_groups[key])]
+    if dynamic_command_groups:
+        missed = dynamic_command_groups[sorted(dynamic_command_groups)[0]][0]
+        raise RuntimeSourceTraceError(
+            "runtime source trace missed source-like command: "
+            f"{missed.file}:{missed.line}: {missed.command}",
+            code="runtime.trace.incomplete",
+        )
+
+    for key, events, commands in matched_groups:
+        if len(events) > len(commands):
+            event = events[len(commands)]
             raise RuntimeSourceTraceError(
                 "runtime source trace recorded source event without xtrace provenance: "
                 f"{event.caller_file}:{event.caller_line}: {event.source_path}",
                 code="runtime.trace.incomplete",
             )
-        if len(command_groups[key]) > len(event_groups[key]):
-            missed = command_groups[key][len(event_groups[key])]
+        if len(commands) > len(events):
+            missed = commands[len(events)]
             raise RuntimeSourceTraceError(
                 "runtime source trace missed source-like command: "
                 f"{missed.file}:{missed.line}: {missed.command}",
@@ -610,9 +629,9 @@ def _reconcile_xtrace_source_coverage(raw_events, xtrace_commands):
     raw_events_by_xtrace_index = {}
     source_identities_by_source_index = {}
     source_identities_by_xtrace_index = {}
-    for key in sorted(event_groups, key=_loose_source_key_sort_tuple):
-        events = sorted(event_groups[key], key=lambda item: item.index)
-        commands = sorted(command_groups[key], key=lambda item: item.index)
+    for key, events, commands in sorted(matched_groups, key=lambda item: _matched_group_sort_tuple(item[0])):
+        events = sorted(events, key=lambda item: item.index)
+        commands = sorted(commands, key=lambda item: item.index)
         for occurrence, (event, command) in enumerate(zip(events, commands)):
             event_file = str(Path(event.caller_file).resolve(strict=False))
             command_file = _normalized_xtrace_file(command, event)
@@ -637,6 +656,12 @@ def _reconcile_xtrace_source_coverage(raw_events, xtrace_commands):
     )
 
 
+def _matched_group_sort_tuple(key):
+    if isinstance(key, _SourceInvocationKey):
+        return _loose_source_key_sort_tuple(_loose_source_key(key))
+    return key
+
+
 def _group_raw_events_by_source_key(raw_events):
     groups = {}
     for event in raw_events:
@@ -647,14 +672,19 @@ def _group_raw_events_by_source_key(raw_events):
 
 def _group_xtrace_commands_by_source_key(xtrace_commands):
     groups = {}
+    dynamic_groups = {}
     for command in xtrace_commands:
         invocation = _parse_xtrace_source_invocation(command.command)
         if invocation is None:
             key = _loose_source_key(_xtrace_unknown_source_key(command))
+        elif _is_dynamic_xtrace_invocation(invocation):
+            key = _dynamic_xtrace_match_key(_xtrace_source_key(command, invocation))
+            dynamic_groups.setdefault(key, []).append(command)
+            continue
         else:
             key = _loose_source_key(_xtrace_source_key(command, invocation))
         groups.setdefault(key, []).append(command)
-    return groups
+    return groups, dynamic_groups
 
 
 def _raw_event_source_key(event: _RawSourceEvent):
@@ -685,6 +715,23 @@ def _xtrace_unknown_source_key(command: _XtraceSourceCommand):
         source_path=f"<unparsed:{command.command}>",
         arguments=(),
     )
+
+
+def _dynamic_xtrace_match_key(key: _SourceInvocationKey | tuple):
+    if isinstance(key, _SourceInvocationKey):
+        return key.pid, key.line
+    return key[0], key[1]
+
+
+def _is_dynamic_xtrace_invocation(invocation: _XtraceSourceInvocation):
+    return _xtrace_word_is_dynamic(invocation.source_path) or any(
+        _xtrace_word_is_dynamic(argument)
+        for argument in invocation.arguments
+    )
+
+
+def _xtrace_word_is_dynamic(word: str):
+    return "$" in word or "`" in word
 
 
 def _parse_xtrace_source_invocation(command: str):
@@ -846,6 +893,16 @@ def _is_xtrace_source_like(command: str):
         or command.startswith("command source ")
         or command == "command ."
         or command.startswith("command . ")
+        or command == "__modash_trace_dot_source"
+        or command.startswith("__modash_trace_dot_source ")
+        or command == "__modash_trace_builtin source"
+        or command.startswith("__modash_trace_builtin source ")
+        or command == "__modash_trace_builtin ."
+        or command.startswith("__modash_trace_builtin . ")
+        or command == "__modash_trace_command source"
+        or command.startswith("__modash_trace_command source ")
+        or command == "__modash_trace_command ."
+        or command.startswith("__modash_trace_command . ")
     )
 
 

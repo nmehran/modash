@@ -1549,7 +1549,23 @@ class SourceEvaluator:
         self._merge_possible_states(state, [base_state, loop_state])
 
     def _apply_while_loop(self, node: WhileLoop, state: EvaluationState, stack: tuple[Path, ...]):
-        read_words = self._read_loop_words(node, state)
+        try:
+            read_words = self._read_loop_words(node, state)
+        except UnsupportedSourceError as exc:
+            if self.mode == "context":
+                self._evaluate_context_loop_body(node.body, state, stack)
+                return
+            if not self._node_list_may_source(node.body):
+                self._apply_source_free_unknown_loop_body(node.body, state, stack)
+                return
+            raise with_source_diagnostic(
+                exc,
+                str(node.location.path),
+                node.location.line - 1,
+                node.text,
+                node.text,
+                "unsupported.source.loop-word-list",
+            ) from exc
         if read_words is not None:
             if self.mode == "executable":
                 self._record_read_loop_replacements(node, read_words)
@@ -5233,10 +5249,15 @@ class SourceEvaluator:
                 source_expression=source_command.source_expression,
                 source_site=source_command.source_site,
             )
-            source_path, source_value, source_arguments = self._resolve_child_shell_source(
-                source_node,
-                context_state,
-            )
+            try:
+                source_path, source_value, source_arguments = self._resolve_child_shell_source(
+                    source_node,
+                    context_state,
+                )
+            except UnsupportedSourceError:
+                if self.mode == "context":
+                    return False
+                raise
             event_index = len(self.events)
             self._record_event(
                 source_path,
@@ -5264,6 +5285,24 @@ class SourceEvaluator:
         return True
 
     def _resolve_child_shell_source(self, node: SourceSite, state: EvaluationState):
+        source_override = self._source_override_for_node(node)
+        if source_override is SOURCE_OVERRIDE_EXHAUSTED:
+            raise unsupported_source_error(
+                str(node.location.path),
+                node.location.line - 1,
+                node.text,
+                node.text,
+                "unsupported.source.child-shell",
+                "runtime source graph override exhausted",
+                "The trusted runtime graph did not contain enough matching child-shell source events.",
+            )
+        if source_override is not None:
+            return (
+                Path(source_override.resolved_path),
+                node.source_expression.strip(),
+                source_override.arguments or None,
+            )
+
         try:
             self._ensure_source_state_can_resolve(node, node.source_expression, state)
             resolved_expression = self._expand_array_indexes(node.source_expression, node, state)
@@ -5378,11 +5417,8 @@ class SourceEvaluator:
         if command_name not in {"bash", "/bin/bash", "/usr/bin/bash"} or words[index + 1] != "-c":
             return ()
 
-        if len(words) != index + 3:
-            if any("source" in strip_shell_word_quotes(word) for word in words[index + 2:]):
-                raise UnsupportedSourceError("unsupported bash -c source arguments")
+        if len(words) < index + 3:
             return ()
-
         payload_word = words[index + 2]
         if payload_word.startswith('"') and "$" in payload_word:
             raise UnsupportedSourceError("unsupported parent-expanded bash -c payload")
@@ -5395,7 +5431,13 @@ class SourceEvaluator:
             raise UnsupportedSourceError("unsupported multi-source bash -c payload")
 
         source_command = source_commands[0]
-        if re.search(r'[$`*?\[]', source_command.source_expression):
+        source_expression = source_command.source_expression
+        extra_words = tuple(words[index + 3:])
+        if extra_words:
+            source_expression = cls._bash_c_positional_source_expression(source_expression, extra_words)
+            if source_expression is None:
+                raise UnsupportedSourceError("unsupported bash -c source arguments")
+        elif re.search(r'[$`*?\[]', source_expression):
             raise UnsupportedSourceError("unsupported dynamic bash -c source expression")
 
         command_start = command.find(words[index])
@@ -5404,13 +5446,24 @@ class SourceEvaluator:
         return (ChildShellSourceCommand(
             context_id=("bash-c", 1),
             command_name=source_command.command_name,
-            source_expression=source_command.source_expression,
+            source_expression=source_expression,
             source_site=command.strip(),
             column=command_start + 1,
             replacement_kind="bash-c-source",
             resolve_source_site=source_command.source_site,
             source_value=source_command.source_site,
         ),)
+
+    @staticmethod
+    def _bash_c_positional_source_expression(source_expression: str, extra_words: tuple[str, ...]):
+        stripped = strip_shell_word_quotes(source_expression)
+        match = re.fullmatch(r'\$(?:\{([1-9][0-9]*)\}|([1-9][0-9]*))', stripped)
+        if not match:
+            return None
+        position = int(match.group(1) or match.group(2))
+        if position >= len(extra_words):
+            return None
+        return extra_words[position]
 
     @classmethod
     def _pipeline_source_commands(cls, command: str):
@@ -6888,6 +6941,8 @@ class SourceEvaluator:
     def _raw_command_may_source(command: str):
         if command.strip() in {"(", ")", "{", "}"}:
             return False
+        if SourceEvaluator._continued_source_free_fragment(command):
+            return False
         return bool(
             contains_source_command(command)
             or contains_nested_source_command(command)
@@ -6899,11 +6954,17 @@ class SourceEvaluator:
     def _raw_command_contains_literal_source(command: str):
         if command.strip() in {"(", ")", "{", "}"}:
             return False
+        if SourceEvaluator._continued_source_free_fragment(command):
+            return False
         return bool(
             contains_source_command(command)
             or contains_nested_source_command(command)
             or SourceEvaluator._raw_command_payload_may_source(command)
         )
+
+    @staticmethod
+    def _continued_source_free_fragment(command: str):
+        return command.rstrip().endswith("\\") and not re.search(r'\bsource\b|(?:^|[\s;&|])\.\s+', command)
 
     @staticmethod
     def _raw_command_payload_may_source(command: str):
@@ -6937,6 +6998,10 @@ class SourceEvaluator:
         try:
             words = parse_shell_words_preserving_quotes(command.strip())
         except UnsupportedSourceError:
+            if command.rstrip().endswith("\\") and not (
+                contains_source_command(command) or contains_nested_source_command(command)
+            ):
+                return False
             return bool(
                 '$' in command
                 and re.search(r'^\s*(?:[a-zA-Z_]\w*(?:\+)?=\S+\s+)*(?:eval|bash|/bin/bash|/usr/bin/bash)\b', command)

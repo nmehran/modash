@@ -479,6 +479,7 @@ class LineParserFrontend:
 
         body_index = body_start_index
         active_heredocs = []
+        nested_function_depth = 0
         while body_index < len(lines):
             body_line_number = body_index + 1
             body_line = lines[body_index]
@@ -493,6 +494,29 @@ class LineParserFrontend:
                 body_lines.append((body_line_number, body_code_line))
                 if is_heredoc_end(body_code_line, active_heredocs[0]):
                     active_heredocs.pop(0)
+                body_index += 1
+                continue
+
+            if nested_function_depth:
+                body_lines.append((body_line_number, body_code_line))
+                if self._line_starts_function_definition(body_code_line):
+                    _, nested_has_close, _ = self._split_function_closing_brace(body_code_line)
+                    if not nested_has_close:
+                        nested_function_depth += 1
+                else:
+                    _, nested_has_close, _ = self._split_function_closing_brace(body_code_line)
+                    if nested_has_close:
+                        nested_function_depth -= 1
+                active_heredocs.extend(extract_heredoc_delimiters(body_line))
+                body_index += 1
+                continue
+
+            if self._line_starts_function_definition(body_code_line):
+                body_lines.append((body_line_number, body_code_line))
+                _, nested_has_close, _ = self._split_function_closing_brace(body_code_line)
+                if not nested_has_close:
+                    nested_function_depth = 1
+                active_heredocs.extend(extract_heredoc_delimiters(body_line))
                 body_index += 1
                 continue
 

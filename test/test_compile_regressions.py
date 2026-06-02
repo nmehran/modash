@@ -1795,6 +1795,24 @@ class CompileRegressionTestCase(unittest.TestCase):
 
             project.assert_compiled_matches(self, "main.sh")
 
+    def test_sourced_file_non_source_continued_eval_does_not_block_later_source(self):
+        with ScriptProject() as project:
+            project.write("dep.sh", 'echo "dep"\n')
+            project.write(
+                "lib.sh",
+                "run_tool() {\n"
+                "  eval '\"$merge_tool_path\"' \\\n"
+                "    -f \"$FINAL_CMD\" '\"$LOCAL\"' '\"$REMOTE\"'\n"
+                "}\n",
+            )
+            project.write("main.sh", "source ./lib.sh\nsource ./dep.sh\n")
+
+            compiled = project.compile("main.sh", mode="executable")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "dep\n")
+
     def test_source_state_on_same_logical_line_matches_bash(self):
         with ScriptProject() as project:
             project.write("a.sh", 'FROM_A=./b.sh\n')
@@ -2290,6 +2308,20 @@ class CompileRegressionTestCase(unittest.TestCase):
         with ScriptProject() as project:
             project.write("dep.sh", 'echo "dep"\n')
             project.write("main.sh", 'echo "<<EOF"\necho $((1 << 2))\nsource ./dep.sh\n')
+
+            project.assert_compiled_matches(self, "main.sh")
+
+    def test_source_dispatch_preserves_inlined_heredoc_delimiters(self):
+        with ScriptProject() as project:
+            project.write(
+                "a.sh",
+                "cat >actual <<-\\EOF\n"
+                "\tfrom heredoc\n"
+                "\tEOF\n"
+                "cat actual\n",
+            )
+            project.write("b.sh", 'echo "from b"\n')
+            project.write("main.sh", 'for dep in ./a.sh ./b.sh; do source "$dep"; done\n')
 
             project.assert_compiled_matches(self, "main.sh")
 
@@ -3190,6 +3222,30 @@ class CompileRegressionTestCase(unittest.TestCase):
 
             self.assertEqual(cm.exception.diagnostic.code, "unsupported.source.argument")
             self.assertFalse(output.exists())
+
+    def test_source_free_unsupported_read_loop_producer_does_not_block_later_source(self):
+        with ScriptProject() as project:
+            project.write("deps.txt", "one\n")
+            project.write("dep.sh", "echo dep\n")
+            project.write(
+                "main.sh",
+                textwrap.dedent("""\
+                    sed -n '1p' deps.txt | while read -r item; do
+                        echo "item:$item"
+                    done
+                    source ./dep.sh
+                    """),
+            )
+
+            output = project.compile("main.sh", mode="executable")
+            expected = project.run("main.sh")
+            actual = project.run(output)
+            compiled_content = output.read_text()
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stderr)
+        self.assertEqual(actual.stdout, expected.stdout)
+        self.assertIn("sed -n '1p' deps.txt | while read -r item; do", compiled_content)
+        self.assertIn("echo dep", compiled_content)
 
     def test_circular_sources_raise_clear_error(self):
         with ScriptProject() as project:

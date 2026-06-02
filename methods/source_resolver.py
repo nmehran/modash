@@ -163,7 +163,11 @@ def extract_heredoc_delimiters(line: str):
             index += 2
             continue
 
-        if line.startswith('<<', index) and not line.startswith('<<<', index):
+        if line.startswith('<<<', index):
+            index += 3
+            continue
+
+        if line.startswith('<<', index):
             delimiter_start = index + 2
             strip_tabs = False
             if delimiter_start < len(line) and line[delimiter_start] == '-':
@@ -187,7 +191,7 @@ def extract_heredoc_delimiters(line: str):
                 delimiter_end = delimiter_start
                 while delimiter_end < len(line) and not line[delimiter_end].isspace() and line[delimiter_end] not in ';|&<>':
                     delimiter_end += 1
-                delimiter = line[delimiter_start:delimiter_end]
+                delimiter = _clean_heredoc_delimiter(line[delimiter_start:delimiter_end])
                 index = delimiter_end
 
             if delimiter:
@@ -197,6 +201,23 @@ def extract_heredoc_delimiters(line: str):
         index += 1
 
     return delimiters
+
+
+def _clean_heredoc_delimiter(value: str):
+    cleaned = []
+    escaped = False
+    for char in value:
+        if escaped:
+            cleaned.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        cleaned.append(char)
+    if escaped:
+        cleaned.append("\\")
+    return "".join(cleaned)
 
 
 def is_heredoc_end(line: str, heredoc: HeredocDelimiter):
@@ -1473,9 +1494,16 @@ class SourceResolver:
         if not re.match(r'^eval\b', stripped_command):
             return None
 
-        words = parse_shell_words(stripped_command)
+        try:
+            words = parse_shell_words(stripped_command)
+        except UnsupportedSourceError:
+            if self.has_source_command(stripped_command) or contains_nested_source_command(stripped_command):
+                raise
+            return None
         if len(words) != 2 or words[0] != 'eval':
-            raise UnsupportedSourceError(f"unsupported eval source command: {stripped_command}")
+            if self.has_source_command(stripped_command) or contains_nested_source_command(stripped_command):
+                raise UnsupportedSourceError(f"unsupported eval source command: {stripped_command}")
+            return None
 
         payload = os.path.expandvars(self.resolve_variable_references(words[1], context))
         if not self.has_source_command(payload):
