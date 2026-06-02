@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned `v0.3.0` iteration. This is the first implementation batch for
+Implemented `v0.3.0` iteration. This is the first implementation batch for
 [Runtime Source Discovery North Star](runtime-source-discovery.md).
 
 The goal is to produce reviewed runtime source observations. This iteration
@@ -137,13 +137,13 @@ Expose tracing without changing compile behavior.
 CLI:
 
 ```sh
-modashc trace ENTRY [--cwd DIR] [--env KEY=VALUE ...] [--output FILE | --output-dir DIR] [--] [ARGS...]
+modashc trace ENTRY [--cwd DIR] [--env KEY=VALUE ...] [--output FILE | --output-dir DIR] [--timeout SECONDS] [--] [ARGS...]
 ```
 
 API:
 
 ```python
-result = trace_sources(entrypoint, *, argv=None, cwd=None, env=None, bash="bash")
+result = trace_sources(entrypoint, *, argv=None, cwd=None, env=None, bash="bash", timeout=30)
 write_trace_observation(result, output_path)
 ```
 
@@ -153,6 +153,8 @@ Scope:
 - Add a Python API entry point.
 - Write observations under `.modashc/observations/<run-id>.json` by default.
 - Allow an explicit output path or output directory.
+- Use a default timeout budget for target execution and allow callers to
+  override it.
 - Print the observation path on success.
 - Keep compile CLI/API behavior unchanged.
 - Ensure generated observation artifacts are ignored by git.
@@ -161,10 +163,13 @@ Acceptance:
 
 - CLI writes valid schema `1` observation JSON.
 - API returns the same structured data the CLI writes.
-- Missing entrypoint and non-executable trace failures are explicit.
+- Missing entrypoint, timeout, and non-executable trace failures are explicit.
 - Normal `modashc` compile paths do not import or run tracing unless requested.
 - Observation file names are deterministic enough for tests, or the tests can
   pass an explicit output path.
+
+API callers may pass `timeout=None` only when they deliberately want unbounded
+target execution.
 
 Commit checkpoint: CLI/API/artifacts and tests.
 
@@ -216,6 +221,7 @@ Safety goals:
 - normalize paths before writing observations
 - reject malformed events instead of guessing
 - never turn trace strings into executable shell code
+- fail without writing an observation when target execution exceeds its timeout
 
 ## Deferred To Later Iterations
 

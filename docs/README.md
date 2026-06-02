@@ -55,10 +55,10 @@ keep only in code comments or tests.
   ultimate observe-to-supplement-to-deterministic-compile shape for xtrace /
   runtime discovery.
 - [Runtime Source Discovery Foundation](runtime-source-discovery-foundation.md):
-  planned `v0.3.0` trace foundation iteration with tranche and commit
+  implemented `v0.3.0` trace foundation iteration with tranche and commit
   checkpoints.
 - [Runtime Supplement Generation And Replay](runtime-supplement-generation.md):
-  planned `v0.4.0` observe-to-supplement-to-deterministic-replay iteration.
+  implemented `v0.4.0` observe-to-supplement-to-deterministic-replay iteration.
 - [Next-Generation Evaluator And IR Plan](evaluator-ir-plan.md): Architecture
   notes and implementation history for the source-effect IR and evaluator.
 
@@ -88,5 +88,5 @@ The intended approach is captured in the
   deterministic pattern completion
 - Runtime-dynamic source dispatch, recursive source-bearing functions,
   non-equivalent branch-defined functions, and branch-dependent function returns
-- Runtime source discovery and supplement generation as described in
+- Polished xtrace/runtime source discovery as described in
   [Runtime Source Discovery North Star](runtime-source-discovery.md)

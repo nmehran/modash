@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import tempfile
@@ -21,6 +22,8 @@ from methods.runtime_source_observations import (
 TRACE_VERSION = "runtime-wrapper-v1"
 TRACE_MARKER = "MODASHC_SOURCE_EVENT"
 TRACE_FIELD_ENCODING = "utf-8"
+DEFAULT_TRACE_TIMEOUT_SECONDS = 30
+BASH_VERSION_TIMEOUT_SECONDS = 5
 
 
 class RuntimeSourceTraceError(RuntimeSourceObservationError):
@@ -49,9 +52,18 @@ class _RawSourceEvent:
     arguments: tuple[str, ...]
 
 
-def trace_sources(entrypoint: str | os.PathLike, *, argv=None, cwd=None, env=None, bash="bash"):
+def trace_sources(
+    entrypoint: str | os.PathLike,
+    *,
+    argv=None,
+    cwd=None,
+    env=None,
+    bash="bash",
+    timeout=DEFAULT_TRACE_TIMEOUT_SECONDS,
+):
     cwd_is_explicit = cwd is not None
     entrypoint_path, cwd_path = _resolve_trace_paths(entrypoint, cwd)
+    timeout_seconds = _normalize_timeout(timeout)
     if cwd_is_explicit and not cwd_path.is_dir():
         raise RuntimeSourceTraceError(
             f"runtime trace cwd does not exist or is not a directory: {cwd_path}",
@@ -89,7 +101,13 @@ def trace_sources(entrypoint: str | os.PathLike, *, argv=None, cwd=None, env=Non
                 stderr=subprocess.PIPE,
                 text=True,
                 errors="replace",
+                timeout=timeout_seconds,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeSourceTraceError(
+                f"runtime source trace timed out after {timeout_seconds:g} seconds: {entrypoint_path}",
+                code="runtime.trace.timeout",
+            ) from exc
         except OSError as exc:
             raise RuntimeSourceTraceError(
                 f"unable to run Bash for runtime trace: {bash}: {exc}",
@@ -133,6 +151,29 @@ def _trace_environment(env):
     return run_env
 
 
+def _normalize_timeout(timeout):
+    if timeout is None:
+        return None
+    if isinstance(timeout, bool):
+        raise RuntimeSourceTraceError(
+            "runtime trace timeout must be a positive number",
+            code="runtime.trace.invalid_timeout",
+        )
+    try:
+        timeout_seconds = float(timeout)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeSourceTraceError(
+            "runtime trace timeout must be a positive number",
+            code="runtime.trace.invalid_timeout",
+        ) from exc
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise RuntimeSourceTraceError(
+            "runtime trace timeout must be a positive number",
+            code="runtime.trace.invalid_timeout",
+        )
+    return timeout_seconds
+
+
 def _resolve_trace_paths(entrypoint, cwd):
     entrypoint_path = Path(entrypoint)
     if cwd is None:
@@ -169,7 +210,13 @@ def _bash_version(bash):
             text=True,
             errors="replace",
             check=False,
+            timeout=BASH_VERSION_TIMEOUT_SECONDS,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeSourceTraceError(
+            f"unable to read Bash version before runtime trace: {bash}",
+            code="runtime.trace.bash_timeout",
+        ) from exc
     except OSError as exc:
         raise RuntimeSourceTraceError(
             f"unable to run Bash for runtime trace: {bash}: {exc}",

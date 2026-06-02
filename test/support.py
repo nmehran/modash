@@ -102,10 +102,13 @@ class ScriptProject:
     def load_observation(self, path):
         return load_observation(self.path(path))
 
-    def trace(self, entry, argv=None, cwd=None, env=None):
+    def trace(self, entry, argv=None, cwd=None, env=None, timeout=None):
         entry_arg = self.path(entry)
         cwd_arg = self.path(cwd) if cwd is not None else self.root
-        return trace_sources(entry_arg, argv=argv, cwd=cwd_arg, env=env)
+        kwargs = {"argv": argv, "cwd": cwd_arg, "env": env}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        return trace_sources(entry_arg, **kwargs)
 
     def assert_compiled_matches(self, testcase, entry, cwd=None, env=None, mode="executable", source_supplement=None):
         expected = self.run(entry, cwd=cwd, env=env)

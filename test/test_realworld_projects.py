@@ -1005,13 +1005,32 @@ def run_runtime_parity_probe(entrypoint_path, compiled_path, cwd, environment, t
     }
 
 
-def run_runtime_trace_probe(entrypoint_path, cwd, environment, output_path):
-    from methods.runtime_source_trace import trace_sources, write_trace_observation
+def run_runtime_trace_probe(entrypoint_path, cwd, environment, output_path, timeout_seconds):
+    from methods.runtime_source_trace import RuntimeSourceTraceError, trace_sources, write_trace_observation
 
     started_at = time.perf_counter()
     try:
-        result = trace_sources(entrypoint_path, cwd=cwd, env=environment)
+        result = trace_sources(entrypoint_path, cwd=cwd, env=environment, timeout=timeout_seconds)
         write_trace_observation(result, output_path)
+    except RuntimeSourceTraceError as exc:
+        if exc.code == "runtime.trace.timeout":
+            return {
+                "status": "timeout",
+                "duration_seconds": elapsed_seconds(started_at),
+                "timeout_seconds": timeout_seconds,
+                "exception": {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            }
+        return {
+            "status": "error",
+            "duration_seconds": elapsed_seconds(started_at),
+            "exception": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
     except Exception as exc:
         return {
             "status": "error",
@@ -1045,14 +1064,33 @@ def run_runtime_supplement_replay_probe(
     compiled_path,
 ):
     from methods.runtime_source_supplements import generate_source_supplement, write_generated_supplement
-    from methods.runtime_source_trace import trace_sources, write_trace_observation
+    from methods.runtime_source_trace import RuntimeSourceTraceError, trace_sources, write_trace_observation
 
     started_at = time.perf_counter()
     try:
-        trace_result = trace_sources(entrypoint_path, cwd=cwd, env=trace_environment)
+        trace_result = trace_sources(entrypoint_path, cwd=cwd, env=trace_environment, timeout=timeout_seconds)
         write_trace_observation(trace_result, observation_path)
         supplement = generate_source_supplement(entrypoint_path, trace_result.observation)
         write_generated_supplement(supplement, supplement_path)
+    except RuntimeSourceTraceError as exc:
+        if exc.code == "runtime.trace.timeout":
+            return {
+                "status": "timeout",
+                "duration_seconds": elapsed_seconds(started_at),
+                "timeout_seconds": timeout_seconds,
+                "exception": {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            }
+        return {
+            "status": "error",
+            "duration_seconds": elapsed_seconds(started_at),
+            "exception": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
     except Exception as exc:
         return {
             "status": "error",
@@ -1468,6 +1506,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
     )
     def test_pinned_runtime_trace_smoke_probe(self):
         manifest = load_manifest()
+        timeout_seconds = mode_timeout_seconds()
         setup_records = []
         records = []
         failures = []
@@ -1505,6 +1544,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                 runtime_cwd(root, entrypoint["runtime"]),
                 environment,
                 output_path,
+                timeout_seconds,
             )
             record = normalize_record_paths({
                 "project": project["name"],
@@ -1533,6 +1573,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
 
         write_result_file("runtime-trace.json", {
             "suite": "runtime-trace",
+            "timeout_seconds": timeout_seconds,
             "trace_enabled": trace_enabled(),
             "summary": result_summary(records),
             "setup": setup_records,

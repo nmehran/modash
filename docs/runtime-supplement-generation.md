@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned `v0.4.0` iteration. This builds on
+Implemented `v0.4.0` iteration. This builds on
 [Runtime Source Discovery Foundation](runtime-source-discovery-foundation.md).
 
 The goal is to convert reviewed runtime observations into deterministic source

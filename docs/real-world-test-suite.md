@@ -212,7 +212,8 @@ events were observed, and write observation artifacts under:
 
 These probes are not supplement generation and do not prove all branch paths.
 They exist to spot-check that the runtime observation workflow produces
-reviewable data against a real helper implementation.
+reviewable data against a real helper implementation. Trace execution uses the
+same `MODASHC_REALWORLD_TIMEOUT` budget as compile and runtime parity probes.
 
 ### Runtime Supplement Replay Probes
 
@@ -240,6 +241,8 @@ Compiled replay artifacts are retained under:
 
 These probes still do not make generated supplements automatic compiler input.
 They exist to validate the reviewed observe-to-supplement-to-replay workflow.
+Trace, compile, and replay steps all use the configured
+`MODASHC_REALWORLD_TIMEOUT` budget.
 
 ### Manual Artifact Review
 

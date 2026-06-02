@@ -200,6 +200,25 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
 
         self.assertEqual(context.exception.code, "runtime.trace.bash_unavailable")
 
+    def test_trace_timeout_fails_with_stable_code(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "while :; do :; done\n")
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                trace_sources(entrypoint, timeout=0.05)
+
+        self.assertEqual(context.exception.code, "runtime.trace.timeout")
+
+    def test_trace_rejects_invalid_timeout_with_stable_code(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "echo main\n")
+
+            for timeout in (0, True, float("nan")):
+                with self.subTest(timeout=timeout):
+                    with self.assertRaises(RuntimeSourceTraceError) as context:
+                        trace_sources(entrypoint, timeout=timeout)
+                    self.assertEqual(context.exception.code, "runtime.trace.invalid_timeout")
+
 
 if __name__ == "__main__":
     unittest.main()

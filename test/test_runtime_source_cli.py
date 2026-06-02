@@ -172,6 +172,55 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("mutually exclusive", result.stderr)
 
+    def test_trace_cli_rejects_bad_timeout(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "echo main\n")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modashc.py"),
+                    "trace",
+                    str(entrypoint),
+                    "--timeout",
+                    "0",
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("must be a positive number", result.stderr)
+
+    def test_trace_cli_timeout_fails_before_writing_observation(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "while :; do :; done\n")
+            output = project.path("trace.json")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modashc.py"),
+                    "trace",
+                    str(entrypoint),
+                    "--output",
+                    str(output),
+                    "--timeout",
+                    "0.05",
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=5,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("runtime source trace timed out", result.stderr)
+        self.assertFalse(output.exists())
+
     def test_existing_compile_cli_still_uses_original_positional_form(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", "source ./dep.sh\n")

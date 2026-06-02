@@ -68,7 +68,7 @@ checked against real shell projects as well as synthetic regressions.
 
 ```sh
 python modashc.py <entrypoint> <output> [--mode context|executable] [--source-supplement FILE]
-python modashc.py trace <entrypoint> [--cwd DIR] [--env KEY=VALUE] [--output FILE] [--] [args...]
+python modashc.py trace <entrypoint> [--cwd DIR] [--env KEY=VALUE] [--output FILE] [--timeout SECONDS] [--] [args...]
 python modashc.py supplement <entrypoint> --from-observation observation.json --output source-supplement.json
 ```
 
@@ -88,12 +88,14 @@ Trace command:
 - `--env`: environment overlay for the target script. May be repeated.
 - `--output`: exact observation JSON path. By default observations are written
   under `.modashc/observations/`.
+- `--timeout`: maximum seconds to let the traced script run. Default: `30`.
 - `[args...]`: script arguments after `--`.
 
 Trace forwards the target script stdout and stderr, writes the observation JSON,
 and reports the observation path on stderr. Trace observations are data for
 review and later supplement generation; they are not used automatically during
-compile.
+compile. If the traced script exceeds the timeout, trace exits non-zero and does
+not write an observation.
 
 Supplement command:
 

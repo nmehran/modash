@@ -2,12 +2,14 @@
 
 ## Status
 
-North-star design document. This is not implemented in `v0.2.0`.
+North-star design document. The trace foundation and supplement generation /
+replay milestones are implemented on the current development branch; polished
+xtrace compatibility remains planned.
 
-Runtime source discovery is planned as the next major product arc. Its purpose is
-to observe concrete runtime source behavior and turn that observation into
-reviewed declarative compiler input. It must not become a linter, a Bash
-interpreter, or a claim that one run proves all possible source paths.
+Runtime source discovery observes concrete runtime source behavior and turns that
+observation into reviewed declarative compiler input. It must not become a
+linter, a Bash interpreter, or a claim that one run proves all possible source
+paths.
 
 ## Product Shape
 
@@ -28,11 +30,10 @@ compiler; it does not silently change compiler semantics.
 ## Intended User Flow
 
 ```sh
-modashc trace ./entry.sh -- ./args
+modashc trace ./entry.sh --timeout 30 -- ./args
 # writes .modashc/observations/<run-id>.json
 
-modashc supplement ./entry.sh --from-observation .modashc/observations/<run-id>.json
-# writes source-supplement.json
+modashc supplement ./entry.sh --from-observation .modashc/observations/<run-id>.json --output source-supplement.json
 
 modashc ./entry.sh merged.sh --mode executable --source-supplement source-supplement.json
 ```
@@ -130,6 +131,7 @@ Tracing runs the target program. That must be explicit.
 - No runtime tracing happens during normal compile.
 - `trace` should warn or document clearly that the target script executes.
 - The user must provide or accept cwd and argv explicitly.
+- Trace execution should have an explicit timeout.
 - Environment capture should default to an allowlist model.
 - Trace output should be written to a predictable artifact path, not mixed into
   compiler output.

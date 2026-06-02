@@ -1,8 +1,10 @@
 import argparse
 import json
+import math
 import sys
 from methods.compile import compile_sources
 from methods.runtime_source_trace import (
+    DEFAULT_TRACE_TIMEOUT_SECONDS,
     RuntimeSourceTraceError,
     default_observation_path,
     trace_sources,
@@ -21,8 +23,17 @@ def main(entry_point, output_file, mode="context", source_supplement=None):
     compile_sources(entry_point, output_file, mode=mode, source_supplement=source_supplement)
 
 
-def trace_main(entrypoint, *, script_args=None, cwd=None, env=None, output=None, output_dir=None):
-    result = trace_sources(entrypoint, argv=script_args or (), cwd=cwd, env=env)
+def trace_main(
+    entrypoint,
+    *,
+    script_args=None,
+    cwd=None,
+    env=None,
+    output=None,
+    output_dir=None,
+    timeout=DEFAULT_TRACE_TIMEOUT_SECONDS,
+):
+    result = trace_sources(entrypoint, argv=script_args or (), cwd=cwd, env=env, timeout=timeout)
     output_path = output or default_observation_path(entrypoint, output_dir=output_dir)
     observation_path = write_trace_observation(result, output_path)
 
@@ -52,6 +63,16 @@ def parse_env_overlay(values):
     return environment or None
 
 
+def parse_positive_seconds(value):
+    try:
+        timeout = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive number") from exc
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise argparse.ArgumentTypeError("must be a positive number")
+    return timeout
+
+
 def split_trace_args(argv):
     if "--" not in argv:
         return argv, []
@@ -73,6 +94,12 @@ def trace_cli(argv):
     )
     parser.add_argument('--output', help='Observation JSON file to write.')
     parser.add_argument('--output-dir', help='Directory for the generated observation JSON file.')
+    parser.add_argument(
+        '--timeout',
+        type=parse_positive_seconds,
+        default=DEFAULT_TRACE_TIMEOUT_SECONDS,
+        help='Maximum seconds to let the traced script run. Default: %(default)s.',
+    )
     args = parser.parse_args(trace_argv)
     if args.output and args.output_dir:
         parser.error('--output and --output-dir are mutually exclusive')
@@ -89,6 +116,7 @@ def trace_cli(argv):
         env=environment,
         output=args.output,
         output_dir=args.output_dir,
+        timeout=args.timeout,
     )
 
 
