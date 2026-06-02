@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.5.0 - 2026-06-02
 
 ### Added
 
@@ -36,6 +36,13 @@
   `compile-observed` as first-class pacman fixture probes.
 - The opt-in real-world harness now promotes `observe-compile` against pacman
   fixtures and retains observation, graph, report, and compiled artifacts.
+
+### Validation
+
+- Full unit suite: `450` tests, `8` skipped.
+- Opt-in real-world suite with runtime trace, supplement replay, runtime
+  parity, trusted graph replay, and observe-compile gates: `11` tests.
+- PyPI distribution build: sdist and wheel passed `twine check`.
 
 ## v0.4.5 - 2026-06-02
 
