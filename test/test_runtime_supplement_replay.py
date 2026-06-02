@@ -273,6 +273,166 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "dep:loaded\nchild:loaded\nparent:unset\n")
 
+    def test_recursive_helper_graph_replays_through_compile_observed(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    "load_hooks() {",
+                    '  case "$#" in',
+                    "    0) return 0 ;;",
+                    "  esac",
+                    '  source "$ROOT/$1"',
+                    "  shift",
+                    '  load_hooks "$@"',
+                    "}",
+                    "load_hooks alpha.sh beta.sh",
+                    "",
+                ]),
+            )
+            project.write("alpha.sh", 'printf "alpha\\n"\n')
+            project.write("beta.sh", 'printf "beta\\n"\n')
+            trace = project.trace("main.sh", env={"ROOT": str(project.root)})
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled, env={"ROOT": str(project.root)})
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "alpha\nbeta\n")
+        self.assertEqual([Path(edge["resolved_path"]).name for edge in graph["edges"]], ["alpha.sh", "beta.sh"])
+
+    def test_recursive_helper_static_compile_remains_fail_closed_without_graph(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "\n".join([
+                    "load_hooks() {",
+                    '  case "$#" in',
+                    "    0) return 0 ;;",
+                    "  esac",
+                    '  source "$ROOT/$1"',
+                    "  shift",
+                    '  load_hooks "$@"',
+                    "}",
+                    "load_hooks alpha.sh beta.sh",
+                    "",
+                ]),
+            )
+            project.write("alpha.sh", 'printf "alpha\\n"\n')
+            project.write("beta.sh", 'printf "beta\\n"\n')
+            output = project.path("compiled.sh")
+
+            with self.assertRaisesRegex(NotImplementedError, "recursive function call") as context:
+                project.compile(
+                    "main.sh",
+                    output=output,
+                    mode="executable",
+                    env={"ROOT": str(project.root)},
+                )
+
+        self.assertEqual(context.exception.diagnostic.code, "unsupported.source.function-recursion")
+        self.assertFalse(output.exists())
+
+    def test_recursive_helper_graph_replay_fails_when_observed_edge_is_missing(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    "load_hooks() {",
+                    '  case "$#" in',
+                    "    0) return 0 ;;",
+                    "  esac",
+                    '  source "$ROOT/$1"',
+                    "  shift",
+                    '  load_hooks "$@"',
+                    "}",
+                    "load_hooks alpha.sh beta.sh",
+                    "",
+                ]),
+            )
+            project.write("alpha.sh", 'printf "alpha\\n"\n')
+            project.write("beta.sh", 'printf "beta\\n"\n')
+            trace = project.trace("main.sh", env={"ROOT": str(project.root)})
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph["edges"] = graph["edges"][:1]
+            graph["summary"]["edges"] = 1
+            graph["summary"]["trusted_xtrace_edges"] = 1
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            with self.assertRaises(NotImplementedError) as context:
+                compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+
+        self.assertIn(context.exception.code, {
+            "unsupported.source.function-argument",
+            "unsupported.source.function-recursion",
+            "unsupported.source.unresolved",
+        })
+        self.assertFalse(compiled.exists())
+
+    def test_dynamic_helper_name_graph_replays_through_compile_observed(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'load_one() { source "$1"; }',
+                    '"$HELPER" "$TARGET"',
+                    "",
+                ]),
+            )
+            dependency = project.write("dep.sh", 'VALUE=loaded\nprintf "dep:%s\\n" "$VALUE"\n')
+            trace = project.trace(
+                "main.sh",
+                env={
+                    "HELPER": "load_one",
+                    "TARGET": str(dependency),
+                },
+            )
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(
+                compiled,
+                env={
+                    "HELPER": "load_one",
+                    "TARGET": str(dependency),
+                },
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "dep:loaded\n")
+
+    def test_dynamic_helper_name_static_compile_remains_fail_closed_without_graph(self):
+        with ScriptProject() as project:
+            project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write(
+                "main.sh",
+                "\n".join([
+                    'load_one() { source "$1"; }',
+                    '"$HELPER" "$TARGET"',
+                    "",
+                ]),
+            )
+            output = project.path("compiled.sh")
+
+            with self.assertRaisesRegex(NotImplementedError, "dynamic function dispatch") as context:
+                project.compile(
+                    "main.sh",
+                    output=output,
+                    mode="executable",
+                )
+
+        self.assertEqual(context.exception.diagnostic.code, "unsupported.source.function-dispatch")
+        self.assertFalse(output.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

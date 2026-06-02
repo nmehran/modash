@@ -234,6 +234,9 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - finite helper signatures where the observed source path is not the first
   helper argument, including direct `$2`, helper-local aliases, and exact
   `case` arms
+- graph-backed recursive helper replay with finite observed source edges
+- graph-backed runtime-selected helper-name replay when exactly one finite
+  observed source helper signature matches
 - repeated guarded runtime-selected source sites from a trusted graph, such as
   a mkinitcpio-style `. "$root/$hook"` hook loop observed for a finite hook list
 - child Bash process propagation and parent/child process provenance

@@ -405,13 +405,14 @@ The remaining source-resolution surface is narrower than general Bash support:
 - Remaining case edge semantics such as collating symbols, equivalence classes,
   and broader locale-dependent pattern behavior. The implemented deterministic
   pattern subset includes practical `extglob` and `GLOBIGNORE` handling.
-- Recursive or runtime-dynamic source-bearing function dispatch. Exact
-  makepkg-style helper calls using quoted `$@` / `$*` are covered by
-  [Source Supplements](source-supplements.md). Retained helper definitions that
-  remain callable after merging are supported only for finite exact or
-  supplement-backed argument vectors.
+- Recursive or runtime-dynamic source-bearing function dispatch outside a
+  finite trusted runtime graph. Exact makepkg-style helper calls using quoted
+  `$@` / `$*` are covered by [Source Supplements](source-supplements.md).
+  Retained helper definitions that remain callable after merging are supported
+  only for finite exact or supplement-backed argument vectors.
 - Broader runtime-discovered helper shapes. The implemented
   observe-to-graph-to-deterministic-compile workflow is captured in
-  [Runtime Source Discovery](runtime-source-discovery.md), but recursive or
-  runtime-dynamic dispatch still needs a finite, reviewable graph before it can
-  be merged safely.
+  [Runtime Source Discovery](runtime-source-discovery.md), including finite
+  recursive and runtime-selected helper replay. Broader helper arrays, dynamic
+  call graphs, or ambiguous dispatch still need reviewable graph models before
+  they can be merged safely.

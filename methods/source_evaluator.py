@@ -2818,6 +2818,9 @@ class SourceEvaluator:
                 hint="Array case subjects need explicit array semantics.",
             )
 
+        if strip_matching_quotes(subject) == "$#":
+            return None if state.ambiguous_positionals else str(len(state.positional_arguments))
+
         value = self._condition_value(subject, state)
         if value is not None:
             return value
@@ -5840,6 +5843,30 @@ class SourceEvaluator:
 
         function_name, exact_dispatch = self._resolve_function_name(words[index], node, state)
         if not exact_dispatch:
+            graph_dispatch = self._graph_backed_dynamic_function_dispatch(words[index + 1:], node, state)
+            if graph_dispatch is not None:
+                function_name, function_def, variants, arguments = graph_dispatch
+                prefix_words = words[:index]
+                if len(variants) != 1:
+                    return self._apply_function_variants(
+                        variants,
+                        function_name,
+                        arguments,
+                        prefix_words,
+                        node,
+                        state,
+                        stack,
+                    )
+                self._apply_function_call_variant(
+                    function_def,
+                    function_name,
+                    arguments,
+                    prefix_words,
+                    node,
+                    state,
+                    stack,
+                )
+                return True
             if self._state_has_source_relevant_functions(state):
                 raise unsupported_source_error(
                     str(node.location.path),
@@ -5884,15 +5911,16 @@ class SourceEvaluator:
             )
 
         if function_name in state.function_call_stack:
-            raise unsupported_source_error(
-                str(node.location.path),
-                node.location.line - 1,
-                node.text,
-                node.text,
-                "unsupported.source.function-recursion",
-                f"unsupported recursive function call: {function_name}",
-                "Recursive source effects need an explicit bounded recursion model.",
-            )
+            if not self._graph_backed_recursion_allowed(function_name, state):
+                raise unsupported_source_error(
+                    str(node.location.path),
+                    node.location.line - 1,
+                    node.text,
+                    node.text,
+                    "unsupported.source.function-recursion",
+                    f"unsupported recursive function call: {function_name}",
+                    "Recursive source effects need an explicit bounded recursion model.",
+                )
 
         try:
             arguments = self._resolve_function_arguments(function_name, words[index + 1:], node, state)
@@ -5913,6 +5941,26 @@ class SourceEvaluator:
             )
             return True
 
+        return self._apply_function_variants(
+            variants,
+            function_name,
+            arguments,
+            prefix_words,
+            node,
+            state,
+            stack,
+        )
+
+    def _apply_function_variants(
+        self,
+        variants: tuple[FunctionDef, ...],
+        function_name: str,
+        arguments: tuple[str, ...],
+        prefix_words: list[str],
+        node: RawCommand,
+        state: EvaluationState,
+        stack: tuple[Path, ...],
+    ):
         base_state = state.child_shell_copy()
         outcomes = []
         for variant in variants:
@@ -5931,6 +5979,50 @@ class SourceEvaluator:
 
         self._merge_possible_states(state, [outcome.state for outcome in outcomes])
         return True
+
+    def _graph_backed_dynamic_function_dispatch(
+        self,
+        argument_words: list[str],
+        node: RawCommand,
+        state: EvaluationState,
+    ):
+        if not self.source_overrides:
+            return None
+
+        candidates = []
+        for function_name, function_def in sorted(state.functions.items()):
+            variants = state.function_variants.get(function_name, (function_def,))
+            if not self._function_variants_may_source(variants):
+                continue
+            signatures = self.source_supplement.function_signatures(function_name)
+            if not any(len(signature) == len(argument_words) for signature in signatures):
+                continue
+            try:
+                arguments = self._resolve_function_arguments(function_name, argument_words, node, state)
+            except UnsupportedSourceError:
+                continue
+            candidates.append((function_name, function_def, variants, arguments))
+
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            raise unsupported_source_error(
+                str(node.location.path),
+                node.location.line - 1,
+                node.text,
+                node.text,
+                "unsupported.source.function-dispatch",
+                "ambiguous graph-backed dynamic function dispatch",
+                "Trusted graph replay can bind a dynamic source helper only when one finite observed helper signature matches.",
+            )
+        return None
+
+    def _graph_backed_recursion_allowed(self, function_name: str, state: EvaluationState):
+        if not self.source_overrides:
+            return False
+        current_depth = sum(1 for name in state.function_call_stack if name == function_name)
+        observed_source_budget = sum(len(overrides) for overrides in self.source_overrides.values())
+        return current_depth <= observed_source_budget
 
     def _apply_function_call_variant(
         self,
@@ -6054,6 +6146,43 @@ class SourceEvaluator:
         arguments = []
         try:
             for word in words:
+                stripped = word.strip()
+                if stripped in {'"$@"', '"${@}"'}:
+                    if state.ambiguous_positionals:
+                        raise unsupported_source_error(
+                            str(node.location.path),
+                            node.location.line - 1,
+                            node.text,
+                            node.text,
+                            "unsupported.source.function-argument",
+                            "unsupported ambiguous positional function argument expansion",
+                            "Function arguments must resolve exactly for source-aware function evaluation.",
+                        )
+                    arguments.extend(state.positional_arguments)
+                    continue
+                if stripped in {'"$*"', '"${*}"'}:
+                    if state.ambiguous_positionals:
+                        raise unsupported_source_error(
+                            str(node.location.path),
+                            node.location.line - 1,
+                            node.text,
+                            node.text,
+                            "unsupported.source.function-argument",
+                            "unsupported ambiguous positional function argument expansion",
+                            "Function arguments must resolve exactly for source-aware function evaluation.",
+                        )
+                    arguments.append(self._joined_positionals(state))
+                    continue
+                if re.search(r'(?<!\\)\$(?:\{?[@*]\}?)', stripped):
+                    raise unsupported_source_error(
+                        str(node.location.path),
+                        node.location.line - 1,
+                        node.text,
+                        node.text,
+                        "unsupported.source.function-argument",
+                        "unsupported positional function argument expansion",
+                        "Only quoted standalone $@/$* function arguments are supported.",
+                    )
                 arguments.append(SourceEvaluator._resolve_function_exact_word(
                     word,
                     node,
