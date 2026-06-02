@@ -376,7 +376,7 @@ def _observation_file_fingerprints(entrypoint_path, events):
         if _is_file_backed_call_site(event.call_site):
             add_role(event.call_site.file, "call-site")
         resolved_path = Path(event.resolved_path).resolve(strict=False)
-        if event.status == 0 and resolved_path.is_file():
+        if resolved_path.is_file():
             add_role(resolved_path, "source")
 
     fingerprints = []

@@ -93,7 +93,8 @@ schema `4` file fingerprints for stale-observation detection.
 
 `modash graph` validates a trace observation and writes a trusted runtime source
 graph. Graph edges link wrapper-observed source events to sanitized xtrace
-provenance and fail closed if that trust link is missing or stale.
+provenance and fail closed if that trust link is missing, stale, or inconsistent
+with the graph's process, file, edge, and fingerprint invariants.
 
 `modash supplement` writes:
 

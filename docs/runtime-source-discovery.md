@@ -57,8 +57,8 @@ Current observations use schema `4`. They record:
 - linked xtrace source provenance for every trusted trace source event
 - source call-site provenance
 - resolved source paths, source arguments, and source status
-- file fingerprints for the entrypoint, successful source files, and
-  file-backed call sites
+- file fingerprints for the entrypoint, file-backed source files, and
+  file-backed call sites, including sourced files that return non-zero status
 
 Schema validation rejects observations that omit required fingerprint roles.
 Fingerprint validation compares path, size, mtime, and SHA-256 before supplement
@@ -152,9 +152,11 @@ The graph is still data, not executable shell code. It contains:
 - the file fingerprints needed for stale graph rejection
 
 Graph construction fails closed when source events lack xtrace provenance, when
-the observation is stale, or when graph references are malformed. A graph is a
-trusted representation of one observed execution, not proof that every branch
-was exercised.
+the observation is stale, or when graph references are malformed. Graph loading
+also validates process, node, edge, fingerprint, and xtrace invariants so a
+hand-edited graph cannot weaken the observed trust relationship without being
+rejected. A graph is a trusted representation of one observed execution, not
+proof that every branch was exercised.
 
 ## Review Report
 
@@ -193,6 +195,7 @@ provenance records columns or stronger command identity.
 - persisted xtrace provenance linked to wrapper-observed source events
 - schema `4` file fingerprints and stale observation rejection
 - trusted runtime source graph construction
+- strict graph invariant validation for reviewed graph replay
 - source supplement generation from trusted graphs
 - explicit self-supplemented executable compile from a trusted graph
 - review reports for unobserved source-capable file-backed sites

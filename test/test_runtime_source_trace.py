@@ -189,6 +189,22 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(event.resolved_path, str(missing.resolve(strict=False)))
         self.assertGreater(event.status, 0)
 
+    def test_trace_fingerprints_sourced_file_that_returns_nonzero(self):
+        with ScriptProject() as project:
+            dependency = project.write("dep.sh", "return 7\n")
+            project.write("main.sh", 'source ./dep.sh\nprintf "after:%s\\n" "$?"\n')
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "after:7\n")
+        event = result.observation.sources[0]
+        self.assertEqual(event.resolved_path, str(dependency.resolve(strict=False)))
+        self.assertEqual(event.status, 7)
+        fingerprints = {fingerprint.path: fingerprint for fingerprint in result.observation.files}
+        self.assertIn(str(dependency.resolve(strict=False)), fingerprints)
+        self.assertIn("source", fingerprints[str(dependency.resolve(strict=False))].roles)
+
     def test_trace_rejects_missed_source_after_wrapper_removal(self):
         with ScriptProject() as project:
             project.write(

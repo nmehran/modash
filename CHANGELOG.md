@@ -13,6 +13,13 @@
 - Added `modash compile-observed` to compile executable output from a trusted
   graph with an in-memory generated supplement.
 
+### Changed
+
+- Runtime source graphs now validate process, node, edge, file fingerprint, and
+  xtrace invariants before graph replay.
+- Runtime observations now fingerprint file-backed source files even when the
+  source command returns non-zero.
+
 ## v0.4.5 - 2026-06-02
 
 ### Added
