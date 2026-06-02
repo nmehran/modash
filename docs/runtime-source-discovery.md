@@ -35,6 +35,14 @@ file and generate the same deterministic supplement in memory:
 modash compile-observed ./entry.sh merged.sh --from-graph runtime-graph.json
 ```
 
+For automation, `observe-compile` performs an explicit one-shot trace, writes
+the observation, trusted graph, and graph review report, then compiles from that
+newly observed graph:
+
+```sh
+modash observe-compile ./entry.sh merged.sh --reviewed-graph-out runtime-graph.json -- ./args
+```
+
 The separation matters:
 
 1. `trace` runs the original program and records what happened.
@@ -45,6 +53,9 @@ The separation matters:
 4. normal executable compile consumes only deterministic supplement data.
 5. `compile-observed` is a shortcut for step 3 plus executable compile from an
    already reviewed graph; it does not run tracing.
+6. `observe-compile` is the explicit automation path for tracing and compiling
+   in one command; it still writes graph and report artifacts for review, and
+   normal compile remains trace-free.
 
 ## Observation Schema
 
@@ -208,7 +219,8 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - Trace artifacts are data; `modash` does not eval, source, or execute
   trace-derived content.
 - Generated graphs and supplements should be reviewed before use.
-- Automatic compile from an unreviewed observation is out of scope.
+- `observe-compile` is explicit and artifact-writing; normal compile never
+  traces or auto-supplements silently.
 
 ## Implemented Runtime Coverage
 
@@ -226,6 +238,7 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - compact human-readable graph review reports
 - source supplement generation from trusted graphs
 - explicit self-supplemented executable compile from a trusted graph
+- explicit one-shot observe -> graph/report -> compile workflow
 - review reports for unobserved source-capable file-backed sites
 - real-world replay probes against pinned pacman fixtures
 
@@ -233,10 +246,9 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 
 Useful remaining steps are:
 
-- clearer environment/run metadata for reproducibility
 - supplement generation for a broader but still finite set of runtime-dynamic
   source helpers
-- automatic compile from a newly run trace without explicit graph review
+- broader real-world promotion for one-shot observe/compile workflows
 
 Do not frame runtime discovery as solving arbitrary Bash semantics. The compiler
 still needs a deterministic, reviewable source graph before it can merge scripts

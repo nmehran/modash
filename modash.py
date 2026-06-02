@@ -52,10 +52,7 @@ def trace_main(
     output_path = output or default_observation_path(entrypoint, output_dir=output_dir)
     observation_path = write_trace_observation(result, output_path)
 
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
+    _forward_trace_output(result)
     print(f"modash: trace observation: {observation_path.resolve(strict=False)}", file=sys.stderr)
     return result.returncode
 
@@ -92,13 +89,55 @@ def supplement_from_graph_main(entrypoint, *, graph, output):
 
 def compile_observed_main(entrypoint, output, *, graph):
     graph_payload = load_observed_source_graph(graph)
+    _compile_from_graph_payload(entrypoint, output, graph_payload)
+    print(f"modash: compiled from trusted runtime graph: {output}", file=sys.stderr)
+
+
+def observe_compile_main(
+    entrypoint,
+    output,
+    *,
+    graph_output,
+    report=None,
+    observation_output=None,
+    script_args=None,
+    cwd=None,
+    env=None,
+    timeout=DEFAULT_TRACE_TIMEOUT_SECONDS,
+):
+    result = trace_sources(entrypoint, argv=script_args or (), cwd=cwd, env=env, timeout=timeout)
+    _forward_trace_output(result)
+    graph = build_observed_source_graph(entrypoint, result.observation)
+    graph_path = write_observed_source_graph(graph, graph_output)
+    report_path = write_observed_source_graph_review(graph, report or f"{graph_path}.report.txt")
+    observation_path = write_trace_observation(
+        result,
+        observation_output or f"{graph_path}.observation.json",
+    )
+    _compile_from_graph_payload(entrypoint, output, graph)
+
+    print(f"modash: trace observation: {observation_path.resolve(strict=False)}", file=sys.stderr)
+    print(f"modash: runtime source graph: {graph_path.resolve(strict=False)}", file=sys.stderr)
+    print(f"modash: runtime graph review report: {report_path.resolve(strict=False)}", file=sys.stderr)
+    print(f"modash: compiled from newly observed trusted runtime graph: {output}", file=sys.stderr)
+    return result.returncode
+
+
+def _forward_trace_output(result):
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+
+
+def _compile_from_graph_payload(entrypoint, output, graph_payload):
     generated_supplement = generate_source_supplement_from_graph(entrypoint, graph_payload)
     source_supplement = load_source_supplement_from_payload(
         generated_supplement.to_dict(),
         _entrypoint_directory(entrypoint),
     )
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
     compile_sources(entrypoint, output, mode="executable", source_supplement=source_supplement)
-    print(f"modash: compiled from trusted runtime graph: {output}", file=sys.stderr)
 
 
 def _entrypoint_directory(entrypoint):
@@ -238,6 +277,60 @@ def compile_observed_cli(argv):
     compile_observed_main(args.entrypoint, args.output, graph=args.from_graph)
 
 
+def observe_compile_cli(argv):
+    trace_argv, script_args = split_trace_args(argv)
+    parser = argparse.ArgumentParser(
+        description='Run source tracing and compile executable output from the observed trusted graph.',
+    )
+    parser.add_argument('entrypoint', type=str, help='The Bash script to execute under source tracing.')
+    parser.add_argument('output', type=str, help='Executable merged script to write.')
+    parser.add_argument('--cwd', help='Working directory for the traced script.')
+    parser.add_argument(
+        '--env',
+        action='append',
+        default=[],
+        metavar='KEY=VALUE',
+        help='Environment overlay for the traced script. May be provided multiple times.',
+    )
+    parser.add_argument(
+        '--reviewed-graph-out',
+        required=True,
+        help='Trusted runtime source graph JSON file to write for review.',
+    )
+    parser.add_argument(
+        '--observation-out',
+        help='Runtime source observation JSON file to write. Defaults to REVIEWED_GRAPH_OUT.observation.json.',
+    )
+    parser.add_argument(
+        '--report',
+        help='Human-readable graph review report file to write. Defaults to REVIEWED_GRAPH_OUT.report.txt.',
+    )
+    parser.add_argument(
+        '--timeout',
+        type=parse_positive_seconds,
+        default=DEFAULT_TRACE_TIMEOUT_SECONDS,
+        help='Maximum seconds to let the traced script run. Default: %(default)s.',
+    )
+    args = parser.parse_args(trace_argv)
+
+    try:
+        environment = parse_env_overlay(args.env)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    return observe_compile_main(
+        args.entrypoint,
+        args.output,
+        graph_output=args.reviewed_graph_out,
+        report=args.report,
+        observation_output=args.observation_out,
+        script_args=script_args,
+        cwd=args.cwd,
+        env=environment,
+        timeout=args.timeout,
+    )
+
+
 def cli_main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
 
@@ -282,6 +375,20 @@ def cli_main(argv=None):
             print(f"modash: {exc}", file=sys.stderr)
             return 1
         return 0
+
+    if len(argv) > 0 and argv[0] == "observe-compile":
+        try:
+            return observe_compile_cli(argv[1:])
+        except (
+            RuntimeSourceTraceError,
+            RuntimeSupplementGenerationError,
+            RuntimeSourceGraphError,
+            RuntimeSourceObservationError,
+            UnsupportedSourceError,
+            OSError,
+        ) as exc:
+            print(f"modash: {exc}", file=sys.stderr)
+            return 1
 
     parser = argparse.ArgumentParser(description='Merge Bash scripts into a single script.')
     parser.add_argument('entrypoint', type=str, help='The entry-point Bash script that initiates the merging process.')

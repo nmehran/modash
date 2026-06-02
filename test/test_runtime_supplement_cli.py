@@ -324,6 +324,57 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
         self.assertIn("stale", compile_result.stderr)
         self.assertFalse(output_path.exists())
 
+    def test_observe_compile_cli_writes_review_artifacts_and_compiles(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source "$LIB_DIR/dep.sh" exact\necho main\n')
+            project.write("lib/dep.sh", 'echo dep:$1\n')
+            graph_path = project.path("artifacts/runtime-graph.json")
+            observation_path = project.path("artifacts/observation.json")
+            report_path = project.path("artifacts/runtime-graph.txt")
+            output_path = project.path("dist/compiled.sh")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "observe-compile",
+                    str(entrypoint),
+                    str(output_path),
+                    "--env",
+                    f"LIB_DIR={project.path('lib')}",
+                    "--reviewed-graph-out",
+                    str(graph_path),
+                    "--observation-out",
+                    str(observation_path),
+                    "--report",
+                    str(report_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            graph = json.loads(graph_path.read_text())
+            observation = json.loads(observation_path.read_text())
+            report = report_path.read_text()
+            run_result = subprocess.run(
+                ["bash", str(output_path)],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep:exact\nmain\n")
+        self.assertEqual(graph["observation_version"], 6)
+        self.assertEqual(graph["environment"]["recorded_keys"], ["LIB_DIR"])
+        self.assertEqual(observation["version"], 6)
+        self.assertIn("trusted: yes", report)
+        self.assertIn("modash: compiled from newly observed trusted runtime graph:", result.stderr)
+        self.assertEqual(run_result.returncode, 0, run_result.stderr)
+        self.assertEqual(run_result.stdout, "dep:exact\nmain\n")
+
     def test_supplement_cli_writes_explicit_report_path(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", "source ./dep.sh\n")

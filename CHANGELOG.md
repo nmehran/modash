@@ -15,6 +15,9 @@
   trusted runtime graph.
 - Added `modash compile-observed` to compile executable output from a trusted
   graph with an in-memory generated supplement.
+- Added explicit `modash observe-compile`, which traces a target run, writes
+  observation, graph, and graph review artifacts, then compiles from the newly
+  observed graph.
 
 ### Changed
 

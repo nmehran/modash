@@ -110,8 +110,11 @@ supplement, and report before compiling with `--source-supplement`.
 Observation reports can warn about unobserved source-capable sites, but one
 traced run is not proof of every branch.
 
-Automatic compile-from-trace remains future work. Runtime discovery still feeds
-deterministic compilation only after the trusted graph is made explicit.
+Runtime discovery still feeds deterministic compilation through an explicit
+trusted graph artifact. For automation, `observe-compile` is an explicit
+one-shot command that runs the target, writes the observation, trusted graph,
+and review report artifacts, then compiles from that newly observed graph.
+Normal compile never traces.
 
 ## Commands
 
@@ -121,6 +124,7 @@ modash trace <entrypoint> [--cwd DIR] [--env KEY=VALUE] [--output FILE] [--timeo
 modash graph <entrypoint> --from-observation observation.json --output runtime-graph.json [--report graph-review.txt]
 modash supplement <entrypoint> (--from-observation observation.json [--report report.json] | --from-graph runtime-graph.json) --output source-supplement.json
 modash compile-observed <entrypoint> <output> --from-graph runtime-graph.json
+modash observe-compile <entrypoint> <output> --reviewed-graph-out runtime-graph.json [--observation-out observation.json] [--report graph-review.txt] [--cwd DIR] [--env KEY=VALUE] [--timeout SECONDS] [--] [args...]
 ```
 
 Useful options:
@@ -136,6 +140,8 @@ Useful options:
 - `graph --report FILE`: choose the human-readable graph review report path.
 - `compile-observed --from-graph FILE`: compile executable output using a
   trusted graph and an in-memory generated supplement.
+- `observe-compile --reviewed-graph-out FILE`: explicitly run tracing, write
+  review artifacts, and compile executable output from the newly observed graph.
 - `supplement --report FILE`: choose the review report path.
 
 ## Development
