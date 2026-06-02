@@ -35,6 +35,16 @@ from methods.source_evaluator import SourceOverride
 from methods.source_resolver import UnsupportedSourceError
 
 
+TOP_LEVEL_HELP_EPILOG = """\
+runtime commands:
+  trace             run the target and write a runtime source observation
+  graph             validate an observation into a trusted runtime graph
+  supplement        generate a source supplement from an observation or graph
+  compile-observed  compile executable output from a trusted runtime graph
+  observe-compile   explicitly trace, write review artifacts, and compile
+"""
+
+
 def main(entry_point, output_file, mode="context", source_supplement=None):
     compile_sources(entry_point, output_file, mode=mode, source_supplement=source_supplement)
 
@@ -411,7 +421,11 @@ def cli_main(argv=None):
             print(f"modash: {exc}", file=sys.stderr)
             return 1
 
-    parser = argparse.ArgumentParser(description='Merge Bash scripts into a single script.')
+    parser = argparse.ArgumentParser(
+        description='Merge Bash scripts into a single script.',
+        epilog=TOP_LEVEL_HELP_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument('entrypoint', type=str, help='The entry-point Bash script that initiates the merging process.')
     parser.add_argument('output', type=str, help='The output file where the merged script will be saved.')
     parser.add_argument(
@@ -424,7 +438,7 @@ def cli_main(argv=None):
         '--source-supplement',
         help='JSON file with exact source-relevant values for runtime-dynamic source sites.',
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         main(
             entry_point=args.entrypoint,

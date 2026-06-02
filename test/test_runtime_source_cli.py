@@ -9,9 +9,41 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from test.support import ScriptProject  # noqa: E402
+from modash import cli_main  # noqa: E402
 
 
 class RuntimeSourceTraceCliTestCase(unittest.TestCase):
+    def test_cli_main_honors_explicit_compile_argv(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "echo main\n")
+            output = project.path("merged.sh")
+            original_argv = sys.argv
+            sys.argv = ["modash", "--not-the-explicit-argv"]
+            try:
+                result = cli_main([str(entrypoint), str(output)])
+            finally:
+                sys.argv = original_argv
+            content = output.read_text()
+
+        self.assertEqual(result, 0)
+        self.assertIn("echo main", content)
+
+    def test_top_level_help_lists_runtime_commands(self):
+        result = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "modash.py"), "--help"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("runtime commands:", result.stdout)
+        self.assertIn("trace", result.stdout)
+        self.assertIn("graph", result.stdout)
+        self.assertIn("supplement", result.stdout)
+        self.assertIn("compile-observed", result.stdout)
+        self.assertIn("observe-compile", result.stdout)
+
     def test_trace_cli_writes_explicit_observation_file_and_forwards_output(self):
         with ScriptProject() as project:
             entrypoint = project.write(

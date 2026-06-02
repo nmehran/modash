@@ -58,7 +58,7 @@
 
 ### Validation
 
-- Full unit suite: `454` tests, `8` skipped.
+- Full unit suite: `456` tests, `8` skipped.
 - Opt-in real-world suite with runtime trace, supplement replay, runtime
   parity, trusted graph replay, and observe-compile gates: `11` tests,
   covering `52` pinned compile records, `20` runtime parity records, `5`
