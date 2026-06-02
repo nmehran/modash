@@ -1,4 +1,4 @@
-# modashc Design Docs
+# modash Design Docs
 
 This directory holds implementation specs for behavior that is too nuanced to
 keep only in code comments or tests.

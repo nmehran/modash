@@ -68,9 +68,9 @@ ELSE_COMMAND_PATTERN = re.compile(r'^\s*else(?:\s+(.+?))?\s*$')
 FI_COMMAND_PATTERN = re.compile(r'^\s*fi\s*$')
 ESAC_COMMAND_PATTERN = re.compile(r'^\s*esac\s*$')
 CASE_TERMINATOR_COMMANDS = {
-    "__MODASHC_CASE_TERM_END__": ";;",
-    "__MODASHC_CASE_TERM_FALLTHROUGH__": ";&",
-    "__MODASHC_CASE_TERM_FALLTHROUGH_TEST__": ";;&",
+    "__MODASH_CASE_TERM_END__": ";;",
+    "__MODASH_CASE_TERM_FALLTHROUGH__": ";&",
+    "__MODASH_CASE_TERM_FALLTHROUGH_TEST__": ";;&",
 }
 
 
@@ -806,15 +806,15 @@ class LineParserFrontend:
 
             if not in_single_quote and not in_double_quote:
                 if line.startswith(";;&", index):
-                    output.append("; __MODASHC_CASE_TERM_FALLTHROUGH_TEST__ ;")
+                    output.append("; __MODASH_CASE_TERM_FALLTHROUGH_TEST__ ;")
                     index += 3
                     continue
                 if line.startswith(";&", index):
-                    output.append("; __MODASHC_CASE_TERM_FALLTHROUGH__ ;")
+                    output.append("; __MODASH_CASE_TERM_FALLTHROUGH__ ;")
                     index += 2
                     continue
                 if line.startswith(";;", index):
-                    output.append("; __MODASHC_CASE_TERM_END__ ;")
+                    output.append("; __MODASH_CASE_TERM_END__ ;")
                     index += 2
                     continue
 

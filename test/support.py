@@ -93,7 +93,7 @@ class ScriptProject:
             os.chdir(original_cwd)
         return [Path(path) for path in discovered]
 
-    def observation_path(self, path=".modashc/observations/run.json"):
+    def observation_path(self, path=".modash/observations/run.json"):
         return self.path(path)
 
     def write_observation(self, path, observation):

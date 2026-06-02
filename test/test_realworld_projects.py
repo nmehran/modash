@@ -45,39 +45,39 @@ DEFAULT_MODE_TIMEOUT_SECONDS = 3.0
 
 
 def realworld_enabled():
-    return os.environ.get("MODASHC_REALWORLD") == "1"
+    return os.environ.get("MODASH_REALWORLD") == "1"
 
 
 def fetch_enabled():
-    return os.environ.get("MODASHC_REALWORLD_FETCH") == "1"
+    return os.environ.get("MODASH_REALWORLD_FETCH") == "1"
 
 
 def runtime_enabled():
-    return os.environ.get("MODASHC_REALWORLD_RUNTIME") == "1"
+    return os.environ.get("MODASH_REALWORLD_RUNTIME") == "1"
 
 
 def trace_enabled():
-    return os.environ.get("MODASHC_REALWORLD_TRACE") == "1"
+    return os.environ.get("MODASH_REALWORLD_TRACE") == "1"
 
 
 def supplement_enabled():
-    return os.environ.get("MODASHC_REALWORLD_SUPPLEMENT") == "1"
+    return os.environ.get("MODASH_REALWORLD_SUPPLEMENT") == "1"
 
 
 def report_enabled():
-    return os.environ.get("MODASHC_REALWORLD_REPORT") == "1"
+    return os.environ.get("MODASH_REALWORLD_REPORT") == "1"
 
 
 def mode_timeout_seconds():
-    raw_value = os.environ.get("MODASHC_REALWORLD_TIMEOUT")
+    raw_value = os.environ.get("MODASH_REALWORLD_TIMEOUT")
     if not raw_value:
         return DEFAULT_MODE_TIMEOUT_SECONDS
     try:
         timeout = float(raw_value)
     except ValueError as exc:
-        raise ValueError("MODASHC_REALWORLD_TIMEOUT must be a positive number") from exc
+        raise ValueError("MODASH_REALWORLD_TIMEOUT must be a positive number") from exc
     if not math.isfinite(timeout) or timeout <= 0:
-        raise ValueError("MODASHC_REALWORLD_TIMEOUT must be a positive number")
+        raise ValueError("MODASH_REALWORLD_TIMEOUT must be a positive number")
     return timeout
 
 
@@ -565,7 +565,7 @@ def project_root(project):
 
 
 def project_marker_path(project):
-    return project_root(project) / ".modashc-realworld.json"
+    return project_root(project) / ".modash-realworld.json"
 
 
 def marker_matches(project):
@@ -606,7 +606,7 @@ def ensure_pinned_project(project):
     if not fetch_enabled():
         return None, "skipped", (
             f"missing cached artifact for {project['name']} {project['version']}; "
-            "set MODASHC_REALWORLD_FETCH=1 to download it"
+            "set MODASH_REALWORLD_FETCH=1 to download it"
         )
 
     download_artifact(project["source"]["url"], artifact, project["source"]["sha256"])
@@ -704,7 +704,7 @@ def stripped_member_path(name, strip_components):
 
 
 def write_project_marker(project, root):
-    marker = root / ".modashc-realworld.json"
+    marker = root / ".modash-realworld.json"
     payload = {
         "name": project["name"],
         "version": project["version"],
@@ -771,7 +771,7 @@ def materialize_source_supplement(project, root, expectation):
 
     raw_content = source_path.read_text(encoding="utf-8").replace("{root}", str(root))
     payload = json.loads(raw_content)
-    target = root / ".modashc-fixtures" / f"{source_path.stem}.generated.json"
+    target = root / ".modash-fixtures" / f"{source_path.stem}.generated.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return target
@@ -1205,14 +1205,14 @@ class RealWorldHarnessHelperTestCase(unittest.TestCase):
             "entrypoint": "entry.sh",
             "status": "compile-unsupported",
             "diagnostics": [{
-                "code": "modashc.unresolved_source",
+                "code": "modash.unresolved_source",
                 "line": 3,
                 "fragment": "source \"$target\"",
             }],
         })
 
         self.assertIn("expected match, got compile-unsupported", message)
-        self.assertIn("diagnostic=modashc.unresolved_source", message)
+        self.assertIn("diagnostic=modash.unresolved_source", message)
         self.assertIn("fragment='source \"$target\"'", message)
 
     def test_runtime_failure_message_includes_timeout_side_and_output_diff(self):
@@ -1249,7 +1249,7 @@ class RealWorldHarnessHelperTestCase(unittest.TestCase):
 
 @unittest.skipUnless(
     realworld_enabled(),
-    "set MODASHC_REALWORLD=1 to run internal real-world corpus tests",
+    "set MODASH_REALWORLD=1 to run internal real-world corpus tests",
 )
 class RealWorldProjectTestCase(unittest.TestCase):
     def test_manifest_loads(self):
@@ -1386,7 +1386,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
         })
 
         if not records:
-            self.skipTest("no pinned corpus artifacts are cached; set MODASHC_REALWORLD_FETCH=1")
+            self.skipTest("no pinned corpus artifacts are cached; set MODASH_REALWORLD_FETCH=1")
 
         if unexpected_errors:
             details = [
@@ -1406,7 +1406,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
 
     @unittest.skipUnless(
         runtime_enabled(),
-        "set MODASHC_REALWORLD_RUNTIME=1 to run runtime parity probes",
+        "set MODASH_REALWORLD_RUNTIME=1 to run runtime parity probes",
     )
     def test_pinned_runtime_parity_probes(self):
         manifest = load_manifest()
@@ -1437,7 +1437,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                 entrypoint_path = root / entrypoint["path"]
                 expectation = mode_expectation(entrypoint, "executable")
                 source_supplement = materialize_source_supplement(project, root, expectation)
-                with tempfile.TemporaryDirectory(prefix="modashc-realworld-runtime-") as temporary:
+                with tempfile.TemporaryDirectory(prefix="modash-realworld-runtime-") as temporary:
                     compiled_path = Path(temporary) / "compiled.sh"
                     compile_result = run_mode_with_timeout(
                         entrypoint_path,
@@ -1502,7 +1502,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
 
     @unittest.skipUnless(
         trace_enabled(),
-        "set MODASHC_REALWORLD_TRACE=1 to run runtime trace smoke probes",
+        "set MODASH_REALWORLD_TRACE=1 to run runtime trace smoke probes",
     )
     def test_pinned_runtime_trace_smoke_probe(self):
         manifest = load_manifest()
@@ -1529,7 +1529,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                 (
                     candidate
                     for candidate in project["entrypoints"]
-                    if candidate["path"] == ".modashc-fixtures/source-safe-wrapper.sh"
+                    if candidate["path"] == ".modash-fixtures/source-safe-wrapper.sh"
                 ),
                 None,
             )
@@ -1564,8 +1564,8 @@ class RealWorldProjectTestCase(unittest.TestCase):
             record["matched_expectation"] = (
                 record["status"] == "success"
                 and record.get("source_events", 0) >= 2
-                and "MODASHC_SOURCE_EVENT" not in record.get("stdout", "")
-                and "MODASHC_SOURCE_EVENT" not in record.get("stderr", "")
+                and "MODASH_SOURCE_EVENT" not in record.get("stdout", "")
+                and "MODASH_SOURCE_EVENT" not in record.get("stderr", "")
             )
             records.append(record)
             if not record["matched_expectation"]:
@@ -1590,7 +1590,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
 
     @unittest.skipUnless(
         supplement_enabled(),
-        "set MODASHC_REALWORLD_SUPPLEMENT=1 to run runtime supplement replay probes",
+        "set MODASH_REALWORLD_SUPPLEMENT=1 to run runtime supplement replay probes",
     )
     def test_pinned_runtime_supplement_replay_probe(self):
         manifest = load_manifest()
@@ -1617,7 +1617,7 @@ class RealWorldProjectTestCase(unittest.TestCase):
                 (
                     candidate
                     for candidate in project["entrypoints"]
-                    if candidate["path"] == ".modashc-fixtures/source-safe-wrapper.sh"
+                    if candidate["path"] == ".modash-fixtures/source-safe-wrapper.sh"
                 ),
                 None,
             )

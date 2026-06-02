@@ -142,8 +142,8 @@ Acceptance:
 
 - Unit tests cover every accepted and rejected shape in this document.
 - `python -m unittest -v` passes.
-- `MODASHC_REALWORLD=1` pinned corpus tests pass.
-- `MODASHC_REALWORLD=1 MODASHC_REALWORLD_RUNTIME=1` runtime parity probes pass.
+- `MODASH_REALWORLD=1` pinned corpus tests pass.
+- `MODASH_REALWORLD=1 MODASH_REALWORLD_RUNTIME=1` runtime parity probes pass.
 - `git diff --check` passes.
 - Real-world result JSON has only expected outcomes.
 - Generated executable artifacts contain no unexpected live source sites.

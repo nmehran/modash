@@ -16,7 +16,7 @@ pass through source-free unsupported runtime logic. This iteration handles
 source-bearing runtime control flow whose source paths are already exact but
 whose predicates or subjects are not statically known.
 
-For those cases, modashc should preserve the original runtime guard and lower
+For those cases, modash should preserve the original runtime guard and lower
 the exact source sites inside the guarded body. It should not try to validate or
 execute the guard. It should fail only when dependency paths, source arguments,
 or later source-relevant state cannot be proven safe.
@@ -133,8 +133,8 @@ Acceptance:
 Required checks before merging implementation work:
 
 - `python -m unittest -v`
-- `MODASHC_REALWORLD=1` pinned corpus
-- `MODASHC_REALWORLD=1 MODASHC_REALWORLD_RUNTIME=1` runtime parity probes
+- `MODASH_REALWORLD=1` pinned corpus
+- `MODASH_REALWORLD=1 MODASH_REALWORLD_RUNTIME=1` runtime parity probes
 - executable artifact scan for live `source` commands
 - spot-check generated guarded-if and guarded-case executable artifacts
 

@@ -273,5 +273,5 @@ Real-world acceptance:
 - Executable failures do not create or overwrite output.
 - A pacman/makepkg retained helper corpus probe succeeds with a supplement.
 - The controlled pacman wrapper runtime probe matches original Bash behavior
-  when `MODASHC_REALWORLD_RUNTIME=1` is enabled.
+  when `MODASH_REALWORLD_RUNTIME=1` is enabled.
 - Product docs link to this spec from the supplement and support matrix docs.

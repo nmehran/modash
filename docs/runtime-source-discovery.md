@@ -30,12 +30,12 @@ compiler; it does not silently change compiler semantics.
 ## Intended User Flow
 
 ```sh
-modashc trace ./entry.sh --timeout 30 -- ./args
-# writes .modashc/observations/<run-id>.json
+modash trace ./entry.sh --timeout 30 -- ./args
+# writes .modash/observations/<run-id>.json
 
-modashc supplement ./entry.sh --from-observation .modashc/observations/<run-id>.json --output source-supplement.json
+modash supplement ./entry.sh --from-observation .modash/observations/<run-id>.json --output source-supplement.json
 
-modashc ./entry.sh merged.sh --mode executable --source-supplement source-supplement.json
+modash ./entry.sh merged.sh --mode executable --source-supplement source-supplement.json
 ```
 
 The names above are directional. Exact CLI spelling can change during the

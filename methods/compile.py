@@ -170,7 +170,7 @@ def construct_context_source_comment(source_declaration, entry_point: str):
         condition = f": {source_declaration.condition}" if source_declaration.condition else ""
         suffix = f"{suffix} ({source_declaration.occurrence_model}{condition})"
 
-    return f"# modashc: {source_label} -> {format_context_path(source_declaration.path, entry_point)}{suffix}"
+    return f"# modash: {source_label} -> {format_context_path(source_declaration.path, entry_point)}{suffix}"
 
 
 def read_file(filepath):
@@ -185,7 +185,7 @@ def write_output(filename, content):
 
 def generated_source_function_name(filepath: str):
     digest = hashlib.sha1(os.path.abspath(filepath).encode("utf-8")).hexdigest()[:12]
-    return f"__modashc_source_{digest}"
+    return f"__modash_source_{digest}"
 
 
 def raw_command_is_return(node: RawCommand):
@@ -550,7 +550,7 @@ def render_source_dispatch(
 
     output.extend([
         f"{indent}  *)",
-        f"{indent}    echo {shell_quote(f'modashc: unresolved source {source_expression.strip()}')} >&2",
+        f"{indent}    echo {shell_quote(f'modash: unresolved source {source_expression.strip()}')} >&2",
         f"{indent}    exit 1",
         f"{indent}    ;;",
         f"{indent}esac",
@@ -1198,7 +1198,7 @@ def render_executable_script(entry_point: str, context: dict):
 
 def render_context_files(ordered_dependencies: list[str], entry_point: str, context: dict):
     output = [
-        "# modashc context",
+        "# modash context",
         f"# entrypoint: {format_context_path(entry_point, entry_point)}",
         "# mode: context",
         "",

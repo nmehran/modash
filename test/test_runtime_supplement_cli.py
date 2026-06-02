@@ -25,7 +25,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "modashc.py"),
+                    str(REPO_ROOT / "modash.py"),
                     "supplement",
                     str(entrypoint),
                     "--from-observation",
@@ -42,7 +42,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
-        self.assertIn("modashc: source supplement:", result.stderr)
+        self.assertIn("modash: source supplement:", result.stderr)
         self.assertEqual(payload, {
             "version": 1,
             "variables": {
@@ -59,7 +59,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "modashc.py"),
+                    str(REPO_ROOT / "modash.py"),
                     "supplement",
                     str(entrypoint),
                     "--from-observation",
@@ -85,7 +85,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "modashc.py"),
+                    str(REPO_ROOT / "modash.py"),
                     "supplement",
                     str(entrypoint),
                     "--from-observation",

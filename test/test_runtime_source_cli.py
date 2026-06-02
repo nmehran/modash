@@ -24,7 +24,7 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "modashc.py"),
+                    str(REPO_ROOT / "modash.py"),
                     "trace",
                     str(entrypoint),
                     "--output",
@@ -44,7 +44,7 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "dep:arg1\nmain:arg1:ok\n")
-        self.assertIn("modashc: trace observation:", result.stderr)
+        self.assertIn("modash: trace observation:", result.stderr)
         self.assertTrue(output_exists)
         self.assertEqual(data["entrypoint"], str(entrypoint.resolve(strict=False)))
         self.assertEqual(data["argv"], ["arg1"])
@@ -52,19 +52,19 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
         self.assertEqual(data["sources"][0]["resolved_path"], str(dependency.resolve(strict=False)))
         self.assertEqual(data["sources"][0]["arguments"], ["arg1"])
 
-    def test_trace_cli_writes_default_artifact_under_modashc_directory(self):
+    def test_trace_cli_writes_default_artifact_under_modash_directory(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", "source ./dep.sh\n")
             project.write("dep.sh", "echo dep\n")
 
             result = subprocess.run(
-                [sys.executable, str(REPO_ROOT / "modashc.py"), "trace", str(entrypoint)],
+                [sys.executable, str(REPO_ROOT / "modash.py"), "trace", str(entrypoint)],
                 cwd=str(project.root),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            artifacts = sorted((project.root / ".modashc" / "observations").glob("*.json"))
+            artifacts = sorted((project.root / ".modash" / "observations").glob("*.json"))
             artifact_paths = [str(path) for path in artifacts]
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -81,7 +81,7 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "modashc.py"),
+                    str(REPO_ROOT / "modash.py"),
                     "trace",
                     str(entrypoint),
                     "--output-dir",
@@ -107,7 +107,7 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "modashc.py"),
+                    str(REPO_ROOT / "modash.py"),
                     "trace",
                     "scripts/main.sh",
                     "--output",
@@ -133,7 +133,7 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "modashc.py"),
+                    str(REPO_ROOT / "modash.py"),
                     "trace",
                     str(entrypoint),
                     "--env",
@@ -155,7 +155,7 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "modashc.py"),
+                    str(REPO_ROOT / "modash.py"),
                     "trace",
                     str(entrypoint),
                     "--output",
@@ -179,7 +179,7 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "modashc.py"),
+                    str(REPO_ROOT / "modash.py"),
                     "trace",
                     str(entrypoint),
                     "--timeout",
@@ -202,7 +202,7 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "modashc.py"),
+                    str(REPO_ROOT / "modash.py"),
                     "trace",
                     str(entrypoint),
                     "--output",
@@ -228,7 +228,7 @@ class RuntimeSourceTraceCliTestCase(unittest.TestCase):
             output = project.path("merged.sh")
 
             result = subprocess.run(
-                [sys.executable, str(REPO_ROOT / "modashc.py"), str(entrypoint), str(output)],
+                [sys.executable, str(REPO_ROOT / "modash.py"), str(entrypoint), str(output)],
                 cwd=str(project.root),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

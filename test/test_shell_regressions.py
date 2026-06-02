@@ -13,14 +13,14 @@ from test.support import ScriptProject
 class SetupShellHelperRegressionTestCase(unittest.TestCase):
     def run_helper(self, target):
         return subprocess.run(
-            ["bash", str(REPO_ROOT / "setup" / "modashc_shell.sh"), str(target)],
+            ["bash", str(REPO_ROOT / "setup" / "modash_shell.sh"), str(target)],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             timeout=2,
         )
 
-    def test_modashc_shell_executes_script_argument_non_interactively(self):
+    def test_modash_shell_executes_script_argument_non_interactively(self):
         with ScriptProject() as project:
             marker = project.path("marker")
             target = project.write("target.sh", f'#!/bin/bash\necho "ran" > "{marker}"\n', executable=True)
@@ -31,7 +31,7 @@ class SetupShellHelperRegressionTestCase(unittest.TestCase):
             self.assertTrue(marker.exists(), result.stdout)
             self.assertEqual(marker.read_text(), "ran\n")
 
-    def test_modashc_shell_rejects_disallowed_script_command(self):
+    def test_modash_shell_rejects_disallowed_script_command(self):
         with ScriptProject() as project:
             marker = project.path("marker")
             target = project.write(
@@ -46,7 +46,7 @@ class SetupShellHelperRegressionTestCase(unittest.TestCase):
             self.assertIn("Command not allowed: uname", result.stdout)
             self.assertFalse(marker.exists(), result.stdout)
 
-    def test_modashc_shell_rejects_disallowed_command_substitution(self):
+    def test_modash_shell_rejects_disallowed_command_substitution(self):
         with ScriptProject() as project:
             marker = project.path("marker")
             target = project.write(
@@ -61,7 +61,7 @@ class SetupShellHelperRegressionTestCase(unittest.TestCase):
             self.assertIn("Command not allowed: uname", result.stdout)
             self.assertFalse(marker.exists(), result.stdout)
 
-    def test_modashc_shell_allows_quoted_environment_assignment_prefixes(self):
+    def test_modash_shell_allows_quoted_environment_assignment_prefixes(self):
         with ScriptProject() as project:
             target = project.write(
                 "target.sh",
@@ -74,7 +74,7 @@ class SetupShellHelperRegressionTestCase(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout)
             self.assertEqual(result.stdout, "a b\nzero two\n")
 
-    def test_modashc_shell_allows_control_flow_keywords(self):
+    def test_modash_shell_allows_control_flow_keywords(self):
         with ScriptProject() as project:
             target = project.write(
                 "target.sh",
@@ -87,7 +87,7 @@ class SetupShellHelperRegressionTestCase(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout)
             self.assertEqual(result.stdout, "one\ntwo\ncase\n")
 
-    def test_modashc_shell_rejects_command_spawning_helper_tools(self):
+    def test_modash_shell_rejects_command_spawning_helper_tools(self):
         cases = {
             "env": "env /usr/bin/uname\n",
             "find": "find . -exec /usr/bin/uname \\;\n",
@@ -105,11 +105,11 @@ class SetupShellHelperRegressionTestCase(unittest.TestCase):
                 self.assertIn(f"Command not allowed: {name}", result.stdout)
                 self.assertNotIn("after", result.stdout)
 
-    def test_runner_invokes_modashc_shell_instead_of_bash(self):
-        runner = (REPO_ROOT / "setup" / "run_modashc_shell.sh").read_text()
+    def test_runner_invokes_modash_shell_instead_of_bash(self):
+        runner = (REPO_ROOT / "setup" / "run_modash_shell.sh").read_text()
 
-        self.assertIn('sudo -u modashc "$MODASHC_SHELL_PATH" "$SCRIPT_PATH"', runner)
-        self.assertNotIn('sudo -u modashc /bin/bash "$SCRIPT_PATH"', runner)
+        self.assertIn('sudo -u modash "$MODASH_SHELL_PATH" "$SCRIPT_PATH"', runner)
+        self.assertNotIn('sudo -u modash /bin/bash "$SCRIPT_PATH"', runner)
 
 
 if __name__ == "__main__":

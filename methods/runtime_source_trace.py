@@ -20,7 +20,7 @@ from methods.runtime_source_observations import (
 )
 
 TRACE_VERSION = "runtime-wrapper-v1"
-TRACE_MARKER = "MODASHC_SOURCE_EVENT"
+TRACE_MARKER = "MODASH_SOURCE_EVENT"
 TRACE_FIELD_ENCODING = "utf-8"
 DEFAULT_TRACE_TIMEOUT_SECONDS = 30
 BASH_VERSION_TIMEOUT_SECONDS = 5
@@ -78,7 +78,7 @@ def trace_sources(
     argv = tuple(str(argument) for argument in (argv or ()))
     run_env = _trace_environment(env)
 
-    with tempfile.TemporaryDirectory(prefix="modashc-trace-") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="modash-trace-") as tmpdir:
         tmpdir_path = Path(tmpdir)
         trace_path = tmpdir_path / "source-events.bin"
         prelude_path = tmpdir_path / "prelude.sh"
@@ -87,9 +87,9 @@ def trace_sources(
 
         run_env.update({
             "BASH_ENV": str(prelude_path),
-            "MODASHC_TRACE_ENTRYPOINT": str(entrypoint_path),
-            "MODASHC_TRACE_INITIAL_CWD": str(cwd_path),
-            "MODASHC_TRACE_FILE": str(trace_path),
+            "MODASH_TRACE_ENTRYPOINT": str(entrypoint_path),
+            "MODASH_TRACE_INITIAL_CWD": str(cwd_path),
+            "MODASH_TRACE_FILE": str(trace_path),
         })
 
         try:
@@ -135,7 +135,7 @@ def trace_sources(
 
 
 def default_observation_path(entrypoint: str | os.PathLike, *, output_dir=None, run_id=None):
-    directory = Path(output_dir) if output_dir is not None else Path(".modashc") / "observations"
+    directory = Path(output_dir) if output_dir is not None else Path(".modash") / "observations"
     run_id = run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     return directory / f"{_artifact_stem(entrypoint)}-{run_id}.json"
 
@@ -318,18 +318,18 @@ def _source_line(path: str, line: int):
 
 def _trace_prelude():
     return r'''
-exec 19>>"$MODASHC_TRACE_FILE" || exit 125
+exec 19>>"$MODASH_TRACE_FILE" || exit 125
 unset BASH_ENV
 
-__modashc_source_stack=()
-__modashc_source_index=0
-declare -A __modashc_source_file_map=()
+__modash_source_stack=()
+__modash_source_index=0
+declare -A __modash_source_file_map=()
 
-__modashc_emit_source_event() {
+__modash_emit_source_event() {
   local index=$1 kind=$2 caller_file=$3 caller_line=$4 cwd=$5 source_path=$6 resolved_path=$7 status=$8
   shift 8
   printf '%s\0' \
-    'MODASHC_SOURCE_EVENT' \
+    'MODASH_SOURCE_EVENT' \
     "$index" \
     "$kind" \
     "$caller_file" \
@@ -342,7 +342,7 @@ __modashc_emit_source_event() {
     "$@" >&19
 }
 
-__modashc_resolve_source_path() {
+__modash_resolve_source_path() {
   local source_path=${1-}
   local directory
 
@@ -380,56 +380,56 @@ __modashc_resolve_source_path() {
   printf '%s/%s' "$PWD" "$source_path"
 }
 
-__modashc_current_source_file() {
+__modash_current_source_file() {
   local bash_source=${1-}
-  local depth=${#__modashc_source_stack[@]}
+  local depth=${#__modash_source_stack[@]}
   if (( depth > 0 )); then
-    printf '%s' "${__modashc_source_stack[$((depth - 1))]}"
-  elif [[ -n $bash_source && -n ${__modashc_source_file_map[$bash_source]+set} ]]; then
-    printf '%s' "${__modashc_source_file_map[$bash_source]}"
+    printf '%s' "${__modash_source_stack[$((depth - 1))]}"
+  elif [[ -n $bash_source && -n ${__modash_source_file_map[$bash_source]+set} ]]; then
+    printf '%s' "${__modash_source_file_map[$bash_source]}"
   elif [[ -n $bash_source && $bash_source == /* ]]; then
     printf '%s' "$bash_source"
   elif [[ -n $bash_source && $bash_source != "$0" ]]; then
-    printf '%s/%s' "$MODASHC_TRACE_INITIAL_CWD" "$bash_source"
+    printf '%s/%s' "$MODASH_TRACE_INITIAL_CWD" "$bash_source"
   else
-    printf '%s' "$MODASHC_TRACE_ENTRYPOINT"
+    printf '%s' "$MODASH_TRACE_ENTRYPOINT"
   fi
 }
 
-__modashc_trace_source_common() {
+__modash_trace_source_common() {
   local kind=$1 builtin_name=$2
   shift 2
 
-  local event_index=$__modashc_source_index
-  __modashc_source_index=$((__modashc_source_index + 1))
+  local event_index=$__modash_source_index
+  __modash_source_index=$((__modash_source_index + 1))
 
   local caller_file caller_line cwd source_path resolved_path status
-  caller_file=$(__modashc_current_source_file "${BASH_SOURCE[2]:-}")
+  caller_file=$(__modash_current_source_file "${BASH_SOURCE[2]:-}")
   caller_line=${BASH_LINENO[1]:-1}
   cwd=$PWD
   source_path=${1-}
-  resolved_path=$(__modashc_resolve_source_path "$source_path")
+  resolved_path=$(__modash_resolve_source_path "$source_path")
 
   if [[ -n $source_path ]]; then
-    __modashc_source_file_map["$source_path"]=$resolved_path
-    __modashc_source_file_map["$resolved_path"]=$resolved_path
-    __modashc_source_stack+=("$resolved_path")
+    __modash_source_file_map["$source_path"]=$resolved_path
+    __modash_source_file_map["$resolved_path"]=$resolved_path
+    __modash_source_stack+=("$resolved_path")
   fi
 
   builtin "$builtin_name" "$@"
   status=$?
 
   if [[ -n $source_path ]]; then
-    unset '__modashc_source_stack[-1]'
+    unset '__modash_source_stack[-1]'
   fi
 
   if [[ -n $source_path ]]; then
     if (($# > 1)); then
-      __modashc_emit_source_event \
+      __modash_emit_source_event \
         "$event_index" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$status" \
         "${@:2}"
     else
-      __modashc_emit_source_event \
+      __modash_emit_source_event \
         "$event_index" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$status"
     fi
   fi
@@ -438,13 +438,13 @@ __modashc_trace_source_common() {
 }
 
 source() {
-  __modashc_trace_source_common source source "$@"
+  __modash_trace_source_common source source "$@"
 }
 
-__modashc_trace_dot_source() {
-  __modashc_trace_source_common dot . "$@"
+__modash_trace_dot_source() {
+  __modash_trace_source_common dot . "$@"
 }
 
-alias .='__modashc_trace_dot_source'
+alias .='__modash_trace_dot_source'
 shopt -s expand_aliases
 '''

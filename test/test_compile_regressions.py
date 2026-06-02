@@ -3797,7 +3797,7 @@ class CompileRegressionTestCase(unittest.TestCase):
             self.assertIn("after-two:two:0", result.stdout)
             self.assertIn(f"failed:{missing}", result.stdout)
             self.assertIn("after-missing:7", result.stdout)
-            self.assertNotIn("modashc:", result.stdout)
+            self.assertNotIn("modash:", result.stdout)
 
     def test_retained_source_helper_dispatch_matches_relative_runtime_argument(self):
         with ScriptProject() as project:
@@ -4040,7 +4040,7 @@ class CompileRegressionTestCase(unittest.TestCase):
             project.assert_compiled_matches(self, "main.sh")
             compiled = project.path("compiled.sh")
             generated_functions = sorted(set(
-                re.findall(r'(__modashc_source_[0-9a-f]+(?:_run)?)\(\)', compiled.read_text())
+                re.findall(r'(__modash_source_[0-9a-f]+(?:_run)?)\(\)', compiled.read_text())
             ))
             self.assertGreaterEqual(len(generated_functions), 2)
 
@@ -4451,7 +4451,7 @@ class CompileRegressionTestCase(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "modashc.py"),
+                    str(REPO_ROOT / "modash.py"),
                     str(project.path("main.sh")),
                     str(output),
                     "--mode",

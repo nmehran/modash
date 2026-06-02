@@ -1,7 +1,7 @@
 # Supported Source Resolution
 
 This document is the user-facing contract for source discovery and executable
-lowering. `modashc` resolves `source` and `.` dependencies without executing
+lowering. `modash` resolves `source` and `.` dependencies without executing
 shell code. Context mode may preserve unresolved source text for readability,
 but executable mode only lowers source sites that can be resolved exactly.
 

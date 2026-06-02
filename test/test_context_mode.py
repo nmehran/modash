@@ -19,7 +19,7 @@ class ContextModeTestCase(unittest.TestCase):
             output = project.path("context-output.sh")
 
             result = subprocess.run(
-                [sys.executable, str(REPO_ROOT / "modashc.py"), str(entry), str(output)],
+                [sys.executable, str(REPO_ROOT / "modash.py"), str(entry), str(output)],
                 cwd=str(REPO_ROOT),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -28,9 +28,9 @@ class ContextModeTestCase(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stdout)
             content = output.read_text()
-            self.assertIn("# modashc context", content)
+            self.assertIn("# modash context", content)
             self.assertIn("# mode: context", content)
-            self.assertIn("# modashc: source ./dep.sh -> dep.sh", content)
+            self.assertIn("# modash: source ./dep.sh -> dep.sh", content)
 
     def test_context_output_uses_unique_dependency_first_sections(self):
         with ScriptProject() as project:
@@ -46,7 +46,7 @@ class ContextModeTestCase(unittest.TestCase):
 
         self.assertLess(content.index('echo "dep body"'), content.index('echo "main body"'))
         self.assertEqual(content.count('echo "dep body"'), 1)
-        self.assertEqual(content.count("# modashc: source ./dep.sh -> dep.sh"), 2)
+        self.assertEqual(content.count("# modash: source ./dep.sh -> dep.sh"), 2)
 
     def test_context_output_includes_non_sh_sourced_files(self):
         with ScriptProject() as project:
@@ -58,7 +58,7 @@ class ContextModeTestCase(unittest.TestCase):
 
         self.assertIn("config", content)
         self.assertIn("export FEATURE_FLAG=yes", content)
-        self.assertIn("# modashc: source ./config -> config", content)
+        self.assertIn("# modash: source ./config -> config", content)
 
     def test_context_output_preserves_original_source_lines(self):
         with ScriptProject() as project:
@@ -68,7 +68,7 @@ class ContextModeTestCase(unittest.TestCase):
             output = project.compile("main.sh")
             content = output.read_text()
 
-        self.assertIn('# modashc: source "./dir with spaces/dep.sh" -> dir with spaces/dep.sh', content)
+        self.assertIn('# modash: source "./dir with spaces/dep.sh" -> dir with spaces/dep.sh', content)
         self.assertIn('source "./dir with spaces/dep.sh"', content)
 
     def test_context_output_resolves_safe_cat_source(self):
@@ -81,7 +81,7 @@ class ContextModeTestCase(unittest.TestCase):
             content = output.read_text()
 
         self.assertIn('echo "dep body"', content)
-        self.assertIn('# modashc: source "$(cat dep-path.txt)" -> dep.sh', content)
+        self.assertIn('# modash: source "$(cat dep-path.txt)" -> dep.sh', content)
         self.assertIn('source "$(cat dep-path.txt)"', content)
 
     def test_context_output_resolves_safe_find_source(self):
@@ -93,7 +93,7 @@ class ContextModeTestCase(unittest.TestCase):
             content = output.read_text()
 
         self.assertIn('echo "dep body"', content)
-        self.assertIn('# modashc: source "$(find ./plugins -type f -name init.sh -print -quit)" -> plugins/init.sh', content)
+        self.assertIn('# modash: source "$(find ./plugins -type f -name init.sh -print -quit)" -> plugins/init.sh', content)
         self.assertIn('source "$(find ./plugins -type f -name init.sh -print -quit)"', content)
 
     def test_context_output_resolves_safe_eval_source(self):
@@ -105,7 +105,7 @@ class ContextModeTestCase(unittest.TestCase):
             content = output.read_text()
 
         self.assertIn('echo "dep body"', content)
-        self.assertIn('# modashc: source ./dep.sh -> dep.sh', content)
+        self.assertIn('# modash: source ./dep.sh -> dep.sh', content)
         self.assertIn('eval "source ./dep.sh"', content)
 
     def test_context_output_resolves_exact_array_index_source(self):
@@ -121,7 +121,7 @@ class ContextModeTestCase(unittest.TestCase):
             content = output.read_text()
 
         self.assertIn('echo "feature body"', content)
-        self.assertIn('# modashc: source "${deps[1]}" -> deps/feature.sh', content)
+        self.assertIn('# modash: source "${deps[1]}" -> deps/feature.sh', content)
         self.assertIn('source "${deps[1]}"', content)
 
     def test_context_output_resolves_exact_for_loop_sources(self):
@@ -140,8 +140,8 @@ class ContextModeTestCase(unittest.TestCase):
 
         self.assertIn('echo "loop a body"', content)
         self.assertIn('echo "loop b body"', content)
-        self.assertIn('# modashc: source "$dep" -> deps/a.sh', content)
-        self.assertIn('# modashc: source "$dep" -> deps/b.sh', content)
+        self.assertIn('# modash: source "$dep" -> deps/a.sh', content)
+        self.assertIn('# modash: source "$dep" -> deps/b.sh', content)
         self.assertIn('source "$dep"', content)
         self.assertEqual(content.count('echo "loop a body"'), 1)
 
@@ -162,8 +162,8 @@ class ContextModeTestCase(unittest.TestCase):
 
         self.assertIn('echo "scalar loop a body"', content)
         self.assertIn('echo "scalar loop b body"', content)
-        self.assertIn('# modashc: source "$dep" -> deps/a.sh', content)
-        self.assertIn('# modashc: source "$dep" -> deps/b.sh', content)
+        self.assertIn('# modash: source "$dep" -> deps/a.sh', content)
+        self.assertIn('# modash: source "$dep" -> deps/b.sh', content)
 
     def test_context_output_resolves_glob_for_loop_sources(self):
         with ScriptProject() as project:
@@ -181,8 +181,8 @@ class ContextModeTestCase(unittest.TestCase):
 
         self.assertIn('echo "glob a body"', content)
         self.assertIn('echo "glob b body"', content)
-        self.assertIn('# modashc: source "$dep" -> plugins/a.sh', content)
-        self.assertIn('# modashc: source "$dep" -> plugins/b.sh', content)
+        self.assertIn('# modash: source "$dep" -> plugins/a.sh', content)
+        self.assertIn('# modash: source "$dep" -> plugins/b.sh', content)
         self.assertEqual(content.count('echo "glob a body"'), 1)
 
     def test_context_output_preserves_unsupported_c_style_loop_without_failing(self):
@@ -199,7 +199,7 @@ class ContextModeTestCase(unittest.TestCase):
             content = output.read_text()
 
         self.assertIn('echo "dep body"', content)
-        self.assertIn('# modashc: source ./dep.sh -> dep.sh (conditional)', content)
+        self.assertIn('# modash: source ./dep.sh -> dep.sh (conditional)', content)
         self.assertIn('for (( i=$(cat start.txt); i<2; i++ )); do', content)
         self.assertIn('echo "main body"', content)
 
@@ -230,7 +230,7 @@ class ContextModeTestCase(unittest.TestCase):
 
         self.assertIn('source "$NEXT"', content)
         self.assertNotIn('echo "next body"', content)
-        self.assertIn('# modashc: source ./optional.sh -> optional.sh (conditional: [[ -n "$LOAD_OPTIONAL" ]])', content)
+        self.assertIn('# modash: source ./optional.sh -> optional.sh (conditional: [[ -n "$LOAD_OPTIONAL" ]])', content)
         self.assertIn('echo "main body"', content)
 
     def test_context_output_marks_mutually_exclusive_if_sources(self):
@@ -248,8 +248,8 @@ class ContextModeTestCase(unittest.TestCase):
             output = project.compile("main.sh")
             content = output.read_text()
 
-        self.assertIn('# modashc: source ./prod.sh -> prod.sh (mutually-exclusive: [[ "$MODE" == prod ]])', content)
-        self.assertIn('# modashc: source ./dev.sh -> dev.sh (mutually-exclusive: else)', content)
+        self.assertIn('# modash: source ./prod.sh -> prod.sh (mutually-exclusive: [[ "$MODE" == prod ]])', content)
+        self.assertIn('# modash: source ./dev.sh -> dev.sh (mutually-exclusive: else)', content)
 
     def test_context_output_marks_mutually_exclusive_case_sources(self):
         with ScriptProject() as project:
@@ -267,9 +267,9 @@ class ContextModeTestCase(unittest.TestCase):
             output = project.compile("main.sh")
             content = output.read_text()
 
-        self.assertIn('# modashc: source ./prod.sh -> prod.sh (mutually-exclusive: case "$ENV" in prod|stage)', content)
-        self.assertIn('# modashc: source ./dev.sh -> dev.sh (mutually-exclusive: case "$ENV" in dev)', content)
-        self.assertIn('# modashc: source ./default.sh -> default.sh (mutually-exclusive: case "$ENV" in *)', content)
+        self.assertIn('# modash: source ./prod.sh -> prod.sh (mutually-exclusive: case "$ENV" in prod|stage)', content)
+        self.assertIn('# modash: source ./dev.sh -> dev.sh (mutually-exclusive: case "$ENV" in dev)', content)
+        self.assertIn('# modash: source ./default.sh -> default.sh (mutually-exclusive: case "$ENV" in *)', content)
 
     def test_context_output_classifies_bash_c_source_as_child_shell(self):
         with ScriptProject() as project:
@@ -280,7 +280,7 @@ class ContextModeTestCase(unittest.TestCase):
             content = output.read_text()
 
         self.assertIn('echo "dep body"', content)
-        self.assertIn('# modashc: bash -c "source ./dep.sh" -> dep.sh (child-shell)', content)
+        self.assertIn('# modash: bash -c "source ./dep.sh" -> dep.sh (child-shell)', content)
         self.assertIn('bash -c "source ./dep.sh"', content)
 
     def test_context_output_indents_source_relationship_comments(self):
@@ -296,7 +296,7 @@ class ContextModeTestCase(unittest.TestCase):
             output = project.compile("main.sh")
             content = output.read_text()
 
-        self.assertIn("  # modashc: source ./dep.sh -> dep.sh\n  source ./dep.sh", content)
+        self.assertIn("  # modash: source ./dep.sh -> dep.sh\n  source ./dep.sh", content)
 
     def test_context_output_resolves_function_source_arguments(self):
         with ScriptProject() as project:
@@ -315,8 +315,8 @@ class ContextModeTestCase(unittest.TestCase):
 
         self.assertIn('echo "function a body"', content)
         self.assertIn('echo "function b body"', content)
-        self.assertIn('# modashc: source "$1" -> a.sh', content)
-        self.assertIn('# modashc: source "$1" -> b.sh', content)
+        self.assertIn('# modash: source "$1" -> a.sh', content)
+        self.assertIn('# modash: source "$1" -> b.sh', content)
 
     def test_context_output_marks_source_arguments(self):
         with ScriptProject() as project:
@@ -329,7 +329,7 @@ class ContextModeTestCase(unittest.TestCase):
 
         self.assertIn("echo \"loader body\"", content)
         self.assertIn(
-            "# modashc: source ./plugins/*.sh explicit -> plugins/00-loader.sh "
+            "# modash: source ./plugins/*.sh explicit -> plugins/00-loader.sh "
             "(args: './plugins/10-arg.sh' 'explicit')",
             content,
         )
@@ -346,7 +346,7 @@ class ContextModeTestCase(unittest.TestCase):
             content = output.read_text()
 
         self.assertIn('set -- "$UNKNOWN"', content)
-        self.assertIn("# modashc: source ./dep.sh -> dep.sh", content)
+        self.assertIn("# modash: source ./dep.sh -> dep.sh", content)
 
     def test_context_output_does_not_resolve_heredoc_source_text(self):
         with ScriptProject() as project:
@@ -362,7 +362,7 @@ class ContextModeTestCase(unittest.TestCase):
             content = output.read_text()
 
         self.assertIn('source ./dep.sh', content)
-        self.assertNotIn('# modashc: source ./dep.sh -> dep.sh', content)
+        self.assertNotIn('# modash: source ./dep.sh -> dep.sh', content)
 
     def test_context_mode_is_not_runtime_parity_mode(self):
         with ScriptProject() as project:
@@ -386,7 +386,7 @@ class ContextModeTestCase(unittest.TestCase):
             output = project.compile("main.sh", mode="executable")
             content = output.read_text()
 
-        self.assertNotIn("# modashc: source", content)
+        self.assertNotIn("# modash: source", content)
         self.assertNotIn("# [", content)
 
 

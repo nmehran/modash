@@ -13,7 +13,7 @@ if [ "$#" -ne 1 ]; then
 fi
 
 SCRIPT_PATH="$1"
-MODASHC_SHELL_PATH="${MODASHC_SHELL_PATH:-/opt/modashc/scripts/modashc_shell.sh}"
+MODASH_SHELL_PATH="${MODASH_SHELL_PATH:-/opt/modash/scripts/modash_shell.sh}"
 
 # Check if the provided script file exists
 if [ ! -f "$SCRIPT_PATH" ]; then
@@ -21,8 +21,8 @@ if [ ! -f "$SCRIPT_PATH" ]; then
     exit 1
 fi
 
-if [ ! -x "$MODASHC_SHELL_PATH" ]; then
-    echo "Error: The modashc shell is not executable at '$MODASHC_SHELL_PATH'."
+if [ ! -x "$MODASH_SHELL_PATH" ]; then
+    echo "Error: The modash shell is not executable at '$MODASH_SHELL_PATH'."
     exit 1
 fi
 
@@ -43,9 +43,9 @@ trap revert_permissions EXIT
 chmod +x "$SCRIPT_PATH"
 chmod +x "$(dirname "$SCRIPT_PATH")"
 
-# Execute the script as 'modashc' using the restricted shell environment
-echo "Executing script as 'modashc': $SCRIPT_PATH"
-if sudo -u modashc "$MODASHC_SHELL_PATH" "$SCRIPT_PATH"; then
+# Execute the script as 'modash' using the restricted shell environment
+echo "Executing script as 'modash': $SCRIPT_PATH"
+if sudo -u modash "$MODASH_SHELL_PATH" "$SCRIPT_PATH"; then
   echo "Script executed successfully."
   exit 0
 else

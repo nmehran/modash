@@ -206,8 +206,8 @@ Acceptance:
 ## Done Definition
 
 - `python -m unittest -v` passes.
-- `MODASHC_REALWORLD=1` pinned corpus tests pass.
-- `MODASHC_REALWORLD=1 MODASHC_REALWORLD_RUNTIME=1` runtime parity probes pass
+- `MODASH_REALWORLD=1` pinned corpus tests pass.
+- `MODASH_REALWORLD=1 MODASH_REALWORLD_RUNTIME=1` runtime parity probes pass
   for the promoted child-shell fixtures.
 - executable artifact scan reports zero live unresolved source commands for
   accepted child-shell cases.

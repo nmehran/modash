@@ -28,7 +28,7 @@ declarative data.
 CLI:
 
 ```sh
-python modashc.py <entrypoint> <output> --mode executable --source-supplement source-supplement.json
+python modash.py <entrypoint> <output> --mode executable --source-supplement source-supplement.json
 ```
 
 API:

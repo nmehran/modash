@@ -29,7 +29,7 @@ if source ./dep.sh && [[ "$FEATURE" == enabled ]]; then
 fi
 ```
 
-When the source path and source arguments are exact, modashc lowers that source
+When the source path and source arguments are exact, modash lowers that source
 atom in place, preserves Bash short-circuit behavior, and models source-visible
 state conservatively. It fails only when dependency paths, source arguments,
 source execution ordering, or later source-relevant state cannot be proven safe.
@@ -135,8 +135,8 @@ Acceptance:
 Required checks before merging implementation work:
 
 - `python -m unittest -v`
-- `MODASHC_REALWORLD=1` pinned corpus
-- `MODASHC_REALWORLD=1 MODASHC_REALWORLD_RUNTIME=1` runtime parity probes
+- `MODASH_REALWORLD=1` pinned corpus
+- `MODASH_REALWORLD=1 MODASH_REALWORLD_RUNTIME=1` runtime parity probes
 - executable artifact scan for live `source` commands
 - spot-check generated compound-condition executable artifacts
 

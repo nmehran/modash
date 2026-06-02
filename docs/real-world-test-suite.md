@@ -15,7 +15,7 @@ not affect the default unit-test gate.
 
 ## Goal
 
-Exercise `modashc` against real shell-heavy Unix projects and distro scripts so
+Exercise `modash` against real shell-heavy Unix projects and distro scripts so
 the compiler is exposed to source idioms that synthetic tests may not cover.
 Findings from this suite should harden the main synthetic regression suite over
 time.
@@ -63,22 +63,22 @@ or extracted corpus files are not.
 Real-world tests must be opt-in:
 
 ```sh
-MODASHC_REALWORLD=1 python -m unittest test.test_realworld_projects -v
+MODASH_REALWORLD=1 python -m unittest test.test_realworld_projects -v
 ```
 
-Without `MODASHC_REALWORLD=1`, the real-world test module should skip all
+Without `MODASH_REALWORLD=1`, the real-world test module should skip all
 tests quickly and clearly.
 
 Additional environment switches:
 
 ```sh
-MODASHC_REALWORLD_TIMEOUT=3
-MODASHC_REALWORLD_FETCH=1
-MODASHC_REALWORLD_RUNTIME=1
-MODASHC_REALWORLD_TRACE=1
-MODASHC_REALWORLD_SUPPLEMENT=1
-MODASHC_REALWORLD_REPORT=1
-MODASHC_REALWORLD_UPDATE_SNAPSHOTS=1
+MODASH_REALWORLD_TIMEOUT=3
+MODASH_REALWORLD_FETCH=1
+MODASH_REALWORLD_RUNTIME=1
+MODASH_REALWORLD_TRACE=1
+MODASH_REALWORLD_SUPPLEMENT=1
+MODASH_REALWORLD_REPORT=1
+MODASH_REALWORLD_UPDATE_SNAPSHOTS=1
 ```
 
 Timeout control, fetching, runtime parity checks, runtime trace smoke probes,
@@ -133,7 +133,7 @@ reproduce and verify the artifact:
 - entrypoints
 - expected outcome per mode
 
-Pinned artifact downloads happen only when `MODASHC_REALWORLD_FETCH=1` is set.
+Pinned artifact downloads happen only when `MODASH_REALWORLD_FETCH=1` is set.
 If the verified artifact is already cached, the suite can extract and run it
 without network access.
 
@@ -197,13 +197,13 @@ entrypoints.
 Pinned mode expectations may declare a `source_supplement` fixture. The harness
 loads the fixture from `test/realworld/fixtures/`, expands `{root}` to the
 extracted corpus root, writes a generated supplement inside the ignored corpus
-cache, and passes it to `modashc` for that mode only.
+cache, and passes it to `modash` for that mode only.
 
 ### Runtime Trace Smoke Probes
 
 Runtime trace smoke probes are separately opt-in with
-`MODASHC_REALWORLD_TRACE=1`. They execute a small pinned pacman/makepkg-style
-fixture through the explicit `modashc trace` workflow, validate that source
+`MODASH_REALWORLD_TRACE=1`. They execute a small pinned pacman/makepkg-style
+fixture through the explicit `modash trace` workflow, validate that source
 events were observed, and write observation artifacts under:
 
 ```text
@@ -213,12 +213,12 @@ events were observed, and write observation artifacts under:
 These probes are not supplement generation and do not prove all branch paths.
 They exist to spot-check that the runtime observation workflow produces
 reviewable data against a real helper implementation. Trace execution uses the
-same `MODASHC_REALWORLD_TIMEOUT` budget as compile and runtime parity probes.
+same `MODASH_REALWORLD_TIMEOUT` budget as compile and runtime parity probes.
 
 ### Runtime Supplement Replay Probes
 
 Runtime supplement replay probes are separately opt-in with
-`MODASHC_REALWORLD_SUPPLEMENT=1`. They execute the observed workflow end to end
+`MODASH_REALWORLD_SUPPLEMENT=1`. They execute the observed workflow end to end
 against a small pinned pacman/makepkg-style fixture:
 
 1. trace the original with the required runtime environment
@@ -242,7 +242,7 @@ Compiled replay artifacts are retained under:
 These probes still do not make generated supplements automatic compiler input.
 They exist to validate the reviewed observe-to-supplement-to-replay workflow.
 Trace, compile, and replay steps all use the configured
-`MODASHC_REALWORLD_TIMEOUT` budget.
+`MODASH_REALWORLD_TIMEOUT` budget.
 
 ### Manual Artifact Review
 
@@ -259,7 +259,7 @@ generation:
 Promoted findings so far:
 
 - `completions/cd` executable mode now succeeds. Its
-  `if shopt -q cdable_vars; then` predicate is source-free from modashc's
+  `if shopt -q cdable_vars; then` predicate is source-free from modash's
   dependency perspective, so it is preserved as ordinary runtime Bash instead
   of blocking dependency merging.
 - pacman/makepkg artifacts exposed that `if ! source "$@"; then` must be
@@ -274,14 +274,14 @@ Promoted findings so far:
 ### Runtime Parity Probes
 
 Runtime parity is implemented only for manifest entries marked safe and only
-when `MODASHC_REALWORLD_RUNTIME=1` is set. These tests run controlled wrapper
+when `MODASH_REALWORLD_RUNTIME=1` is set. These tests run controlled wrapper
 scripts in temporary directories, with explicit environment variables, no root
 privileges, and a timeout.
 
 Runtime parity compares:
 
 - Bash execution of the original wrapper
-- Bash execution of `modashc` executable output
+- Bash execution of `modash` executable output
 - exit status
 - stdout and stderr, normalized only where the manifest declares an accepted
   normalization
@@ -340,7 +340,7 @@ be compared without reading test logs.
 Each suite result includes a `summary` object with record counts, status counts,
 total measured record duration, and pinned expectation counts when applicable.
 Each mode record includes `duration_seconds`.
-When `MODASHC_REALWORLD_REPORT=1` is set, the harness also prints concise
+When `MODASH_REALWORLD_REPORT=1` is set, the harness also prints concise
 summary lines and unmatched expectations to stderr while still writing the JSON
 result files.
 
@@ -402,15 +402,15 @@ and reviewable.
       "fixture_files": [
         {
           "source": "pacman/source-safe-wrapper.sh",
-          "path": ".modashc-fixtures/source-safe-wrapper.sh"
+          "path": ".modash-fixtures/source-safe-wrapper.sh"
         },
         {
           "source": "pacman/source-safe-target.sh",
-          "path": ".modashc-fixtures/source-safe-target.sh"
+          "path": ".modash-fixtures/source-safe-target.sh"
         },
         {
           "source": "pacman/PKGBUILD",
-          "path": ".modashc-fixtures/PKGBUILD"
+          "path": ".modash-fixtures/PKGBUILD"
         }
       ],
       "entrypoints": [
@@ -427,7 +427,7 @@ and reviewable.
           }
         },
         {
-          "path": ".modashc-fixtures/source-safe-wrapper.sh",
+          "path": ".modash-fixtures/source-safe-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -438,7 +438,7 @@ and reviewable.
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         }
       ]

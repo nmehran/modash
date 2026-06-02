@@ -52,8 +52,8 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                 ),
             )
 
-            path = project.write_observation(".modashc/observations/run.json", observation)
-            loaded = project.load_observation(".modashc/observations/run.json")
+            path = project.write_observation(".modash/observations/run.json", observation)
+            loaded = project.load_observation(".modash/observations/run.json")
             text = path.read_text()
             data = json.loads(text)
 

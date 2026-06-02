@@ -41,14 +41,14 @@ def trace_main(
         print(result.stdout, end="")
     if result.stderr:
         print(result.stderr, end="", file=sys.stderr)
-    print(f"modashc: trace observation: {observation_path.resolve(strict=False)}", file=sys.stderr)
+    print(f"modash: trace observation: {observation_path.resolve(strict=False)}", file=sys.stderr)
     return result.returncode
 
 
 def supplement_main(entrypoint, *, observation, output):
     supplement = generate_source_supplement_from_observation_file(entrypoint, observation)
     supplement_path = write_generated_supplement(supplement, output)
-    print(f"modashc: source supplement: {supplement_path.resolve(strict=False)}", file=sys.stderr)
+    print(f"modash: source supplement: {supplement_path.resolve(strict=False)}", file=sys.stderr)
 
 
 def parse_env_overlay(values):
@@ -126,7 +126,7 @@ def supplement_cli(argv):
     parser.add_argument(
         '--from-observation',
         required=True,
-        help='Runtime source observation JSON produced by modashc trace.',
+        help='Runtime source observation JSON produced by modash trace.',
     )
     parser.add_argument(
         '--output',
@@ -142,14 +142,14 @@ if __name__ == '__main__':
         try:
             sys.exit(trace_cli(sys.argv[2:]))
         except (RuntimeSourceTraceError, RuntimeSourceObservationError) as exc:
-            print(f"modashc: {exc}", file=sys.stderr)
+            print(f"modash: {exc}", file=sys.stderr)
             sys.exit(1)
 
     if len(sys.argv) > 1 and sys.argv[1] == "supplement":
         try:
             supplement_cli(sys.argv[2:])
         except (RuntimeSupplementGenerationError, RuntimeSourceObservationError) as exc:
-            print(f"modashc: {exc}", file=sys.stderr)
+            print(f"modash: {exc}", file=sys.stderr)
             sys.exit(1)
         sys.exit(0)
 
@@ -175,10 +175,10 @@ if __name__ == '__main__':
             source_supplement=args.source_supplement,
         )
     except UnsupportedSourceError as exc:
-        print(f"modashc: {exc}", file=sys.stderr)
+        print(f"modash: {exc}", file=sys.stderr)
         details = exc.diagnostic.details if exc.diagnostic is not None else exc.details
         skeleton = details.get("supplement_skeleton") if details else None
         if skeleton:
-            print("modashc: source supplement skeleton:", file=sys.stderr)
+            print("modash: source supplement skeleton:", file=sys.stderr)
             print(json.dumps(skeleton, indent=2, sort_keys=True), file=sys.stderr)
         sys.exit(1)

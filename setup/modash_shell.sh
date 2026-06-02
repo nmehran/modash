@@ -95,7 +95,7 @@ create_restricted_path() {
     local allowed_cmd
     local command_path
 
-    restricted_path=$(mktemp -d "${TMPDIR:-/tmp}/modashc-path.XXXXXX")
+    restricted_path=$(mktemp -d "${TMPDIR:-/tmp}/modash-path.XXXXXX")
     for allowed_cmd in "${ALLOWED_COMMANDS[@]}"; do
         command_path=$(type -P -- "$allowed_cmd" 2>/dev/null || true)
         if [[ -n "$command_path" ]]; then

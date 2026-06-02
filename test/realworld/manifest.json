@@ -68,203 +68,203 @@
       "fixture_files": [
         {
           "source": "pacman/source-safe-wrapper.sh",
-          "path": ".modashc-fixtures/source-safe-wrapper.sh"
+          "path": ".modash-fixtures/source-safe-wrapper.sh"
         },
         {
           "source": "pacman/source-safe-target.sh",
-          "path": ".modashc-fixtures/source-safe-target.sh"
+          "path": ".modash-fixtures/source-safe-target.sh"
         },
         {
           "source": "pacman/source-safe-args-wrapper.sh",
-          "path": ".modashc-fixtures/source-safe-args-wrapper.sh"
+          "path": ".modash-fixtures/source-safe-args-wrapper.sh"
         },
         {
           "source": "pacman/source-safe-args-target.sh",
-          "path": ".modashc-fixtures/source-safe-args-target.sh"
+          "path": ".modash-fixtures/source-safe-args-target.sh"
         },
         {
           "source": "pacman/glob-args-wrapper.sh",
-          "path": ".modashc-fixtures/glob-args-wrapper.sh"
+          "path": ".modash-fixtures/glob-args-wrapper.sh"
         },
         {
           "source": "pacman/glob-args/00-loader.sh",
-          "path": ".modashc-fixtures/glob-args/00-loader.sh"
+          "path": ".modash-fixtures/glob-args/00-loader.sh"
         },
         {
           "source": "pacman/glob-args/10-first-arg.sh",
-          "path": ".modashc-fixtures/glob-args/10-first-arg.sh"
+          "path": ".modash-fixtures/glob-args/10-first-arg.sh"
         },
         {
           "source": "pacman/glob-args/20-second-arg.sh",
-          "path": ".modashc-fixtures/glob-args/20-second-arg.sh"
+          "path": ".modash-fixtures/glob-args/20-second-arg.sh"
         },
         {
           "source": "pacman/PKGBUILD",
-          "path": ".modashc-fixtures/PKGBUILD"
+          "path": ".modash-fixtures/PKGBUILD"
         },
         {
           "source": "pacman/runtime-state-wrapper.sh",
-          "path": ".modashc-fixtures/runtime-state-wrapper.sh"
+          "path": ".modash-fixtures/runtime-state-wrapper.sh"
         },
         {
           "source": "pacman/runtime-state-lib.sh",
-          "path": ".modashc-fixtures/runtime-state-lib.sh"
+          "path": ".modash-fixtures/runtime-state-lib.sh"
         },
         {
           "source": "pacman/runtime-cwd-wrapper.sh",
-          "path": ".modashc-fixtures/runtime-cwd-wrapper.sh"
+          "path": ".modash-fixtures/runtime-cwd-wrapper.sh"
         },
         {
           "source": "pacman/runtime-cwd-lib.sh",
-          "path": ".modashc-fixtures/runtime-cwd-lib.sh"
+          "path": ".modash-fixtures/runtime-cwd-lib.sh"
         },
         {
           "source": "pacman/runtime-cwd-dir/runtime-cwd-nested.sh",
-          "path": ".modashc-fixtures/runtime-cwd-dir/runtime-cwd-nested.sh"
+          "path": ".modash-fixtures/runtime-cwd-dir/runtime-cwd-nested.sh"
         },
         {
           "source": "pacman/runtime-return-wrapper.sh",
-          "path": ".modashc-fixtures/runtime-return-wrapper.sh"
+          "path": ".modash-fixtures/runtime-return-wrapper.sh"
         },
         {
           "source": "pacman/runtime-return-lib.sh",
-          "path": ".modashc-fixtures/runtime-return-lib.sh"
+          "path": ".modash-fixtures/runtime-return-lib.sh"
         },
         {
           "source": "pacman/runtime-short-circuit-wrapper.sh",
-          "path": ".modashc-fixtures/runtime-short-circuit-wrapper.sh"
+          "path": ".modash-fixtures/runtime-short-circuit-wrapper.sh"
         },
         {
           "source": "pacman/runtime-positionals-wrapper.sh",
-          "path": ".modashc-fixtures/runtime-positionals-wrapper.sh"
+          "path": ".modash-fixtures/runtime-positionals-wrapper.sh"
         },
         {
           "source": "pacman/runtime-positionals-lib.sh",
-          "path": ".modashc-fixtures/runtime-positionals-lib.sh"
+          "path": ".modash-fixtures/runtime-positionals-lib.sh"
         },
         {
           "source": "pacman/runtime-guarded-if-wrapper.sh",
-          "path": ".modashc-fixtures/runtime-guarded-if-wrapper.sh"
+          "path": ".modash-fixtures/runtime-guarded-if-wrapper.sh"
         },
         {
           "source": "pacman/runtime-guarded-if-lib.sh",
-          "path": ".modashc-fixtures/runtime-guarded-if-lib.sh"
+          "path": ".modash-fixtures/runtime-guarded-if-lib.sh"
         },
         {
           "source": "pacman/runtime-guarded-case-wrapper.sh",
-          "path": ".modashc-fixtures/runtime-guarded-case-wrapper.sh"
+          "path": ".modash-fixtures/runtime-guarded-case-wrapper.sh"
         },
         {
           "source": "pacman/runtime-guarded-case-prod.sh",
-          "path": ".modashc-fixtures/runtime-guarded-case-prod.sh"
+          "path": ".modash-fixtures/runtime-guarded-case-prod.sh"
         },
         {
           "source": "pacman/runtime-guarded-case-dev.sh",
-          "path": ".modashc-fixtures/runtime-guarded-case-dev.sh"
+          "path": ".modash-fixtures/runtime-guarded-case-dev.sh"
         },
         {
           "source": "pacman/case-semantics-wrapper.sh",
-          "path": ".modashc-fixtures/case-semantics-wrapper.sh"
+          "path": ".modash-fixtures/case-semantics-wrapper.sh"
         },
         {
           "source": "pacman/case-semantics-escaped.sh",
-          "path": ".modashc-fixtures/case-semantics-escaped.sh"
+          "path": ".modash-fixtures/case-semantics-escaped.sh"
         },
         {
           "source": "pacman/case-semantics-mixed.sh",
-          "path": ".modashc-fixtures/case-semantics-mixed.sh"
+          "path": ".modash-fixtures/case-semantics-mixed.sh"
         },
         {
           "source": "pacman/case-semantics-digit.sh",
-          "path": ".modashc-fixtures/case-semantics-digit.sh"
+          "path": ".modash-fixtures/case-semantics-digit.sh"
         },
         {
           "source": "pacman/case-semantics-variable.sh",
-          "path": ".modashc-fixtures/case-semantics-variable.sh"
+          "path": ".modash-fixtures/case-semantics-variable.sh"
         },
         {
           "source": "pacman/case-semantics-default.sh",
-          "path": ".modashc-fixtures/case-semantics-default.sh"
+          "path": ".modash-fixtures/case-semantics-default.sh"
         },
         {
           "source": "pacman/compound-source-wrapper.sh",
-          "path": ".modashc-fixtures/compound-source-wrapper.sh"
+          "path": ".modash-fixtures/compound-source-wrapper.sh"
         },
         {
           "source": "pacman/compound-source-lib.sh",
-          "path": ".modashc-fixtures/compound-source-lib.sh"
+          "path": ".modash-fixtures/compound-source-lib.sh"
         },
         {
           "source": "pacman/compound-fallback-wrapper.sh",
-          "path": ".modashc-fixtures/compound-fallback-wrapper.sh"
+          "path": ".modash-fixtures/compound-fallback-wrapper.sh"
         },
         {
           "source": "pacman/compound-fallback-lib.sh",
-          "path": ".modashc-fixtures/compound-fallback-lib.sh"
+          "path": ".modash-fixtures/compound-fallback-lib.sh"
         },
         {
           "source": "pacman/source-frame-wrapper.sh",
-          "path": ".modashc-fixtures/source-frame-wrapper.sh"
+          "path": ".modash-fixtures/source-frame-wrapper.sh"
         },
         {
           "source": "pacman/source-frame-explicit-barrier.sh",
-          "path": ".modashc-fixtures/source-frame-explicit-barrier.sh"
+          "path": ".modash-fixtures/source-frame-explicit-barrier.sh"
         },
         {
           "source": "pacman/source-frame-shared-mutation.sh",
-          "path": ".modashc-fixtures/source-frame-shared-mutation.sh"
+          "path": ".modash-fixtures/source-frame-shared-mutation.sh"
         },
         {
           "source": "pacman/source-frame-post-set.sh",
-          "path": ".modashc-fixtures/source-frame-post-set.sh"
+          "path": ".modash-fixtures/source-frame-post-set.sh"
         },
         {
           "source": "pacman/source-frame-nested-set.sh",
-          "path": ".modashc-fixtures/source-frame-nested-set.sh"
+          "path": ".modash-fixtures/source-frame-nested-set.sh"
         },
         {
           "source": "pacman/source-frame-nested-noop.sh",
-          "path": ".modashc-fixtures/source-frame-nested-noop.sh"
+          "path": ".modash-fixtures/source-frame-nested-noop.sh"
         },
         {
           "source": "pacman/source-frame-set-shift.sh",
-          "path": ".modashc-fixtures/source-frame-set-shift.sh"
+          "path": ".modash-fixtures/source-frame-set-shift.sh"
         },
         {
           "source": "pacman/child-shell-wrapper.sh",
-          "path": ".modashc-fixtures/child-shell-wrapper.sh"
+          "path": ".modash-fixtures/child-shell-wrapper.sh"
         },
         {
           "source": "pacman/child-shell-target.sh",
-          "path": ".modashc-fixtures/child-shell-target.sh"
+          "path": ".modash-fixtures/child-shell-target.sh"
         },
         {
           "source": "pacman/pattern-semantics-wrapper.sh",
-          "path": ".modashc-fixtures/pattern-semantics-wrapper.sh"
+          "path": ".modash-fixtures/pattern-semantics-wrapper.sh"
         },
         {
           "source": "pacman/pattern-fixtures/core.sh",
-          "path": ".modashc-fixtures/pattern-fixtures/core.sh"
+          "path": ".modash-fixtures/pattern-fixtures/core.sh"
         },
         {
           "source": "pacman/pattern-fixtures/extra.sh",
-          "path": ".modashc-fixtures/pattern-fixtures/extra.sh"
+          "path": ".modash-fixtures/pattern-fixtures/extra.sh"
         },
         {
           "source": "pacman/pattern-fixtures/skip.sh",
-          "path": ".modashc-fixtures/pattern-fixtures/skip.sh"
+          "path": ".modash-fixtures/pattern-fixtures/skip.sh"
         },
         {
           "source": "pacman/pattern-fixtures/case.sh",
-          "path": ".modashc-fixtures/pattern-fixtures/case.sh"
+          "path": ".modash-fixtures/pattern-fixtures/case.sh"
         },
         {
           "source": "pacman/pattern-fixtures/predicate.sh",
-          "path": ".modashc-fixtures/pattern-fixtures/predicate.sh"
+          "path": ".modash-fixtures/pattern-fixtures/predicate.sh"
         },
         {
           "source": "pacman/pattern-fixtures/guard.sh",
-          "path": ".modashc-fixtures/pattern-fixtures/guard.sh"
+          "path": ".modash-fixtures/pattern-fixtures/guard.sh"
         }
       ],
       "entrypoints": [
@@ -293,7 +293,7 @@
           }
         },
         {
-          "path": ".modashc-fixtures/source-safe-wrapper.sh",
+          "path": ".modash-fixtures/source-safe-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -304,11 +304,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/source-safe-args-wrapper.sh",
+          "path": ".modash-fixtures/source-safe-args-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -319,11 +319,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/glob-args-wrapper.sh",
+          "path": ".modash-fixtures/glob-args-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -334,11 +334,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/runtime-state-wrapper.sh",
+          "path": ".modash-fixtures/runtime-state-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -349,11 +349,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/runtime-cwd-wrapper.sh",
+          "path": ".modash-fixtures/runtime-cwd-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -364,11 +364,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/runtime-return-wrapper.sh",
+          "path": ".modash-fixtures/runtime-return-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -379,11 +379,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/runtime-short-circuit-wrapper.sh",
+          "path": ".modash-fixtures/runtime-short-circuit-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -394,11 +394,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/runtime-positionals-wrapper.sh",
+          "path": ".modash-fixtures/runtime-positionals-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -409,11 +409,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/source-frame-wrapper.sh",
+          "path": ".modash-fixtures/source-frame-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -424,11 +424,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/child-shell-wrapper.sh",
+          "path": ".modash-fixtures/child-shell-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -439,11 +439,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/runtime-guarded-if-wrapper.sh",
+          "path": ".modash-fixtures/runtime-guarded-if-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -454,11 +454,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/runtime-guarded-case-wrapper.sh",
+          "path": ".modash-fixtures/runtime-guarded-case-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -469,11 +469,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/case-semantics-wrapper.sh",
+          "path": ".modash-fixtures/case-semantics-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -484,11 +484,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/compound-source-wrapper.sh",
+          "path": ".modash-fixtures/compound-source-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -499,11 +499,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/compound-fallback-wrapper.sh",
+          "path": ".modash-fixtures/compound-fallback-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -514,11 +514,11 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         },
         {
-          "path": ".modashc-fixtures/pattern-semantics-wrapper.sh",
+          "path": ".modash-fixtures/pattern-semantics-wrapper.sh",
           "modes": {
             "context": {
               "expected": "success"
@@ -529,7 +529,7 @@
           },
           "runtime": {
             "expected": "match",
-            "cwd": ".modashc-fixtures"
+            "cwd": ".modash-fixtures"
           }
         }
       ]

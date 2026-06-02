@@ -9,8 +9,8 @@ TEST_DIR = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# Path to `modashc.py`
-COMPILE_SCRIPT = str(REPO_ROOT / "modashc.py")
+# Path to `modash.py`
+COMPILE_SCRIPT = str(REPO_ROOT / "modash.py")
 
 ENTRY_POINT = str(TEST_DIR / "sample_dir" / "script_main.sh")
 
@@ -24,7 +24,7 @@ class TestCompile(unittest.TestCase):
 
             self.assertEqual(first=compile_result.returncode,
                              second=0,
-                             msg=f"Error compiling output to '{output_file}' using `modashc.py`\n"
+                             msg=f"Error compiling output to '{output_file}' using `modash.py`\n"
                                  f"Error: {compile_result.stdout}")
             self.assertTrue(output_file.exists(), "Output file was not created")
 
@@ -36,9 +36,9 @@ class TestCompile(unittest.TestCase):
 
         expected_output = (
             "This is the last dependency: script6.sh in dir1\n"
-            "This directory contains the compiled outputs used by the `modashc` test suite.\n"
+            "This directory contains the compiled outputs used by the `modash` test suite.\n"
             "This is the last dependency: script6.sh in dir1\n"
-            "This directory contains the compiled outputs used by the `modashc` test suite.\n"
+            "This directory contains the compiled outputs used by the `modash` test suite.\n"
             "This is script5.sh in the root directory\n"
             "This is script4.sh in the root directory\n"
             "This is script3.sh in 'dir with spaces'\n"

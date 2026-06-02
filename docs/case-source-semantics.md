@@ -150,8 +150,8 @@ Acceptance:
 Required before merging implementation work:
 
 - `python -m unittest -v`
-- `MODASHC_REALWORLD=1` pinned corpus
-- `MODASHC_REALWORLD=1 MODASHC_REALWORLD_RUNTIME=1` runtime parity probes
+- `MODASH_REALWORLD=1` pinned corpus
+- `MODASH_REALWORLD=1 MODASH_REALWORLD_RUNTIME=1` runtime parity probes
 - executable artifact scan for live unresolved source commands
 - manual/LLM spot-check of promoted real-world executable and context outputs
 

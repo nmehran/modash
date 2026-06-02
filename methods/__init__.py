@@ -1,1 +1,1 @@
-"""modashc implementation package."""
+"""modash implementation package."""

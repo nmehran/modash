@@ -158,8 +158,8 @@ Acceptance:
 ## Done Definition
 
 - `python -m unittest -v` passes.
-- `MODASHC_REALWORLD=1` pinned corpus tests pass.
-- `MODASHC_REALWORLD=1 MODASHC_REALWORLD_RUNTIME=1` runtime parity probes pass.
+- `MODASH_REALWORLD=1` pinned corpus tests pass.
+- `MODASH_REALWORLD=1 MODASH_REALWORLD_RUNTIME=1` runtime parity probes pass.
 - executable artifact scan reports zero live unresolved source commands.
 - generated real-world artifacts receive the manual/LLM spot-check pass.
 - `git diff --check` passes.

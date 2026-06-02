@@ -6,14 +6,14 @@ Runtime source discovery and supplement replay release.
 
 ### Added
 
-- Explicit `modashc.py trace` workflow that executes a target Bash script under
+- Explicit `modash.py trace` workflow that executes a target Bash script under
   controlled source tracing and writes reviewed observation JSON.
 - Runtime source observation schema with validation for entrypoint, cwd, argv,
   Bash/trace metadata, environment policy, source call sites, resolved paths,
   source arguments, and source status.
 - Bounded trace execution with `--timeout`, stable timeout diagnostics, and
   fail-closed behavior before writing observations on timeout.
-- `modashc.py supplement` workflow that converts reviewed observations into
+- `modash.py supplement` workflow that converts reviewed observations into
   declarative source supplement candidates.
 - Observation-to-supplement inference for exact variable-prefix source paths and
   makepkg-style helper source calls such as `source_safe() { source "$@"; }`.
@@ -23,6 +23,8 @@ Runtime source discovery and supplement replay release.
 
 ### Changed
 
+- Renamed the project and CLI to `modash` before the first public package
+  release.
 - Documented the three-step runtime workflow: observe, review/generate
   supplement, then compile deterministically with `--source-supplement`.
 - Promoted runtime discovery docs from north-star planning into implemented
@@ -87,7 +89,7 @@ Static Bash parity hardening and real-world validation release.
 
 ### Notes
 
-- `modashc` still resolves dependencies without executing shell code.
+- `modash` still resolves dependencies without executing shell code.
 - Xtrace/runtime source discovery and supplement generation remain future work.
 - Recursive or runtime-dynamic source-bearing dispatch and unsupported shell
   grammar remain fail-closed.
@@ -113,7 +115,7 @@ Initial source-effect IR compiler baseline.
 
 ### Notes
 
-- `modashc` resolves dependencies without executing shell code.
+- `modash` resolves dependencies without executing shell code.
 - Context mode is readable-first and not a runtime parity mode.
 - Executable mode is parity-first for the documented supported subset.
 - Remaining practical source-resolution gaps are tracked in

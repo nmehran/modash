@@ -1,6 +1,6 @@
-# modashc
+# modash
 
-`modashc` merges Bash script projects into a single output file. It has two
+`modash` merges Bash script projects into a single output file. It has two
 first-class output modes:
 
 - **Context mode**: the default readable output for human and LLM review.
@@ -18,7 +18,7 @@ source observation artifact for review.
 Context mode is the default:
 
 ```sh
-python modashc.py scripts/main.sh merged-context.sh
+python modash.py scripts/main.sh merged-context.sh
 ```
 
 It renders one section per discovered file, dependency-first with the entrypoint
@@ -26,7 +26,7 @@ last. File bodies are deduplicated, original source lines are preserved, and
 resolved relationships are annotated directly above the source site:
 
 ```bash
-# modashc: source ./dep.sh -> dep.sh
+# modash: source ./dep.sh -> dep.sh
 source ./dep.sh
 ```
 
@@ -39,7 +39,7 @@ parity mode.
 Executable mode must be requested explicitly:
 
 ```sh
-python modashc.py scripts/main.sh merged-runnable.sh --mode executable
+python modash.py scripts/main.sh merged-runnable.sh --mode executable
 ```
 
 It inlines sourced files at their source sites so parent variables, `set` state,
@@ -49,7 +49,7 @@ safe to lower, compilation fails before writing or overwriting the output file.
 
 ## Supported Source Resolution
 
-`modashc` supports static source paths, exact variables, safe path command
+`modash` supports static source paths, exact variables, safe path command
 substitutions, safe file/command producers, arrays, finite loops, modeled read
 loops, branch-aware `if` and `case` source sites, and bounded source-bearing
 function calls.
@@ -67,9 +67,9 @@ checked against real shell projects as well as synthetic regressions.
 ## Usage
 
 ```sh
-python modashc.py <entrypoint> <output> [--mode context|executable] [--source-supplement FILE]
-python modashc.py trace <entrypoint> [--cwd DIR] [--env KEY=VALUE] [--output FILE] [--timeout SECONDS] [--] [args...]
-python modashc.py supplement <entrypoint> --from-observation observation.json --output source-supplement.json
+python modash.py <entrypoint> <output> [--mode context|executable] [--source-supplement FILE]
+python modash.py trace <entrypoint> [--cwd DIR] [--env KEY=VALUE] [--output FILE] [--timeout SECONDS] [--] [args...]
+python modash.py supplement <entrypoint> --from-observation observation.json --output source-supplement.json
 ```
 
 Arguments:
@@ -87,7 +87,7 @@ Trace command:
 - `--cwd`: optional working directory for the target script.
 - `--env`: environment overlay for the target script. May be repeated.
 - `--output`: exact observation JSON path. By default observations are written
-  under `.modashc/observations/`.
+  under `.modash/observations/`.
 - `--timeout`: maximum seconds to let the traced script run. Default: `30`.
 - `[args...]`: script arguments after `--`.
 
@@ -110,15 +110,15 @@ using them with `--source-supplement`.
 Examples:
 
 ```sh
-python modashc.py test/sample_dir/script_main.sh sample-context.sh
-python modashc.py test/sample_dir/script_main.sh sample-runnable.sh --mode executable
-python modashc.py trace test/sample_dir/script_main.sh --output observation.json
-python modashc.py supplement test/sample_dir/script_main.sh --from-observation observation.json --output source-supplement.json
+python modash.py test/sample_dir/script_main.sh sample-context.sh
+python modash.py test/sample_dir/script_main.sh sample-runnable.sh --mode executable
+python modash.py trace test/sample_dir/script_main.sh --output observation.json
+python modash.py supplement test/sample_dir/script_main.sh --from-observation observation.json --output source-supplement.json
 ```
 
 ## Architecture
 
-- `modashc.py`: CLI entrypoint.
+- `modash.py`: CLI entrypoint.
 - `methods/compile.py`: context and executable renderers.
 - `methods/runtime_source_trace.py`: explicit runtime source trace runner and
   trace parser.
@@ -138,7 +138,7 @@ python modashc.py supplement test/sample_dir/script_main.sh --from-observation o
   tests.
 
 The scripts under `setup/` are optional operational helpers for running commands
-through a restricted `modashc` user. They are not part of dependency discovery
+through a restricted `modash` user. They are not part of dependency discovery
 or compilation.
 
 ## Development
@@ -147,9 +147,9 @@ Run the full local verification suite:
 
 ```sh
 python -m unittest discover -s ./ -p 'test_*.py' -v
-python -m py_compile modashc.py methods/*.py methods/regex/*.py test/*.py
-bash -n setup/modashc_shell.sh setup/run_modashc_shell.sh
-shellcheck setup/modashc_shell.sh setup/run_modashc_shell.sh
+python -m py_compile modash.py methods/*.py methods/regex/*.py test/*.py
+bash -n setup/modash_shell.sh setup/run_modash_shell.sh
+shellcheck setup/modash_shell.sh setup/run_modash_shell.sh
 git diff --check
 ```
 
@@ -158,8 +158,8 @@ Design notes live in [docs](docs/README.md).
 ## Installation
 
 ```sh
-git clone https://github.com/nmehran/modashc.git
-cd modashc
+git clone https://github.com/nmehran/modash.git
+cd modash
 ```
 
 No external Python package dependencies are required for the current test suite.

@@ -1,2 +1,2 @@
-MODASHC_CWD_NESTED="${PWD##*/}"
-printf 'nested:%s\n' "$MODASHC_CWD_NESTED"
+MODASH_CWD_NESTED="${PWD##*/}"
+printf 'nested:%s\n' "$MODASH_CWD_NESTED"

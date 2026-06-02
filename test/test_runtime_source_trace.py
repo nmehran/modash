@@ -86,7 +86,7 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "after\n")
         self.assertIn("missing.sh", result.stderr)
-        self.assertNotIn("MODASHC_SOURCE_EVENT", result.stderr)
+        self.assertNotIn("MODASH_SOURCE_EVENT", result.stderr)
         self.assertEqual(len(result.observation.sources), 1)
         event = result.observation.sources[0]
         self.assertEqual(event.resolved_path, str(missing.resolve(strict=False)))

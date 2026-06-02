@@ -1,7 +1,7 @@
 # Project
 /test/outputs/*.sh
 /.realworld/
-/.modashc/
+/.modash/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -137,7 +137,7 @@ Expose tracing without changing compile behavior.
 CLI:
 
 ```sh
-modashc trace ENTRY [--cwd DIR] [--env KEY=VALUE ...] [--output FILE | --output-dir DIR] [--timeout SECONDS] [--] [ARGS...]
+modash trace ENTRY [--cwd DIR] [--env KEY=VALUE ...] [--output FILE | --output-dir DIR] [--timeout SECONDS] [--] [ARGS...]
 ```
 
 API:
@@ -151,7 +151,7 @@ Scope:
 
 - Add a trace command or equivalent CLI subcommand.
 - Add a Python API entry point.
-- Write observations under `.modashc/observations/<run-id>.json` by default.
+- Write observations under `.modash/observations/<run-id>.json` by default.
 - Allow an explicit output path or output directory.
 - Use a default timeout budget for target execution and allow callers to
   override it.
@@ -164,7 +164,7 @@ Acceptance:
 - CLI writes valid schema `1` observation JSON.
 - API returns the same structured data the CLI writes.
 - Missing entrypoint, timeout, and non-executable trace failures are explicit.
-- Normal `modashc` compile paths do not import or run tracing unless requested.
+- Normal `modash` compile paths do not import or run tracing unless requested.
 - Observation file names are deterministic enough for tests, or the tests can
   pass an explicit output path.
 

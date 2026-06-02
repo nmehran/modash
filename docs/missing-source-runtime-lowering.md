@@ -217,8 +217,8 @@ Acceptance:
 Required checks:
 
 - `python -m unittest -v`
-- `MODASHC_REALWORLD=1` pinned corpus tests
-- `MODASHC_REALWORLD=1 MODASHC_REALWORLD_RUNTIME=1` runtime parity probes
+- `MODASH_REALWORLD=1` pinned corpus tests
+- `MODASH_REALWORLD=1 MODASH_REALWORLD_RUNTIME=1` runtime parity probes
 - `git diff --check`
 
 ## Deferred After This Iteration

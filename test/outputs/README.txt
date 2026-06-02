@@ -1,1 +1,1 @@
-This directory contains the compiled outputs used by the `modashc` test suite.
+This directory contains the compiled outputs used by the `modash` test suite.

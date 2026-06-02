@@ -79,7 +79,7 @@ Expose supplement generation as an explicit workflow step.
 CLI:
 
 ```sh
-python modashc.py supplement ENTRY --from-observation observation.json --output source-supplement.json
+python modash.py supplement ENTRY --from-observation observation.json --output source-supplement.json
 ```
 
 API:
@@ -149,7 +149,7 @@ Deferred to later iterations:
 The iteration is complete when:
 
 - observation-to-supplement generation is implemented and tested
-- `modashc.py supplement` can write reviewed candidate JSON
+- `modash.py supplement` can write reviewed candidate JSON
 - generated supplements replay through existing executable compile
 - pacman/makepkg real-world smoke passes with retained observation and
   supplement artifacts

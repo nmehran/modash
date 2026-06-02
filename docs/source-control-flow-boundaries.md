@@ -133,8 +133,8 @@ promotion where applicable.
 Required checks:
 
 - `python -m unittest -v`
-- `MODASHC_REALWORLD=1` pinned corpus
-- `MODASHC_REALWORLD=1 MODASHC_REALWORLD_RUNTIME=1` runtime parity probes
+- `MODASH_REALWORLD=1` pinned corpus
+- `MODASH_REALWORLD=1 MODASH_REALWORLD_RUNTIME=1` runtime parity probes
 - generated executable artifact scan for live `source` commands
 - manual/LLM artifact spot-check for promoted real-world outputs
 
@@ -142,7 +142,7 @@ Expected real-world movement:
 
 - bash-completion `completions/cd` executable is promoted from unsupported to
   success because the previously blocking `shopt -q cdable_vars` condition is
-  source-free from modashc's dependency perspective.
+  source-free from modash's dependency perspective.
 - Add one controlled fixture for direct `if ! source ./dep.sh; then` before
   distilling this branch.
 - Keep top-level `bash_completion` timeouts as performance triage unless a
