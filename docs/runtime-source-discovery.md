@@ -229,6 +229,8 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - source arguments and failed source status
 - cwd-sensitive source resolution
 - makepkg-style helper calls such as `source_safe "$@"`
+- finite helper-local source path aliases such as
+  `local path=$1; shift; source "$path" "$@"`
 - child Bash process propagation and parent/child process provenance
 - persisted xtrace provenance linked to wrapper-observed source events
 - schema `6` source identities, file fingerprints, and stale observation

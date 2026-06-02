@@ -62,6 +62,13 @@ class _SupplementSourceEvent:
     arguments: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _FunctionSourceAlias:
+    function_name: str | None
+    has_first_positional_alias: bool = False
+    shifted_after_alias: bool = False
+
+
 def generate_source_supplement(entrypoint: str | os.PathLike, observation, *, validate_fingerprints=True):
     entrypoint_path = Path(entrypoint).resolve(strict=False)
     observation = _coerce_observation(observation)
@@ -112,11 +119,18 @@ def _generate_source_supplement_from_events(entrypoint_path: Path, source_events
     functions: dict[str, list[dict[str, list[str]]]] = {}
 
     for event in source_events:
-        source_word = _source_word_from_command(event.call_site_command)
-        if not source_word:
+        invocation = _source_invocation_from_command(event.call_site_command)
+        if invocation is None:
             continue
+        source_word, source_arg_words = invocation
+        alias = _function_source_alias(event.call_site_file, event.call_site_line, source_word)
+        helper_arguments = _helper_signature_arguments(event, source_word, source_arg_words, alias)
 
-        variable = _variable_candidate(source_word, event.resolved_path, entrypoint_directory)
+        variable = None if alias.has_first_positional_alias else _variable_candidate(
+            source_word,
+            event.resolved_path,
+            entrypoint_directory,
+        )
         if variable is not None:
             name, value = variable
             existing = variables.get(name)
@@ -127,17 +141,15 @@ def _generate_source_supplement_from_events(entrypoint_path: Path, source_events
                 )
             variables[name] = value
 
-        if _is_positional_source_word(source_word):
-            function_name = _enclosing_function_name(event.call_site_file, event.call_site_line)
-            if function_name:
-                arguments = [
-                    _review_path(event.resolved_path, entrypoint_directory),
-                    *event.arguments,
-                ]
-                functions.setdefault(function_name, [])
-                entry = {"arguments": arguments}
-                if entry not in functions[function_name]:
-                    functions[function_name].append(entry)
+        if alias.function_name and helper_arguments is not None:
+            arguments = [
+                _review_path(event.resolved_path, entrypoint_directory),
+                *helper_arguments,
+            ]
+            functions.setdefault(alias.function_name, [])
+            entry = {"arguments": arguments}
+            if entry not in functions[alias.function_name]:
+                functions[alias.function_name].append(entry)
 
     payload = {
         "version": SUPPLEMENT_VERSION,
@@ -218,6 +230,11 @@ def _ensure_observation_fingerprints_current(observation: RuntimeSourceObservati
 
 
 def _source_word_from_command(command: str):
+    invocation = _source_invocation_from_command(command)
+    return invocation[0] if invocation is not None else None
+
+
+def _source_invocation_from_command(command: str):
     try:
         words = parse_shell_words_preserving_quotes(command)
     except Exception:
@@ -227,7 +244,16 @@ def _source_word_from_command(command: str):
         command_name = strip_shell_word_quotes(_strip_shell_punctuation(word))
         if command_name not in SOURCE_COMMANDS:
             continue
-        return _clean_source_word(words[index + 1])
+        source_word = _clean_source_word(words[index + 1])
+        source_arguments = []
+        for argument in words[index + 2:]:
+            cleaned = _clean_source_word(argument)
+            if cleaned in {"then", "do", "else", "fi", "done", "}"}:
+                break
+            if cleaned in {"&&", "||", "|"}:
+                break
+            source_arguments.append(cleaned)
+        return source_word, tuple(source_arguments)
     return None
 
 
@@ -274,35 +300,167 @@ def _is_positional_source_word(source_word: str):
     return source_word in POSITIONAL_SOURCE_WORDS
 
 
+def _helper_signature_arguments(event: _SupplementSourceEvent, source_word: str, source_arg_words, alias: _FunctionSourceAlias):
+    if _is_positional_source_word(source_word):
+        return event.arguments
+
+    if not alias.has_first_positional_alias:
+        return None
+
+    if not source_arg_words:
+        return ()
+
+    if len(source_arg_words) == 1 and _is_variadic_positional_word(source_arg_words[0]):
+        if alias.shifted_after_alias:
+            return event.arguments
+        return None
+
+    if _are_direct_positional_argument_words(source_arg_words):
+        if len(source_arg_words) == len(event.arguments):
+            return event.arguments
+        return None
+
+    return None
+
+
+def _is_variadic_positional_word(word: str):
+    return word in {"$@", "${@}", "$*", "${*}"}
+
+
+def _are_direct_positional_argument_words(words):
+    expected = 2
+    for word in words:
+        if word not in {f"${expected}", f"${{{expected}}}"}:
+            return False
+        expected += 1
+    return bool(words)
+
+
+def _function_source_alias(path: str, line: int, source_word: str):
+    function_context = _enclosing_function_context(path, line)
+    function_name = function_context[0] if function_context is not None else None
+    variable_name = _exact_variable_reference_name(source_word)
+    if function_context is None or variable_name is None:
+        return _FunctionSourceAlias(function_name=function_name)
+
+    words = _function_words_before_source(function_context[1], source_word)
+    shifted = False
+    first_positional_aliases = set()
+    shifted_after_alias = False
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if word == "shift":
+            amount = words[index + 1] if index + 1 < len(words) and words[index + 1].isdigit() else "1"
+            index += 2 if amount != "1" or (index + 1 < len(words) and words[index + 1].isdigit()) else 1
+            if amount != "1":
+                first_positional_aliases.discard(variable_name)
+                shifted_after_alias = False
+                shifted = True
+                continue
+            shifted = True
+            if variable_name in first_positional_aliases:
+                shifted_after_alias = True
+            continue
+
+        assignment = _assignment_from_word(word)
+        index += 1
+        if assignment is None:
+            continue
+        name, value = assignment
+        if name != variable_name:
+            continue
+        if not shifted and _is_first_positional_word(value):
+            first_positional_aliases.add(name)
+            shifted_after_alias = False
+        else:
+            first_positional_aliases.discard(name)
+            shifted_after_alias = False
+
+    return _FunctionSourceAlias(
+        function_name=function_name,
+        has_first_positional_alias=variable_name in first_positional_aliases,
+        shifted_after_alias=shifted_after_alias,
+    )
+
+
+def _exact_variable_reference_name(word: str):
+    if re.fullmatch(r'\$[a-zA-Z_]\w*', word):
+        return word[1:]
+    match = re.fullmatch(r'\$\{([a-zA-Z_]\w*)\}', word)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _is_first_positional_word(word: str):
+    return word in {"$1", "${1}"}
+
+
+def _assignment_from_word(word: str):
+    if "=" not in word:
+        return None
+    name, value = word.split("=", 1)
+    if not re.fullmatch(r'[a-zA-Z_]\w*', name):
+        return None
+    return name, value
+
+
+def _function_words_before_source(function_lines, source_word: str):
+    words = []
+    for text in function_lines:
+        try:
+            parsed = parse_shell_words_preserving_quotes(text)
+        except Exception:
+            continue
+        for word in parsed:
+            cleaned = _clean_source_word(word)
+            if cleaned in SOURCE_COMMANDS:
+                return words
+            if cleaned == source_word:
+                return words
+            words.append(cleaned)
+    return words
+
+
 def _enclosing_function_name(path: str, line: int):
+    context = _enclosing_function_context(path, line)
+    return context[0] if context is not None else None
+
+
+def _enclosing_function_context(path: str, line: int):
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
-    except OSError:
+    except (OSError, UnicodeError):
         return None
     if line < 1 or line > len(lines):
         return None
 
     active_name = None
     active_depth = 0
+    function_start = 0
     for line_number, text in enumerate(lines, start=1):
         if active_name is None:
             match = FUNCTION_DEFINITION_PATTERN.match(text)
             if match:
                 active_name = match.group(1)
+                function_start = line_number
                 active_depth = _brace_delta(text)
                 if line_number == line:
-                    return active_name
+                    return active_name, (text,)
                 if active_depth <= 0:
                     active_name = None
                     active_depth = 0
+                    function_start = 0
         else:
             active_depth += _brace_delta(text)
 
         if active_name is not None and line_number == line:
-            return active_name
+            return active_name, tuple(lines[function_start - 1:line_number])
         if active_name is not None and active_depth <= 0:
             active_name = None
             active_depth = 0
+            function_start = 0
     return None
 
 

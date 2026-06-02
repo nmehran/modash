@@ -18,6 +18,8 @@
 - Added explicit `modash observe-compile`, which traces a target run, writes
   observation, graph, and graph review artifacts, then compiles from the newly
   observed graph.
+- Trusted graph supplement generation now recognizes finite helper-local
+  source path aliases such as `local path=$1; shift; source "$path" "$@"`.
 
 ### Changed
 

@@ -107,6 +107,9 @@ by default.
 
 Generated supplements are exact data, not shell code. Review the graph,
 supplement, and report before compiling with `--source-supplement`.
+Generation covers finite observed helper shapes, including quoted `$@` sources
+and helper-local first-argument aliases such as:
+`local path=$1; shift; source "$path" "$@"`.
 Observation reports can warn about unobserved source-capable sites, but one
 traced run is not proof of every branch.
 

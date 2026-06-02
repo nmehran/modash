@@ -19,9 +19,11 @@ from methods.runtime_source_observations import (  # noqa: E402
 from methods.runtime_source_supplements import (  # noqa: E402
     RuntimeSupplementGenerationError,
     generate_source_supplement,
+    generate_source_supplement_from_graph,
     load_source_supplement_from_payload,
     write_generated_supplement,
 )
+from methods.runtime_source_graph import build_observed_source_graph  # noqa: E402
 from test.support import ScriptProject  # noqa: E402
 
 
@@ -89,6 +91,107 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
                     "arguments": ["dep.sh"],
                 },
             ],
+        })
+
+    def test_generates_function_signature_from_first_positional_alias_and_shifted_variadic_args(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_alias "$TARGET" "arg one" arg-two\n')
+            project.write(
+                "helpers.sh",
+                "\n".join([
+                    "source_alias() {",
+                    "  local source_path=$1",
+                    "  shift",
+                    '  source "$source_path" "$@"',
+                    "}",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", 'echo "dep:$1:$2"\n')
+            observation = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))}).observation
+            graph = build_observed_source_graph(entrypoint, observation)
+
+            supplement = generate_source_supplement_from_graph(entrypoint, graph)
+
+        self.assertEqual(supplement.to_dict(), {
+            "version": 1,
+            "variables": {},
+            "functions": {
+                "source_alias": [
+                    {
+                        "arguments": ["dep.sh", "arg one", "arg-two"],
+                    },
+                ],
+            },
+        })
+
+    def test_generates_function_signature_from_one_line_first_positional_alias(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_alias "$TARGET" extra\n')
+            project.write("helpers.sh", 'source_alias() { local path=$1; shift; source "$path" "$@"; }\n')
+            project.write("dep.sh", "echo dep\n")
+            observation = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))}).observation
+
+            supplement = generate_source_supplement(entrypoint, observation)
+
+        self.assertEqual(supplement.to_dict()["functions"], {
+            "source_alias": [
+                {
+                    "arguments": ["dep.sh", "extra"],
+                },
+            ],
+        })
+        self.assertEqual(supplement.to_dict()["variables"], {})
+
+    def test_generates_function_signature_from_first_positional_alias_and_direct_positional_args(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_alias "$TARGET" one two\n')
+            project.write(
+                "helpers.sh",
+                "\n".join([
+                    "source_alias() {",
+                    "  local path=$1",
+                    '  source "$path" "$2" "$3"',
+                    "}",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", 'echo "dep:$1:$2"\n')
+            observation = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))}).observation
+
+            supplement = generate_source_supplement(entrypoint, observation)
+
+        self.assertEqual(supplement.to_dict()["functions"], {
+            "source_alias": [
+                {
+                    "arguments": ["dep.sh", "one", "two"],
+                },
+            ],
+        })
+        self.assertEqual(supplement.to_dict()["variables"], {})
+
+    def test_does_not_generate_variable_or_function_for_local_alias_with_literal_source_args(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_alias "$TARGET"\n')
+            project.write(
+                "helpers.sh",
+                "\n".join([
+                    "source_alias() {",
+                    "  local path=$1",
+                    '  source "$path" literal',
+                    "}",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", "echo dep\n")
+            observation = project.trace("main.sh", env={"TARGET": str(project.path("dep.sh"))}).observation
+
+            supplement = generate_source_supplement(entrypoint, observation)
+
+        self.assertEqual(supplement.to_dict(), {
+            "version": 1,
+            "variables": {},
+            "functions": {},
         })
 
     def test_generated_supplement_round_trips_through_existing_loader(self):
