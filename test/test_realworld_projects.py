@@ -70,6 +70,10 @@ def graph_enabled():
     return os.environ.get("MODASH_REALWORLD_GRAPH") == "1" or supplement_enabled()
 
 
+def observe_compile_enabled():
+    return os.environ.get("MODASH_REALWORLD_OBSERVE_COMPILE") == "1" or graph_enabled()
+
+
 def report_enabled():
     return os.environ.get("MODASH_REALWORLD_REPORT") == "1"
 
@@ -952,6 +956,30 @@ def graph_replay_output_path(project, entrypoint_path):
     return output_path.with_name(f"{output_path.name}.graph-replay.sh")
 
 
+def observe_compile_observation_artifact_path(project, entrypoint_path):
+    relative_path = Path(entrypoint_path)
+    output_path = OUTPUTS_DIR / pinned_project_key(project) / "observe-compile-observation" / relative_path
+    return output_path.with_name(f"{output_path.name}.observe-compile.trace.json")
+
+
+def observe_compile_graph_artifact_path(project, entrypoint_path):
+    relative_path = Path(entrypoint_path)
+    output_path = OUTPUTS_DIR / pinned_project_key(project) / "observe-compile-graph" / relative_path
+    return output_path.with_name(f"{output_path.name}.observe-compile.runtime-graph.json")
+
+
+def observe_compile_report_artifact_path(project, entrypoint_path):
+    relative_path = Path(entrypoint_path)
+    output_path = OUTPUTS_DIR / pinned_project_key(project) / "observe-compile-report" / relative_path
+    return output_path.with_name(f"{output_path.name}.observe-compile.runtime-graph.txt")
+
+
+def observe_compile_output_path(project, entrypoint_path):
+    relative_path = Path(entrypoint_path)
+    output_path = OUTPUTS_DIR / pinned_project_key(project) / "observe-compile" / relative_path
+    return output_path.with_name(f"{output_path.name}.observe-compile.sh")
+
+
 def clear_project_outputs(project):
     shutil.rmtree(OUTPUTS_DIR / pinned_project_key(project), ignore_errors=True)
 
@@ -1267,6 +1295,93 @@ def run_runtime_graph_replay_probe(
         "trace_returncode": trace_result.returncode,
         "trace_stdout": trace_result.stdout,
         "trace_stderr": trace_result.stderr,
+        "compiled": compiled,
+        "observation_path": str(observation_path),
+        "runtime_graph": str(graph_path),
+        "graph_review_report": str(graph_report_path),
+        "output_path": str(compiled_path),
+    }
+
+
+def run_runtime_observe_compile_probe(
+    entrypoint_path,
+    cwd,
+    trace_environment,
+    timeout_seconds,
+    observation_path,
+    graph_path,
+    graph_report_path,
+    compiled_path,
+):
+    from methods.runtime_source_trace import RuntimeSourceTraceError
+    from modash import observe_compile_main
+
+    started_at = time.perf_counter()
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            trace_returncode = observe_compile_main(
+                str(entrypoint_path),
+                str(compiled_path),
+                graph_output=str(graph_path),
+                report=str(graph_report_path),
+                observation_output=str(observation_path),
+                cwd=str(cwd),
+                env=trace_environment,
+                timeout=timeout_seconds,
+            )
+    except RuntimeSourceTraceError as exc:
+        if exc.code == "runtime.trace.timeout":
+            return {
+                "status": "timeout",
+                "duration_seconds": elapsed_seconds(started_at),
+                "timeout_seconds": timeout_seconds,
+                "exception": {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            }
+        return {
+            "status": "error",
+            "duration_seconds": elapsed_seconds(started_at),
+            "exception": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "duration_seconds": elapsed_seconds(started_at),
+            "exception": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+
+    compiled = run_runtime_command(compiled_path, cwd, {}, timeout_seconds)
+    if compiled["status"] == "timeout":
+        status = "timeout"
+    else:
+        matched = (
+            trace_returncode == compiled["returncode"]
+            and stdout.getvalue() == compiled["stdout"]
+        )
+        status = "match" if matched else "mismatch"
+
+    try:
+        graph_edges = len(json.loads(graph_path.read_text(encoding="utf-8"))["edges"])
+    except Exception:
+        graph_edges = None
+
+    return {
+        "status": status,
+        "duration_seconds": elapsed_seconds(started_at),
+        "graph_edges": graph_edges,
+        "trace_returncode": trace_returncode,
+        "trace_stdout": stdout.getvalue(),
+        "trace_stderr": stderr.getvalue(),
         "compiled": compiled,
         "observation_path": str(observation_path),
         "runtime_graph": str(graph_path),
@@ -1938,6 +2053,108 @@ class RealWorldProjectTestCase(unittest.TestCase):
         if failures:
             self.fail(
                 "runtime graph replay failures:\n"
+                + "\n".join(record_summary(record) + record_details(record) for record in failures)
+            )
+
+    @unittest.skipUnless(
+        observe_compile_enabled(),
+        "set MODASH_REALWORLD_OBSERVE_COMPILE=1 or MODASH_REALWORLD_GRAPH=1 to run observe-compile probes",
+    )
+    def test_pinned_runtime_observe_compile_probe(self):
+        manifest = load_manifest()
+        timeout_seconds = mode_timeout_seconds()
+        setup_records = []
+        records = []
+        failures = []
+
+        for project in manifest["projects"]:
+            root, setup_status, reason = ensure_pinned_project(project)
+            setup_record = {
+                "project": project["name"],
+                "version": project["version"],
+                "status": setup_status,
+            }
+            if reason:
+                setup_record["reason"] = reason
+            setup_records.append(setup_record)
+            if root is None or project["name"] != "pacman":
+                continue
+
+            trace_environment = project_environment(project, root)
+            replay_cases = (
+                (".modash-fixtures/source-safe-wrapper.sh", 2),
+                (".modash-fixtures/source-safe-args-wrapper.sh", 2),
+                (".modash-fixtures/child-bash-trace-wrapper.sh", 1),
+                (".modash-fixtures/coverage-warning-wrapper.sh", 1),
+            )
+            for entrypoint_path_text, minimum_events in replay_cases:
+                entrypoint = next(
+                    (
+                        candidate
+                        for candidate in project["entrypoints"]
+                        if candidate["path"] == entrypoint_path_text
+                    ),
+                    None,
+                )
+                if entrypoint is None:
+                    continue
+
+                entrypoint_path = root / entrypoint["path"]
+                observation_path = observe_compile_observation_artifact_path(project, entrypoint["path"])
+                graph_path = observe_compile_graph_artifact_path(project, entrypoint["path"])
+                graph_report_path = observe_compile_report_artifact_path(project, entrypoint["path"])
+                compiled_path = observe_compile_output_path(project, entrypoint["path"])
+                for artifact in (observation_path, graph_path, graph_report_path, compiled_path):
+                    remove_output_artifact(artifact)
+
+                probe = run_runtime_observe_compile_probe(
+                    entrypoint_path,
+                    runtime_cwd(root, entrypoint["runtime"]),
+                    trace_environment,
+                    timeout_seconds,
+                    observation_path,
+                    graph_path,
+                    graph_report_path,
+                    compiled_path,
+                )
+                record = normalize_record_paths({
+                    "project": project["name"],
+                    "version": project["version"],
+                    "kind": "runtime-observe-compile",
+                    "entrypoint": str(entrypoint_path),
+                    **probe,
+                }, root)
+                for key in ("output_path", "observation_path", "runtime_graph", "graph_review_report"):
+                    if record.get(key):
+                        record[key] = Path(record[key]).relative_to(REPO_ROOT).as_posix()
+                record["expected_status"] = "match"
+                record["matched_expectation"] = (
+                    record["status"] == "match"
+                    and isinstance(record.get("graph_edges"), int)
+                    and record["graph_edges"] >= minimum_events
+                    and record.get("observation_path") is not None
+                    and record.get("runtime_graph") is not None
+                    and record.get("graph_review_report") is not None
+                    and record.get("output_path") is not None
+                )
+                records.append(record)
+                if not record["matched_expectation"]:
+                    failures.append(record)
+
+        write_result_file("runtime-observe-compile.json", {
+            "suite": "runtime-observe-compile",
+            "timeout_seconds": timeout_seconds,
+            "observe_compile_enabled": observe_compile_enabled(),
+            "summary": result_summary(records),
+            "setup": setup_records,
+            "records": records,
+        })
+
+        if not records:
+            self.skipTest("no observe-compile project is cached")
+        if failures:
+            self.fail(
+                "runtime observe-compile failures:\n"
                 + "\n".join(record_summary(record) + record_details(record) for record in failures)
             )
 

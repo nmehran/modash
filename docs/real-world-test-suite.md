@@ -77,12 +77,15 @@ MODASH_REALWORLD_FETCH=1
 MODASH_REALWORLD_RUNTIME=1
 MODASH_REALWORLD_TRACE=1
 MODASH_REALWORLD_SUPPLEMENT=1
+MODASH_REALWORLD_GRAPH=1
+MODASH_REALWORLD_OBSERVE_COMPILE=1
 MODASH_REALWORLD_REPORT=1
 ```
 
 Timeout control, fetching, runtime parity checks, runtime trace smoke probes,
-runtime supplement replay probes, and human-readable report output are separate
-operations so a normal internal corpus run stays deterministic.
+runtime supplement replay probes, trusted graph replay, explicit
+observe-compile probes, and human-readable report output are separate operations
+so a normal internal corpus run stays deterministic.
 
 The opt-in real-world gates share ignored `.realworld/` cache and output
 artifacts. Run them serially when using them as a release check.
@@ -310,6 +313,12 @@ through `compile-observed`, and compares the compiled output with the traced
 run. Result records include graph edge counts plus paths to the observation,
 runtime graph, graph review report, and compiled replay artifact.
 
+Explicit observe-compile probes are promoted when
+`MODASH_REALWORLD_OBSERVE_COMPILE=1` or `MODASH_REALWORLD_GRAPH=1` is set. This
+path runs the public one-shot workflow, retains the observation, trusted graph,
+graph review report, and compiled artifact, then compares the compiled output
+with the observed run.
+
 Most real distro scripts should remain compile/classification fixtures, not
 runtime fixtures.
 
@@ -511,5 +520,6 @@ wrapped-source positional mutation fixtures, multiple safe runtime parity
 probes, explicit source-argument frame restoration fixtures, opt-in
 human-readable reports, and source-relevant control-flow boundary promotion are
 also implemented. Runtime-guarded static source fixtures are implemented for
-guarded `if` and `case` source lowering; broader runtime discovery and dynamic
-tracing remain deferred to the north-star workflow.
+guarded `if` and `case` source lowering; trusted graph replay and explicit
+observe-compile probes are implemented for controlled pacman fixtures. Broader
+recursive/runtime-dynamic dispatch remains deferred to future runtime work.
