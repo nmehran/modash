@@ -123,6 +123,10 @@ VALID_SET_OPTIONS = frozenset({
     'vi',
     'xtrace',
 })
+CONTROL_SOURCE_CONDITION_PATTERN = re.compile(
+    r'^(?:if|elif|while|until)\s+(.+?)(?:\s*;\s*(?:then|do)\s*)?$',
+    re.S,
+)
 SHOPT_SHELL_OPTIONS = frozenset({
     'lastpipe',
 })
@@ -529,10 +533,26 @@ class SourceEvaluator:
             key = (
                 Path(override.path).resolve(strict=False),
                 override.line,
-                override.command.strip(),
+                SourceEvaluator._source_override_command_key(override.command),
             )
             overrides.setdefault(key, []).append(override)
         return {key: tuple(values) for key, values in overrides.items()}
+
+    @staticmethod
+    def _source_override_command_key(command: str):
+        command = command.strip()
+        match = CONTROL_SOURCE_CONDITION_PATTERN.fullmatch(command)
+        if match is None:
+            return command
+        try:
+            atoms = SourceEvaluator._source_logical_condition_atoms_from_text(match.group(1).strip())
+        except UnsupportedSourceError:
+            return command
+        source_atoms = [atom for atom in atoms if atom.source_command is not None]
+        if len(source_atoms) != 1:
+            return command
+        atom = source_atoms[0]
+        return f"{atom.source_command} {atom.source_expression}"
 
     def _evaluate_file(
         self,
@@ -3552,15 +3572,19 @@ class SourceEvaluator:
         return status
 
     def _source_logical_condition_atoms(self, condition: str):
+        return self._source_logical_condition_atoms_from_text(condition)
+
+    @staticmethod
+    def _source_logical_condition_atoms_from_text(condition: str):
         if '$(' in condition or '`' in condition:
             raise UnsupportedSourceError(f"unsupported dynamic if condition: {condition}")
 
-        segments = self._split_logical_condition_segments(condition)
+        segments = SourceEvaluator._split_logical_condition_segments(condition)
         atoms = []
         for separator, text, offset in segments:
-            atom = self._parse_logical_condition_atom(text, offset, separator, condition)
+            atom = SourceEvaluator._parse_logical_condition_atom(text, offset, separator, condition)
             atoms.append(atom)
-        return atoms
+        return tuple(atoms)
 
     @staticmethod
     def _split_logical_condition_segments(condition: str):

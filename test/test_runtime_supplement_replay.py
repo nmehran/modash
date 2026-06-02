@@ -274,6 +274,35 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "dep:loaded\nchild:loaded\nparent:unset\n")
 
+    def test_compile_observed_replays_source_condition_helper_edge(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    "source_safe() {",
+                    '  if ! source "$@"; then',
+                    "    return 1",
+                    "  fi",
+                    "}",
+                    'source_safe "$MODASH_TEST_TARGET" "arg one"',
+                    'printf "main:%s\\n" "$VALUE"',
+                    "",
+                ]),
+            )
+            dep = project.write("dep.sh", 'VALUE="$1"\nprintf "dep:%s\\n" "$VALUE"\n')
+            trace = project.trace("main.sh", env={"MODASH_TEST_TARGET": str(dep)})
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            self.assertEqual(graph["edges"][0]["call_site"]["command"], 'if ! source "$@"; then')
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled, env={"MODASH_TEST_TARGET": str(dep)})
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "dep:arg one\nmain:arg one\n")
+
     def test_child_bash_c_graph_replay_preserves_child_positionals_and_zero(self):
         with ScriptProject() as project:
             entrypoint = project.write(

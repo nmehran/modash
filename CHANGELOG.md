@@ -29,9 +29,9 @@
 
 ### Validation
 
-- Full unit suite: `495` tests, `8` skipped.
+- Full unit suite: `510` tests, `8` skipped.
 - Opt-in real-world suite with runtime trace, supplement replay, runtime
-  parity, trusted graph replay, and observe-compile gates: `13` tests, `1`
+  parity, trusted graph replay, and observe-compile gates: `15` tests, `1`
   skipped, covering `62` pinned compile expectations, `10` trusted graph replay
   probes, and `11` observe-compile probes.
 - Generated promoted graph and observe-compile executable artifacts were
