@@ -4,7 +4,7 @@ import re
 from collections import defaultdict
 
 from methods.regex.patterns import SOURCE_PATTERN
-from methods.shell_line import first_top_level_pipeline_index, get_commands
+from methods.shell.line import first_top_level_pipeline_index, get_commands
 from methods.source_evaluator import SourceEvaluator
 from methods.source_effects import (
     CaseBlock,

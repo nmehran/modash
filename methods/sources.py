@@ -10,7 +10,7 @@ from methods.regex.patterns import (
     VARIABLE_REFERENCE_PATTERN,
 )
 from methods.source_resolver import SourceResolver, UnsupportedSourceError, parse_shell_words_preserving_quotes
-from methods.shell_line import get_commands
+from methods.shell.line import get_commands
 
 
 def validate_path(path):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-# Extracted SourceEvaluator methods. Shared names come from source_evaluator_shared.
-from methods.source_evaluator_shared import *  # noqa: F401,F403
+# Extracted SourceEvaluator methods. Shared names come from source_evaluator.shared.
+from methods.source_evaluator.shared import *  # noqa: F401,F403
 
 
 class SourceEvaluatorFunctionMixin:

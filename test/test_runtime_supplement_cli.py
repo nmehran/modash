@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from methods.runtime_source_trace import trace_sources, write_trace_observation  # noqa: E402
+from methods.runtime_evaluator.trace import trace_sources, write_trace_observation  # noqa: E402
 from test.support import ScriptProject  # noqa: E402
 
 

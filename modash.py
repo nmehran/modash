@@ -6,34 +6,34 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 from methods.compile import compile_sources
-from methods.runtime_source_trace import (
+from methods.runtime_evaluator.trace import (
     DEFAULT_TRACE_TIMEOUT_SECONDS,
     RuntimeSourceTraceError,
     default_observation_path,
     trace_sources,
     write_trace_observation,
 )
-from methods.runtime_source_observations import RuntimeSourceObservationError, load_observation
-from methods.runtime_observation_reports import (
+from methods.runtime_evaluator.observations import RuntimeSourceObservationError, load_observation
+from methods.runtime_evaluator.reports import (
     RuntimeObservationReportError,
     build_observation_report,
     write_observation_report,
 )
-from methods.runtime_source_graph import (
+from methods.runtime_evaluator.graph import (
     RuntimeSourceGraphError,
     build_observed_source_graph,
     load_observed_source_graph,
     write_observed_source_graph,
     write_observed_source_graph_review,
 )
-from methods.runtime_source_supplements import (
+from methods.runtime_evaluator.supplements import (
     RuntimeSupplementGenerationError,
     generate_source_supplement,
     generate_source_supplement_from_graph,
     load_source_supplement_from_payload,
     write_generated_supplement,
 )
-from methods.shell_line import get_commands
+from methods.shell.line import get_commands
 from methods.source_effects import SourceSite
 from methods.source_evaluator import SourceEvaluator, SourceOverride
 from methods.source_frontend import LineParserFrontend

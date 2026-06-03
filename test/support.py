@@ -4,8 +4,8 @@ import tempfile
 from pathlib import Path
 
 from methods.compile import compile_sources
-from methods.runtime_source_observations import load_observation, write_observation
-from methods.runtime_source_trace import trace_sources
+from methods.runtime_evaluator.observations import load_observation, write_observation
+from methods.runtime_evaluator.trace import trace_sources
 from methods.sources import get_sources
 
 

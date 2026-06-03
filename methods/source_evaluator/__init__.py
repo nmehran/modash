@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from methods.source_evaluator_shared import *  # noqa: F401,F403
+from methods.source_evaluator.shared import *  # noqa: F401,F403
 
 # These mixins keep the evaluator split by concern while preserving the single
 # SourceEvaluator public surface. They are imported after the shared constants,
 # dataclasses, and signal types above are defined because the mixins reference
 # those names during module import.
-from methods.source_evaluator_commands import SourceEvaluatorCommandMixin
-from methods.source_evaluator_conditions import SourceEvaluatorConditionMixin
-from methods.source_evaluator_functions import SourceEvaluatorFunctionMixin
-from methods.source_evaluator_loops import SourceEvaluatorLoopMixin
-from methods.source_evaluator_sources import SourceEvaluatorSourceSiteMixin
-from methods.source_evaluator_support import SourceEvaluatorSupportMixin
+from methods.source_evaluator.commands import SourceEvaluatorCommandMixin
+from methods.source_evaluator.conditions import SourceEvaluatorConditionMixin
+from methods.source_evaluator.functions import SourceEvaluatorFunctionMixin
+from methods.source_evaluator.loops import SourceEvaluatorLoopMixin
+from methods.source_evaluator.sources import SourceEvaluatorSourceSiteMixin
+from methods.source_evaluator.support import SourceEvaluatorSupportMixin
 
 
 class SourceEvaluator(

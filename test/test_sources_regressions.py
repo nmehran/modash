@@ -7,7 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from methods.shell_line import first_top_level_pipeline_index, get_commands
+from methods.shell.line import first_top_level_pipeline_index, get_commands
 from methods.sources import get_sources, resolve_variable_references
 from test.support import ScriptProject
 
@@ -158,7 +158,7 @@ class SourceRegressionTestCase(unittest.TestCase):
         self.assertTrue(invocation.wrapped)
 
     def test_source_command_parser_matrix_stays_consistent(self):
-        from methods.runtime_source_commands import source_command_index
+        from methods.runtime_evaluator.commands import source_command_index
         from methods.source_resolver import (
             parse_shell_words_preserving_quotes,
             source_command_invocation,

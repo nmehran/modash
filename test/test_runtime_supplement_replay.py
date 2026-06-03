@@ -7,11 +7,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from methods.runtime_source_supplements import (  # noqa: E402
+from methods.runtime_evaluator.supplements import (  # noqa: E402
     generate_source_supplement,
     write_generated_supplement,
 )
-from methods.runtime_source_graph import build_observed_source_graph, write_observed_source_graph  # noqa: E402
+from methods.runtime_evaluator.graph import build_observed_source_graph, write_observed_source_graph  # noqa: E402
 from modash import compile_observed_main  # noqa: E402
 from test.support import ScriptProject  # noqa: E402
 

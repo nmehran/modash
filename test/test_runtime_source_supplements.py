@@ -6,7 +6,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from methods.runtime_source_observations import (  # noqa: E402
+from methods.runtime_evaluator.observations import (  # noqa: E402
     BashInfo,
     EnvironmentInfo,
     RuntimeProcess,
@@ -16,14 +16,14 @@ from methods.runtime_source_observations import (  # noqa: E402
     TraceInfo,
     fingerprint_file,
 )
-from methods.runtime_source_supplements import (  # noqa: E402
+from methods.runtime_evaluator.supplements import (  # noqa: E402
     RuntimeSupplementGenerationError,
     generate_source_supplement,
     generate_source_supplement_from_graph,
     load_source_supplement_from_payload,
     write_generated_supplement,
 )
-from methods.runtime_source_graph import build_observed_source_graph  # noqa: E402
+from methods.runtime_evaluator.graph import build_observed_source_graph  # noqa: E402
 from test.support import ScriptProject  # noqa: E402
 
 

@@ -6,8 +6,8 @@ from fnmatch import fnmatch
 
 from methods.regex.patterns import SOURCE_PATTERN, create_command_pattern
 from methods.regex.utilities import extract_bash_commands, strip_matching_quotes
-from methods.shell_line import get_commands
-from methods.shell_scan import is_array_assignment_paren, read_backtick_body, read_balanced_body
+from methods.shell.line import get_commands
+from methods.shell.scan import is_array_assignment_paren, read_backtick_body, read_balanced_body
 from methods.source_patterns import UnsupportedPatternError, shell_pattern_matches
 
 ASSIGNMENT_WORD_PATTERN = re.compile(r'^[a-zA-Z_]\w*(?:\+)?=.*$')

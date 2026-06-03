@@ -1170,7 +1170,7 @@ def run_runtime_parity_probe(entrypoint_path, compiled_path, cwd, environment, t
 
 
 def run_runtime_trace_probe(entrypoint_path, cwd, environment, output_path, timeout_seconds):
-    from methods.runtime_source_trace import RuntimeSourceTraceError, trace_sources, write_trace_observation
+    from methods.runtime_evaluator.trace import RuntimeSourceTraceError, trace_sources, write_trace_observation
 
     started_at = time.perf_counter()
     try:
@@ -1228,9 +1228,9 @@ def run_runtime_supplement_replay_probe(
     report_path,
     compiled_path,
 ):
-    from methods.runtime_observation_reports import build_observation_report, write_observation_report
-    from methods.runtime_source_supplements import generate_source_supplement, write_generated_supplement
-    from methods.runtime_source_trace import RuntimeSourceTraceError, trace_sources, write_trace_observation
+    from methods.runtime_evaluator.reports import build_observation_report, write_observation_report
+    from methods.runtime_evaluator.supplements import generate_source_supplement, write_generated_supplement
+    from methods.runtime_evaluator.trace import RuntimeSourceTraceError, trace_sources, write_trace_observation
 
     started_at = time.perf_counter()
     try:
@@ -1339,12 +1339,12 @@ def run_runtime_graph_replay_probe(
     graph_report_path,
     compiled_path,
 ):
-    from methods.runtime_source_graph import (
+    from methods.runtime_evaluator.graph import (
         build_observed_source_graph,
         write_observed_source_graph,
         write_observed_source_graph_review,
     )
-    from methods.runtime_source_trace import RuntimeSourceTraceError, trace_sources, write_trace_observation
+    from methods.runtime_evaluator.trace import RuntimeSourceTraceError, trace_sources, write_trace_observation
     from modash import compile_observed_main
 
     started_at = time.perf_counter()
@@ -1429,7 +1429,7 @@ def run_runtime_observe_compile_probe(
     graph_report_path,
     compiled_path,
 ):
-    from methods.runtime_source_trace import RuntimeSourceTraceError
+    from methods.runtime_evaluator.trace import RuntimeSourceTraceError
     from modash import observe_compile_main
 
     started_at = time.perf_counter()

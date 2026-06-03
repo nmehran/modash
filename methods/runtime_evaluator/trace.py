@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from methods.runtime_source_observations import (
+from methods.runtime_evaluator.observations import (
     BashInfo,
     EnvironmentInfo,
     RuntimeProcess,
@@ -30,7 +30,7 @@ from methods.runtime_source_observations import (
     fingerprint_file,
     write_observation,
 )
-from methods.runtime_source_commands import (
+from methods.runtime_evaluator.commands import (
     SourceCommandWords,
     clean_shell_word,
     is_source_like_command_text,
@@ -325,13 +325,13 @@ def _normalize_timeout(timeout):
 
 
 def _scanner_entrypoint_script(scanner_name: str):
-    repo_root = str(Path(__file__).resolve().parents[1])
+    repo_root = str(Path(__file__).resolve().parents[2])
     return (
         "import sys\n\n"
         f"REPO_ROOT = {repo_root!r}\n"
         "if REPO_ROOT and REPO_ROOT not in sys.path:\n"
         "    sys.path.insert(0, REPO_ROOT)\n\n"
-        "from methods.runtime_source_scanners import main\n\n"
+        "from methods.runtime_evaluator.scanners import main\n\n"
         "if __name__ == \"__main__\":\n"
         f"    sys.exit(main([{scanner_name!r}, *sys.argv[1:]]))\n"
     )
@@ -1105,4 +1105,4 @@ def _source_line(path: str, line: int):
 
 
 def _trace_prelude():
-    return importlib.resources.files("methods").joinpath("runtime_source_trace_prelude.bash").read_text(encoding="utf-8")
+    return importlib.resources.files("methods.runtime_evaluator").joinpath("trace_prelude.bash").read_text(encoding="utf-8")

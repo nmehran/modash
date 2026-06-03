@@ -7,7 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from methods.runtime_source_observations import (  # noqa: E402
+from methods.runtime_evaluator.observations import (  # noqa: E402
     BashInfo,
     EnvironmentInfo,
     RuntimeProcess,

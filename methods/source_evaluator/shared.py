@@ -9,8 +9,8 @@ from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
 from pathlib import Path
 
-from methods.shell_line import get_commands
-from methods.shell_scan import (
+from methods.shell.line import get_commands
+from methods.shell.scan import (
     command_substitution_bodies,
     is_array_assignment_paren,
     process_substitution_bodies,

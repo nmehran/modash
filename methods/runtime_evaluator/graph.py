@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-from methods.runtime_source_observations import (
+from methods.runtime_evaluator.observations import (
     EnvironmentInfo,
     FILE_FINGERPRINT_ROLES,
     OBSERVATION_VERSION,
@@ -17,7 +17,7 @@ from methods.runtime_source_observations import (
     load_observation,
     validate_observation,
 )
-from methods.runtime_source_commands import is_trace_wrapper_source_command
+from methods.runtime_evaluator.commands import is_trace_wrapper_source_command
 from methods.source_resolver import (
     parse_shell_words_preserving_quotes,
     source_command_invocation,

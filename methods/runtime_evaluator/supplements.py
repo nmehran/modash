@@ -14,7 +14,7 @@ from methods.source_resolver import (
     parse_shell_words_preserving_quotes,
     strip_shell_word_quotes,
 )
-from methods.runtime_source_observations import (
+from methods.runtime_evaluator.observations import (
     RuntimeSourceObservation,
     RuntimeSourceObservationError,
     current_fingerprint_mismatch_details,
@@ -22,7 +22,7 @@ from methods.runtime_source_observations import (
     load_observation,
     validate_observation,
 )
-from methods.runtime_source_graph import (
+from methods.runtime_evaluator.graph import (
     ensure_graph_fingerprints_current,
     load_observed_source_graph,
     validate_observed_source_graph,

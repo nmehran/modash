@@ -40,7 +40,7 @@ from methods.source_resolver import (
     source_command_index,
     UnsupportedSourceError,
 )
-from methods.shell_line import first_top_level_pipeline_index, get_commands
+from methods.shell.line import first_top_level_pipeline_index, get_commands
 
 ARRAY_ASSIGNMENT_PATTERN = re.compile(r'^(?:(declare)\s+(-[aA])\s+)?([a-zA-Z_]\w*)(\+?)=\((.*)\)$')
 ARRAY_INDEX_ASSIGNMENT_PATTERN = re.compile(r'^([a-zA-Z_]\w*)\[([^\]]+)\](\+?)=(.*)$')

@@ -1,6 +1,6 @@
 import unittest
 
-from methods.shell_scan import (
+from methods.shell.scan import (
     command_substitution_bodies,
     is_array_assignment_paren,
     process_substitution_bodies,
