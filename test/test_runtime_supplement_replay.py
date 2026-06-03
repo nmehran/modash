@@ -439,6 +439,38 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         self.assertIn("./missing.sh: No such file or directory\n", result.stdout)
         self.assertTrue(result.stdout.endswith("fallback\nok:fallback\n"), result.stdout)
 
+    def test_compile_observed_replays_mixed_repeated_helper_short_circuit_edges(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'load() { if source "$1" || source "$2"; then printf "ok:%s\\n" "$VALUE"; fi; }',
+                    "load ./first.sh ./fallback-a.sh",
+                    "load ./missing.sh ./fallback-b.sh",
+                    "",
+                ]),
+            )
+            project.write("first.sh", 'VALUE=first\nprintf "first\\n"\n')
+            project.write("fallback-a.sh", 'VALUE=A\nprintf "fallback:A\\n"\n')
+            project.write("fallback-b.sh", 'VALUE=B\nprintf "fallback:B\\n"\n')
+            trace = project.trace("main.sh")
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            self.assertEqual(
+                [(edge["to"].split(":", 1)[0], edge["status"]) for edge in graph["edges"]],
+                [("file", 0), ("missing-source", 1), ("file", 0)],
+            )
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(result.stdout.startswith("first\nok:first\n"), result.stdout)
+        self.assertIn("./missing.sh: No such file or directory\n", result.stdout)
+        self.assertTrue(result.stdout.endswith("fallback:B\nok:B\n"), result.stdout)
+
     def test_compile_observed_replays_while_source_condition_edge(self):
         with ScriptProject() as project:
             entrypoint = project.write(
@@ -697,6 +729,34 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "dep:one\ndep:two\n")
+
+    def test_dynamic_helper_name_graph_replays_mixed_short_circuit_edges(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'load() { if source "$1" || source "$2"; then printf "ok:%s\\n" "$VALUE"; fi; }',
+                    '"$MODASH_TEST_HELPER" ./first.sh ./fallback-a.sh',
+                    '"$MODASH_TEST_HELPER" ./missing.sh ./fallback-b.sh',
+                    "",
+                ]),
+            )
+            project.write("first.sh", 'VALUE=first\nprintf "first\\n"\n')
+            project.write("fallback-a.sh", 'VALUE=A\nprintf "fallback:A\\n"\n')
+            project.write("fallback-b.sh", 'VALUE=B\nprintf "fallback:B\\n"\n')
+            trace = project.trace("main.sh", env={"MODASH_TEST_HELPER": "load"})
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled, env={"MODASH_TEST_HELPER": "load"})
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(result.stdout.startswith("first\nok:first\n"), result.stdout)
+        self.assertIn("./missing.sh: No such file or directory\n", result.stdout)
+        self.assertTrue(result.stdout.endswith("fallback:B\nok:B\n"), result.stdout)
 
     def test_dynamic_helper_name_static_compile_remains_fail_closed_without_graph(self):
         with ScriptProject() as project:

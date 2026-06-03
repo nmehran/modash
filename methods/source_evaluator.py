@@ -6056,11 +6056,11 @@ class SourceEvaluator:
             if not self._function_variants_may_source(variants):
                 continue
             signatures = self.source_supplement.function_signatures(function_name)
+            if not signatures:
+                continue
             matching_signatures = tuple(
                 signature for signature in signatures if len(signature) == len(argument_words)
             )
-            if not matching_signatures:
-                continue
             candidates.append((function_name, function_def, variants, matching_signatures))
 
         if len(candidates) > 1:
@@ -6075,9 +6075,12 @@ class SourceEvaluator:
             )
         if len(candidates) == 1:
             function_name, function_def, variants, signatures = candidates[0]
-            arguments = self._graph_backed_dynamic_function_arguments(function_name, signatures)
-            if arguments is None:
-                return None
+            try:
+                arguments = self._resolve_function_exact_arguments(argument_words, node, state)
+            except UnsupportedSourceError:
+                arguments = self._graph_backed_dynamic_function_arguments(function_name, signatures)
+                if arguments is None:
+                    return None
             return function_name, function_def, variants, arguments
         return None
 
@@ -6215,56 +6218,8 @@ class SourceEvaluator:
             state.ambiguous_variables.discard(name)
 
     def _resolve_function_arguments(self, function_name: str, words: list[str], node: RawCommand, state: EvaluationState):
-        arguments = []
         try:
-            for word in words:
-                stripped = word.strip()
-                if stripped in {'"$@"', '"${@}"'}:
-                    if state.ambiguous_positionals:
-                        raise unsupported_source_error(
-                            str(node.location.path),
-                            node.location.line - 1,
-                            node.text,
-                            node.text,
-                            "unsupported.source.function-argument",
-                            "unsupported ambiguous positional function argument expansion",
-                            "Function arguments must resolve exactly for source-aware function evaluation.",
-                        )
-                    arguments.extend(state.positional_arguments)
-                    continue
-                if stripped in {'"$*"', '"${*}"'}:
-                    if state.ambiguous_positionals:
-                        raise unsupported_source_error(
-                            str(node.location.path),
-                            node.location.line - 1,
-                            node.text,
-                            node.text,
-                            "unsupported.source.function-argument",
-                            "unsupported ambiguous positional function argument expansion",
-                            "Function arguments must resolve exactly for source-aware function evaluation.",
-                        )
-                    arguments.append(self._joined_positionals(state))
-                    continue
-                if re.search(r'(?<!\\)\$(?:\{?[@*]\}?)', stripped):
-                    raise unsupported_source_error(
-                        str(node.location.path),
-                        node.location.line - 1,
-                        node.text,
-                        node.text,
-                        "unsupported.source.function-argument",
-                        "unsupported positional function argument expansion",
-                        "Only quoted standalone $@/$* function arguments are supported.",
-                    )
-                arguments.append(SourceEvaluator._resolve_function_exact_word(
-                    word,
-                    node,
-                    state,
-                    "unsupported.source.function-argument",
-                    "unsupported dynamic function argument",
-                    "unsupported unresolved function argument",
-                    "Function arguments must be exact for source-aware function evaluation.",
-                ))
-            return tuple(arguments)
+            return self._resolve_function_exact_arguments(words, node, state)
         except UnsupportedSourceError as exc:
             supplemented = self._supplemented_function_arguments(function_name, len(words), node)
             if supplemented is not None:
@@ -6285,6 +6240,57 @@ class SourceEvaluator:
                     ),
                 },
             ) from exc
+
+    def _resolve_function_exact_arguments(self, words: list[str], node: RawCommand, state: EvaluationState):
+        arguments = []
+        for word in words:
+            stripped = word.strip()
+            if stripped in {'"$@"', '"${@}"'}:
+                if state.ambiguous_positionals:
+                    raise unsupported_source_error(
+                        str(node.location.path),
+                        node.location.line - 1,
+                        node.text,
+                        node.text,
+                        "unsupported.source.function-argument",
+                        "unsupported ambiguous positional function argument expansion",
+                        "Function arguments must resolve exactly for source-aware function evaluation.",
+                    )
+                arguments.extend(state.positional_arguments)
+                continue
+            if stripped in {'"$*"', '"${*}"'}:
+                if state.ambiguous_positionals:
+                    raise unsupported_source_error(
+                        str(node.location.path),
+                        node.location.line - 1,
+                        node.text,
+                        node.text,
+                        "unsupported.source.function-argument",
+                        "unsupported ambiguous positional function argument expansion",
+                        "Function arguments must resolve exactly for source-aware function evaluation.",
+                    )
+                arguments.append(self._joined_positionals(state))
+                continue
+            if re.search(r'(?<!\\)\$(?:\{?[@*]\}?)', stripped):
+                raise unsupported_source_error(
+                    str(node.location.path),
+                    node.location.line - 1,
+                    node.text,
+                    node.text,
+                    "unsupported.source.function-argument",
+                    "unsupported positional function argument expansion",
+                    "Only quoted standalone $@/$* function arguments are supported.",
+                )
+            arguments.append(SourceEvaluator._resolve_function_exact_word(
+                word,
+                node,
+                state,
+                "unsupported.source.function-argument",
+                "unsupported dynamic function argument",
+                "unsupported unresolved function argument",
+                "Function arguments must be exact for source-aware function evaluation.",
+            ))
+        return tuple(arguments)
 
     def _supplemented_function_arguments(self, function_name: str, word_count: int, node: RawCommand):
         signatures = tuple(

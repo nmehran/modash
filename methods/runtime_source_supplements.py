@@ -244,15 +244,16 @@ def _condition_helper_signatures_from_events(source_events, entrypoint_directory
         )
         if function_name is None:
             continue
-        signature = _condition_helper_signature_for_group(group, entrypoint_directory)
-        if signature is None:
+        signatures = _condition_helper_signatures_for_group(group, entrypoint_directory)
+        if signatures is None:
             continue
-        entry = {"arguments": list(signature.arguments)}
-        if signature.source_index:
-            entry["source_index"] = signature.source_index
-        functions.setdefault(function_name, [])
-        if entry not in functions[function_name]:
-            functions[function_name].append(entry)
+        for signature in signatures:
+            entry = {"arguments": list(signature.arguments)}
+            if signature.source_index:
+                entry["source_index"] = signature.source_index
+            functions.setdefault(function_name, [])
+            if entry not in functions[function_name]:
+                functions[function_name].append(entry)
         skipped_edges.update(event.index for event in group)
 
     return functions, frozenset(skipped_edges)
@@ -262,15 +263,25 @@ def _event_group_key(event: _SupplementSourceEvent):
     return event.call_site_file, event.call_site_line, event.call_site_command
 
 
-def _condition_helper_signature_for_group(edges, entrypoint_directory: Path):
+def _condition_helper_signatures_for_group(edges, entrypoint_directory: Path):
     sequences = _source_condition_atom_sequences_for_edge(edges[0])
     if len(sequences) != 1:
         return None
 
-    mapped = _source_condition_edges(edges, sequences[0])
-    if mapped is None:
+    mapped_groups = _source_condition_edge_groups(edges, sequences[0])
+    if mapped_groups is None:
         return None
 
+    signatures = []
+    for mapped in mapped_groups:
+        signature = _condition_helper_signature_from_edges(mapped, entrypoint_directory)
+        if signature is None:
+            return None
+        signatures.append(signature)
+    return tuple(signatures)
+
+
+def _condition_helper_signature_from_edges(mapped, entrypoint_directory: Path):
     signature = {}
     source_index = None
     for edge, atom in mapped:
@@ -303,7 +314,19 @@ def _condition_helper_signature_for_group(edges, entrypoint_directory: Path):
     )
 
 
-def _source_condition_edges(edges, atoms):
+def _source_condition_edge_groups(edges, atoms):
+    groups = []
+    edge_index = 0
+    while edge_index < len(edges):
+        mapped, consumed = _source_condition_edge_prefix(edges[edge_index:], atoms)
+        if mapped is None or consumed <= 0:
+            return None
+        groups.append(mapped)
+        edge_index += consumed
+    return tuple(groups)
+
+
+def _source_condition_edge_prefix(edges, atoms):
     mapped = []
     edge_index = 0
     status = "true"
@@ -315,7 +338,7 @@ def _source_condition_edges(edges, atoms):
 
         if atom.source_command is not None:
             if edge_index >= len(edges):
-                return None
+                return None, 0
             edge = edges[edge_index]
             mapped.append((edge, atom))
             edge_index += 1
@@ -326,13 +349,13 @@ def _source_condition_edges(edges, atoms):
 
         status = _static_condition_atom_status(atom.text)
         if status is None:
-            return None
+            return None, 0
         if atom.negated:
             status = _negate_condition_status(status)
 
-    if edge_index != len(edges):
-        return None
-    return tuple(mapped)
+    if not mapped:
+        return None, 0
+    return tuple(mapped), edge_index
 
 
 def _source_condition_atom_sequences_for_edge(edge):

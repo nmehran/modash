@@ -231,11 +231,30 @@ def _source_override_commands_from_condition_sequences(edges):
     sequences = _source_condition_atom_sequences_for_edge(edges[0])
     if len(sequences) != 1:
         return None
-    return _source_override_commands_from_condition_atoms(edges, sequences[0])
-
-
-def _source_override_commands_from_condition_atoms(edges, atoms):
+    mapped_groups = _source_condition_mapped_edge_groups(edges, sequences[0])
+    if mapped_groups is None:
+        return None
     commands = {}
+    for mapped_edges in mapped_groups:
+        for edge, atom in mapped_edges:
+            commands[edge["index"]] = f"{atom.source_command} {atom.source_expression}"
+    return commands
+
+
+def _source_condition_mapped_edge_groups(edges, atoms):
+    groups = []
+    edge_index = 0
+    while edge_index < len(edges):
+        mapped, consumed = _source_condition_mapped_edge_prefix(edges[edge_index:], atoms)
+        if mapped is None or consumed <= 0:
+            return None
+        groups.append(mapped)
+        edge_index += consumed
+    return tuple(groups)
+
+
+def _source_condition_mapped_edge_prefix(edges, atoms):
+    mapped = []
     edge_index = 0
     status = "true"
     for atom in atoms:
@@ -246,9 +265,9 @@ def _source_override_commands_from_condition_atoms(edges, atoms):
 
         if atom.source_command is not None:
             if edge_index >= len(edges):
-                return None
+                return None, 0
             edge = edges[edge_index]
-            commands[edge["index"]] = f"{atom.source_command} {atom.source_expression}"
+            mapped.append((edge, atom))
             edge_index += 1
             status = "true" if edge["status"] == 0 else "false"
             if atom.negated:
@@ -257,13 +276,13 @@ def _source_override_commands_from_condition_atoms(edges, atoms):
 
         status = _static_condition_atom_status(atom.text)
         if status is None:
-            return None
+            return None, 0
         if atom.negated:
             status = _negate_condition_status(status)
 
-    if edge_index != len(edges):
-        return None
-    return commands
+    if not mapped:
+        return None, 0
+    return tuple(mapped), edge_index
 
 
 def _source_condition_atom_sequences_for_edge(edge):

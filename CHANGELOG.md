@@ -21,6 +21,9 @@
 
 - Trusted runtime graph replay now consumes observed helper aliases more
   efficiently without rebuilding alias maps for each lookup.
+- Trusted runtime graph replay now partitions repeated source-condition helper
+  edges by observed invocation, preserving mixed short-circuit fallback behavior
+  and generated supplement arguments.
 - The real-world harness now distinguishes promoted static expectations from
   graph-backed runtime expectations for hard runtime-dynamic cases.
 - README and runtime discovery docs now present the observe-compile workflow as
@@ -29,7 +32,7 @@
 
 ### Validation
 
-- Full unit suite: `518` tests, `8` skipped.
+- Full unit suite: `521` tests, `8` skipped.
 - Opt-in real-world suite with runtime trace, supplement replay, runtime
   parity, trusted graph replay, and observe-compile gates: `15` tests, `1`
   skipped, covering `62` pinned compile expectations, `10` trusted graph replay

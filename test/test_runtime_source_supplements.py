@@ -121,6 +121,40 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
         self.assertEqual(observation_supplement.to_dict()["functions"], expected)
         self.assertEqual(graph_supplement.to_dict()["functions"], expected)
 
+    def test_runtime_supplement_keeps_repeated_missing_helper_arguments_exact(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'load() { if source "$1" || source "$2"; then printf "ok:%s\\n" "$VALUE"; fi; }',
+                    "load ./missing-a.sh ./fallback-a.sh",
+                    "load ./missing-b.sh ./fallback-b.sh",
+                    "",
+                ]),
+            )
+            project.write("fallback-a.sh", 'VALUE=A\nprintf "fallback:A\\n"\n')
+            project.write("fallback-b.sh", 'VALUE=B\nprintf "fallback:B\\n"\n')
+            observation = project.trace("main.sh").observation
+            graph = build_observed_source_graph(entrypoint, observation)
+
+            observation_supplement = generate_source_supplement(entrypoint, observation)
+            graph_supplement = generate_source_supplement_from_graph(entrypoint, graph)
+
+        expected = {
+            "load": [
+                {
+                    "arguments": ["./missing-a.sh", "fallback-a.sh"],
+                    "source_index": 1,
+                },
+                {
+                    "arguments": ["./missing-b.sh", "fallback-b.sh"],
+                    "source_index": 1,
+                },
+            ],
+        }
+        self.assertEqual(observation_supplement.to_dict()["functions"], expected)
+        self.assertEqual(graph_supplement.to_dict()["functions"], expected)
+
     def test_generates_function_signature_from_first_positional_alias_and_shifted_variadic_args(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_alias "$TARGET" "arg one" arg-two\n')
