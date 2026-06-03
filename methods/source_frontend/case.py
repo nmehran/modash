@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-# Extracted LineParserFrontend methods. Shared parser names come from source_frontend_shared.
-from methods.source_frontend_shared import *  # noqa: F401,F403
+# Extracted LineParserFrontend methods. Shared parser names come from .shared.
+from .shared import *  # noqa: F401,F403
 
 
 class SourceFrontendCaseMixin:
@@ -341,4 +341,3 @@ class SourceFrontendCaseMixin:
 
         parts.append("".join(current))
         return parts
-

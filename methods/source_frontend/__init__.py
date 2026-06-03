@@ -3,11 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
-from methods.source_frontend_shared import *  # noqa: F401,F403
-from methods.source_frontend_case import SourceFrontendCaseMixin
-from methods.source_frontend_commands import SourceFrontendCommandMixin
-from methods.source_frontend_functions import SourceFrontendFunctionMixin
-from methods.source_frontend_loops import SourceFrontendLoopMixin
+from .shared import *  # noqa: F401,F403
+from .case import SourceFrontendCaseMixin
+from .commands import SourceFrontendCommandMixin
+from .functions import SourceFrontendFunctionMixin
+from .loops import SourceFrontendLoopMixin
+
 
 class ParserFrontend(Protocol):
     def parse(self, path: Path | str, content: str) -> ScriptIR:

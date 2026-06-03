@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-# Extracted LineParserFrontend methods. Shared parser names come from source_frontend_shared.
-from methods.source_frontend_shared import *  # noqa: F401,F403
+# Extracted LineParserFrontend methods. Shared parser names come from .shared.
+from .shared import *  # noqa: F401,F403
 
 
 class SourceFrontendLoopMixin:
@@ -319,4 +319,3 @@ class SourceFrontendLoopMixin:
             lines[line_number - 1] = code_line
 
         return tuple(self._parse_lines(script_path, lines, start_index, end_index))
-
