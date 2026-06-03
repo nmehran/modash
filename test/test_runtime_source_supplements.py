@@ -93,7 +93,7 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
             ],
         })
 
-    def test_graph_supplement_keeps_observed_missing_helper_argument_exact(self):
+    def test_runtime_supplement_keeps_observed_missing_helper_argument_exact(self):
         with ScriptProject() as project:
             entrypoint = project.write(
                 "main.sh",
@@ -104,18 +104,22 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
                 ]),
             )
             project.write("fallback.sh", 'VALUE=fallback\nprintf "fallback\\n"\n')
-            graph = build_observed_source_graph(entrypoint, project.trace("main.sh").observation)
+            observation = project.trace("main.sh").observation
+            graph = build_observed_source_graph(entrypoint, observation)
 
-            supplement = generate_source_supplement_from_graph(entrypoint, graph)
+            observation_supplement = generate_source_supplement(entrypoint, observation)
+            graph_supplement = generate_source_supplement_from_graph(entrypoint, graph)
 
-        self.assertEqual(supplement.to_dict()["functions"], {
+        expected = {
             "load": [
                 {
                     "arguments": ["./missing.sh", "fallback.sh"],
                     "source_index": 1,
                 },
             ],
-        })
+        }
+        self.assertEqual(observation_supplement.to_dict()["functions"], expected)
+        self.assertEqual(graph_supplement.to_dict()["functions"], expected)
 
     def test_generates_function_signature_from_first_positional_alias_and_shifted_variadic_args(self):
         with ScriptProject() as project:
@@ -466,6 +470,20 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
 
         self.assertEqual(context.exception.code, "runtime.supplement.stale_observation")
         self.assertIn("stale", str(context.exception))
+
+    def test_rejects_stale_observation_when_missing_source_now_exists(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", 'source ./missing.sh || source ./fallback.sh\n')
+            project.write("fallback.sh", "echo fallback\n")
+            observation = project.trace("main.sh").observation
+
+            project.write("missing.sh", "echo now-present\n")
+
+            with self.assertRaises(RuntimeSupplementGenerationError) as context:
+                generate_source_supplement(entrypoint, observation)
+
+        self.assertEqual(context.exception.code, "runtime.supplement.stale_observation")
+        self.assertIn("source_presence", str(context.exception))
 
     def test_unsupported_observation_generates_empty_valid_supplement(self):
         with ScriptProject() as project:

@@ -73,6 +73,7 @@ class _SupplementSourceEvent:
     arguments: tuple[str, ...]
     status: int = 0
     to_node: str = ""
+    xtrace_command: str = ""
 
 
 @dataclass(frozen=True)
@@ -102,21 +103,34 @@ def generate_source_supplement(entrypoint: str | os.PathLike, observation, *, va
     _ensure_observation_matches_entrypoint(entrypoint_path, observation)
     if validate_fingerprints:
         _ensure_observation_fingerprints_current(observation)
+        _ensure_observation_source_presence_current(observation)
 
+    source_events = tuple(
+        _SupplementSourceEvent(
+            index=event.index,
+            call_site_file=event.call_site.file,
+            call_site_line=event.call_site.line,
+            call_site_command=event.call_site.command,
+            resolved_path=event.resolved_path,
+            arguments=event.arguments,
+            status=event.status,
+            xtrace_command=(
+                observation.xtrace[event.xtrace_index].command
+                if event.xtrace_index is not None
+                else ""
+            ),
+        )
+        for event in observation.sources
+    )
+    condition_functions, skipped_events = _condition_helper_signatures_from_events(
+        source_events,
+        entrypoint_path.parent,
+    )
     return _generate_source_supplement_from_events(
         entrypoint_path,
-        (
-            _SupplementSourceEvent(
-                index=event.index,
-                call_site_file=event.call_site.file,
-                call_site_line=event.call_site.line,
-                call_site_command=event.call_site.command,
-                resolved_path=event.resolved_path,
-                arguments=event.arguments,
-                status=event.status,
-            )
-            for event in observation.sources
-        ),
+        source_events,
+        initial_functions=condition_functions,
+        skipped_event_indexes=skipped_events,
     )
 
 
@@ -127,24 +141,29 @@ def generate_source_supplement_from_graph(entrypoint: str | os.PathLike, graph, 
     if validate_fingerprints:
         ensure_graph_fingerprints_current(graph)
 
-    condition_functions, skipped_edges = _condition_helper_signatures_from_graph(graph, entrypoint_path.parent)
+    source_events = tuple(
+        _SupplementSourceEvent(
+            index=edge["index"],
+            call_site_file=edge["call_site"]["file"],
+            call_site_line=edge["call_site"]["line"],
+            call_site_command=edge["call_site"]["command"],
+            resolved_path=edge["resolved_path"],
+            arguments=tuple(edge["arguments"]),
+            status=edge["status"],
+            to_node=edge["to"],
+            xtrace_command=edge["xtrace"]["command"],
+        )
+        for edge in graph["edges"]
+    )
+    condition_functions, skipped_events = _condition_helper_signatures_from_events(
+        source_events,
+        entrypoint_path.parent,
+    )
     return _generate_source_supplement_from_events(
         entrypoint_path,
-        (
-            _SupplementSourceEvent(
-                index=edge["index"],
-                call_site_file=edge["call_site"]["file"],
-                call_site_line=edge["call_site"]["line"],
-                call_site_command=edge["call_site"]["command"],
-                resolved_path=edge["resolved_path"],
-                arguments=tuple(edge["arguments"]),
-                status=edge["status"],
-                to_node=edge["to"],
-            )
-            for edge in graph["edges"]
-        ),
+        source_events,
         initial_functions=condition_functions,
-        skipped_event_indexes=skipped_edges,
+        skipped_event_indexes=skipped_events,
     )
 
 
@@ -211,19 +230,17 @@ def _event_is_missing_source(event: _SupplementSourceEvent):
     return event.to_node.startswith("missing-source:") or (event.status != 0 and not Path(event.resolved_path).is_file())
 
 
-def _condition_helper_signatures_from_graph(graph: dict, entrypoint_directory: Path):
+def _condition_helper_signatures_from_events(source_events, entrypoint_directory: Path):
     functions: dict[str, list[dict[str, list[str]]]] = {}
     skipped_edges = set()
     grouped_edges = {}
-    for edge in graph["edges"]:
-        if not edge["from"].startswith("file:"):
-            continue
-        grouped_edges.setdefault(_edge_group_key(edge), []).append(edge)
+    for event in source_events:
+        grouped_edges.setdefault(_event_group_key(event), []).append(event)
 
     for group in grouped_edges.values():
         function_name = _enclosing_function_name(
-            group[0]["call_site"]["file"],
-            group[0]["call_site"]["line"],
+            group[0].call_site_file,
+            group[0].call_site_line,
         )
         if function_name is None:
             continue
@@ -236,14 +253,13 @@ def _condition_helper_signatures_from_graph(graph: dict, entrypoint_directory: P
         functions.setdefault(function_name, [])
         if entry not in functions[function_name]:
             functions[function_name].append(entry)
-        skipped_edges.update(edge["index"] for edge in group)
+        skipped_edges.update(event.index for event in group)
 
     return functions, frozenset(skipped_edges)
 
 
-def _edge_group_key(edge):
-    call_site = edge["call_site"]
-    return call_site["file"], call_site["line"], call_site["command"]
+def _event_group_key(event: _SupplementSourceEvent):
+    return event.call_site_file, event.call_site_line, event.call_site_command
 
 
 def _condition_helper_signature_for_group(edges, entrypoint_directory: Path):
@@ -265,15 +281,15 @@ def _condition_helper_signature_for_group(edges, entrypoint_directory: Path):
         if source_position is None:
             return None
         signature[source_position] = _observed_function_argument(edge, entrypoint_directory)
-        if source_index is None and edge["to"].startswith("file:"):
+        if source_index is None and not _event_is_missing_source(edge):
             source_index = source_position - 1
 
         for argument_index, word in enumerate(words[1:]):
             position = _positional_word_index(word)
-            if position is None or argument_index >= len(edge["arguments"]):
+            if position is None or argument_index >= len(edge.arguments):
                 return None
-            signature[position] = edge["arguments"][argument_index]
-        if len(words) - 1 != len(edge["arguments"]):
+            signature[position] = edge.arguments[argument_index]
+        if len(words) - 1 != len(edge.arguments):
             return None
 
     if source_index is None or not signature:
@@ -303,7 +319,7 @@ def _source_condition_edges(edges, atoms):
             edge = edges[edge_index]
             mapped.append((edge, atom))
             edge_index += 1
-            status = "true" if edge["status"] == 0 else "false"
+            status = "true" if edge.status == 0 else "false"
             if atom.negated:
                 status = _negate_condition_status(status)
             continue
@@ -320,13 +336,13 @@ def _source_condition_edges(edges, atoms):
 
 
 def _source_condition_atom_sequences_for_edge(edge):
-    condition = _control_source_condition(edge["call_site"]["command"])
+    condition = _control_source_condition(edge.call_site_command)
     if condition is not None:
         atoms = _source_condition_atoms_from_text(condition)
         return (atoms,) if atoms else ()
     return _source_condition_atom_sequences_on_line(
-        edge["call_site"]["file"],
-        edge["call_site"]["line"],
+        edge.call_site_file,
+        edge.call_site_line,
     )
 
 
@@ -390,12 +406,12 @@ def _source_expression_words(source_expression: str):
 
 
 def _observed_function_argument(edge, entrypoint_directory: Path):
-    if edge["to"].startswith("file:"):
-        return _review_path(edge["resolved_path"], entrypoint_directory)
-    source_site = _source_invocation_from_command(edge["xtrace"]["command"])
+    if not _event_is_missing_source(edge):
+        return _review_path(edge.resolved_path, entrypoint_directory)
+    source_site = _source_invocation_from_command(edge.xtrace_command)
     if source_site is not None:
         return source_site[0]
-    return _review_path(edge["resolved_path"], entrypoint_directory)
+    return _review_path(edge.resolved_path, entrypoint_directory)
 
 
 def _static_condition_atom_status(text: str):
@@ -473,6 +489,17 @@ def _ensure_observation_fingerprints_current(observation: RuntimeSourceObservati
         if mismatch is not None:
             raise RuntimeSupplementGenerationError(
                 format_fingerprint_mismatch("runtime source observation", fingerprint, mismatch),
+                code="runtime.supplement.stale_observation",
+            )
+
+
+def _ensure_observation_source_presence_current(observation: RuntimeSourceObservation):
+    fingerprint_paths = {fingerprint.path for fingerprint in observation.files}
+    for event in observation.sources:
+        resolved_path = str(Path(event.resolved_path).resolve(strict=False))
+        if resolved_path not in fingerprint_paths and Path(resolved_path).is_file():
+            raise RuntimeSupplementGenerationError(
+                f"runtime source observation is stale for {resolved_path}: source_presence mismatch",
                 code="runtime.supplement.stale_observation",
             )
 
