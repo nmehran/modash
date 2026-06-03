@@ -41,3 +41,6 @@ py-modules = ["modash"]
 
 [tool.setuptools.packages.find]
 include = ["methods*"]
+
+[tool.setuptools.package-data]
+methods = ["runtime_source_trace_prelude.bash"]

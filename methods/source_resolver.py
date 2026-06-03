@@ -7,6 +7,7 @@ from fnmatch import fnmatch
 from methods.regex.patterns import SOURCE_PATTERN, create_command_pattern
 from methods.regex.utilities import extract_bash_commands, strip_matching_quotes
 from methods.shell_line import get_commands
+from methods.shell_scan import is_array_assignment_paren, read_backtick_body, read_balanced_body
 from methods.source_patterns import UnsupportedPatternError, shell_pattern_matches
 
 ASSIGNMENT_WORD_PATTERN = re.compile(r'^[a-zA-Z_]\w*(?:\+)?=.*$')
@@ -300,7 +301,7 @@ def parse_shell_words_preserving_quotes(command: str):
             continue
 
         if not in_single_quote and command.startswith('$(', index):
-            body, end_index = _read_balanced_body(command, index + 2)
+            body, end_index = read_balanced_body(command, index + 2)
             if end_index is None:
                 raise UnsupportedSourceError(
                     f"unsupported source command syntax: {command.strip()} (unterminated command substitution)"
@@ -311,7 +312,7 @@ def parse_shell_words_preserving_quotes(command: str):
             continue
 
         if not in_single_quote and char == '`':
-            body, end_index = _read_backtick_body(command, index + 1)
+            body, end_index = read_backtick_body(command, index + 1)
             if body is None:
                 raise UnsupportedSourceError(
                     f"unsupported source command syntax: {command.strip()} (unterminated backtick substitution)"
@@ -974,7 +975,7 @@ def _contains_nested_source_command(text: str, depth: int):
             continue
 
         if char == '`':
-            body, end_index = _read_backtick_body(text, index + 1)
+            body, end_index = read_backtick_body(text, index + 1)
             if body is None:
                 return True
             if _shell_body_contains_source(body, depth + 1):
@@ -983,7 +984,7 @@ def _contains_nested_source_command(text: str, depth: int):
             continue
 
         if text.startswith('$((', index):
-            body, end_index = _read_balanced_body(text, index + 3)
+            body, end_index = read_balanced_body(text, index + 3)
             if end_index is None:
                 return True
             if _contains_nested_source_command(body, depth + 1):
@@ -992,7 +993,7 @@ def _contains_nested_source_command(text: str, depth: int):
             continue
 
         if text.startswith('$(', index):
-            body, end_index = _read_balanced_body(text, index + 2)
+            body, end_index = read_balanced_body(text, index + 2)
             if end_index is None:
                 return True
             if _shell_body_contains_source(body, depth + 1):
@@ -1001,7 +1002,7 @@ def _contains_nested_source_command(text: str, depth: int):
             continue
 
         if not in_double_quote and (text.startswith('<(', index) or text.startswith('>(', index)):
-            body, end_index = _read_balanced_body(text, index + 2)
+            body, end_index = read_balanced_body(text, index + 2)
             if end_index is None:
                 return True
             if _shell_body_contains_source(body, depth + 1):
@@ -1010,7 +1011,7 @@ def _contains_nested_source_command(text: str, depth: int):
             continue
 
         if not in_double_quote and text.startswith('((', index):
-            body, end_index = _read_balanced_body(text, index + 2)
+            body, end_index = read_balanced_body(text, index + 2)
             if end_index is None:
                 return True
             if _contains_nested_source_command(body, depth + 1):
@@ -1018,15 +1019,15 @@ def _contains_nested_source_command(text: str, depth: int):
             index = end_index + 1
             continue
 
-        if not in_double_quote and char == '(' and _is_array_assignment_paren(text, index):
-            body, end_index = _read_balanced_body(text, index + 1)
+        if not in_double_quote and char == '(' and is_array_assignment_paren(text, index):
+            body, end_index = read_balanced_body(text, index + 1)
             if end_index is None:
                 return True
             index = end_index + 1
             continue
 
         if not in_double_quote and char == '(':
-            body, end_index = _read_balanced_body(text, index + 1)
+            body, end_index = read_balanced_body(text, index + 1)
             if end_index is None:
                 return True
             if _shell_body_contains_source(body, depth + 1):
@@ -1044,94 +1045,6 @@ def _shell_body_contains_source(body: str, depth: int):
         if any(contains_source_command(command) for command in get_commands(line)):
             return True
     return _contains_nested_source_command(body, depth)
-
-
-def _is_array_assignment_paren(text: str, paren_index: int):
-    if paren_index == 0 or text[paren_index - 1] != '=':
-        return False
-
-    word_start = paren_index - 2
-    while word_start >= 0 and not text[word_start].isspace() and text[word_start] not in ';&|':
-        word_start -= 1
-
-    assignment_name = text[word_start + 1:paren_index - 1]
-    return bool(re.fullmatch(r'[a-zA-Z_]\w*(?:\[[^\]]+\])?\+?', assignment_name))
-
-
-def _read_backtick_body(text: str, start_index: int):
-    body = []
-    escaped = False
-    index = start_index
-
-    while index < len(text):
-        char = text[index]
-        if escaped:
-            body.append(char)
-            escaped = False
-            index += 1
-            continue
-
-        if char == '\\':
-            body.append(char)
-            escaped = True
-            index += 1
-            continue
-
-        if char == '`':
-            return ''.join(body), index
-
-        body.append(char)
-        index += 1
-
-    return None, None
-
-
-def _read_balanced_body(text: str, start_index: int):
-    body = []
-    in_single_quote = False
-    in_double_quote = False
-    escaped = False
-    depth = 1
-    index = start_index
-
-    while index < len(text):
-        char = text[index]
-        if escaped:
-            body.append(char)
-            escaped = False
-            index += 1
-            continue
-
-        if char == '\\' and not in_single_quote:
-            body.append(char)
-            escaped = True
-            index += 1
-            continue
-
-        if char == "'" and not in_double_quote:
-            in_single_quote = not in_single_quote
-            body.append(char)
-            index += 1
-            continue
-
-        if char == '"' and not in_single_quote:
-            in_double_quote = not in_double_quote
-            body.append(char)
-            index += 1
-            continue
-
-        if not in_single_quote and not in_double_quote:
-            if char == '(':
-                depth += 1
-            elif char == ')':
-                depth -= 1
-                if depth == 0:
-                    return ''.join(body), index
-
-        body.append(char)
-        index += 1
-
-    return None, None
 
 
 def starts_unsupported_control_block(command: str):

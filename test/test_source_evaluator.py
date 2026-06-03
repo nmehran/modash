@@ -1,9 +1,10 @@
 import subprocess
 import textwrap
 import unittest
+from pathlib import Path
 
 from methods.source_effects import ExecutionModel, OccurrenceModel
-from methods.source_evaluator import SourceEvaluator
+from methods.source_evaluator import EvaluationState, SourceEvaluator
 from test.support import ScriptProject
 
 
@@ -23,6 +24,38 @@ class SourceEvaluatorTestCase(unittest.TestCase):
     @staticmethod
     def _paths_for_words(project, words):
         return [project.path(word).resolve() for word in words]
+
+    def test_evaluation_state_copy_helpers_deep_copy_mutable_fields(self):
+        original = EvaluationState(
+            cwd=Path("/tmp/original"),
+            variables={"A": "1"},
+            runtime_variables={"A": "1"},
+            associative_arrays={"MAP": {"k": "v"}},
+            shell_options={"errexit"},
+            glob_options={"dotglob"},
+            missing_source_words={"missing.sh"},
+            ambiguous_variables={"A"},
+            local_scopes=[{"L": (False, "v", False, None, False)}],
+        )
+
+        cloned = original.child_shell_copy()
+        cloned.variables["A"] = "2"
+        cloned.associative_arrays["MAP"]["k"] = "changed"
+        cloned.shell_options.add("nounset")
+        cloned.local_scopes[0]["L"] = (True, None, True, None, True)
+
+        self.assertEqual(original.variables["A"], "1")
+        self.assertEqual(original.associative_arrays["MAP"]["k"], "v")
+        self.assertEqual(original.shell_options, {"errexit"})
+        self.assertEqual(original.local_scopes[0]["L"], (False, "v", False, None, False))
+
+        target = EvaluationState(cwd=Path("/tmp/target"))
+        target.copy_from(cloned)
+        target.associative_arrays["MAP"]["k"] = "target-only"
+        target.shell_options.add("pipefail")
+
+        self.assertEqual(cloned.associative_arrays["MAP"]["k"], "changed")
+        self.assertNotIn("pipefail", cloned.shell_options)
 
     def test_static_source_event_includes_state_before_source(self):
         with ScriptProject() as project:

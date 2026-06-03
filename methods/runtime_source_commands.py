@@ -1,4 +1,8 @@
-"""Shared parsing helpers for runtime-traced Bash source commands."""
+"""Shared parsing helpers for runtime-traced Bash source commands.
+
+These utilities keep trace, graph-validation, and observation-report code on the
+same definition of which direct/wrapped source invocations are trusted.
+"""
 
 from __future__ import annotations
 
