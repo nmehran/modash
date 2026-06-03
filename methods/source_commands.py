@@ -5,17 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
-from methods.regex.patterns import SOURCE_PATTERN
+from methods.shell_commands import create_command_pattern
 from methods.shell.line import get_commands
 from methods.shell.scan import is_array_assignment_paren, read_backtick_body, read_balanced_body
-from methods.source_resolver import (
+from methods.source_errors import UnsupportedSourceError
+from methods.source_words import (
     ASSIGNMENT_WORD_PATTERN,
-    UnsupportedSourceError,
     parse_shell_words,
     parse_shell_words_preserving_quotes,
     strip_shell_word_quotes,
 )
 
+SOURCE_PATTERN = create_command_pattern(command=r'\bsource\b|\.', regex=True)
 SOURCE_COMMAND_NAMES = frozenset({"source", "."})
 TRACE_SOURCE_ALIAS = "__modash_trace_source_alias"
 TRACE_DOT_ALIAS = "__modash_trace_dot_source"

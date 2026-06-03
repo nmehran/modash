@@ -2,8 +2,9 @@ import os
 import re
 from fnmatch import fnmatch
 
-from methods.regex.patterns import SOURCE_PATTERN, create_command_pattern
-from methods.regex.utilities import extract_bash_commands, strip_matching_quotes
+from methods.shell_commands import create_command_pattern, extract_bash_commands
+from methods.shell_text import strip_matching_quotes
+from methods.source_commands import SOURCE_PATTERN
 from methods.source_errors import FailglobExpansionError, UnsupportedSourceError
 from methods.source_globs import (
     MISSING_SOURCE,

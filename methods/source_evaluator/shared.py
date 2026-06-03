@@ -95,7 +95,7 @@ from methods.sources import (
     shell_utility_basename,
     shell_utility_dirname,
 )
-from methods.regex.utilities import strip_matching_quotes
+from methods.shell_text import strip_matching_quotes
 
 ARRAY_INDEX_PATTERN = re.compile(r'\$\{([a-zA-Z_]\w*)\[(\d+)\]\}')
 ARRAY_ANY_INDEX_PATTERN = re.compile(r'\$\{([a-zA-Z_]\w*)\[([^\]]+)\]\}')

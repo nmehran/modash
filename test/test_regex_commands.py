@@ -6,8 +6,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from methods.regex.patterns import CD_PATTERN, SOURCE_PATTERN
-from methods.regex.utilities import extract_bash_commands
+from methods.shell_commands import CD_PATTERN, extract_bash_commands
+from methods.source_commands import SOURCE_PATTERN
 
 
 class TestCDCommandRegex(unittest.TestCase):

@@ -6,7 +6,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from methods.regex.patterns import VARIABLE_ASSIGNMENT_PATTERN, VARIABLE_REFERENCE_PATTERN
+from methods.shell_assignments import VARIABLE_ASSIGNMENT_PATTERN, VARIABLE_REFERENCE_PATTERN
 
 
 class TestVariableAssignmentRegex(unittest.TestCase):

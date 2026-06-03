@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import sys
 
-from methods.regex.utilities import remove_comments
+from methods.shell_text import remove_comments
 from methods.source_effects import (
     CaseBlock,
     CStyleForLoop,

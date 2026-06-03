@@ -1,13 +1,12 @@
 import os
 import re
 
-from methods.regex.utilities import strip_matching_quotes, replace_substring
-from methods.regex.patterns import (
+from methods.shell_text import strip_matching_quotes, replace_substring
+from methods.shell_assignments import VARIABLE_NAME_PATTERN, VARIABLE_REFERENCE_PATTERN
+from methods.shell_commands import (
     BASENAME_PATTERN,
     DIRNAME_PATTERN,
     REALPATH_PATTERN,
-    VARIABLE_NAME_PATTERN,
-    VARIABLE_REFERENCE_PATTERN,
 )
 from methods.source_resolver import SourceResolver, UnsupportedSourceError, parse_shell_words_preserving_quotes
 from methods.shell.line import get_commands

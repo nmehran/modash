@@ -3,8 +3,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from methods.regex.patterns import SOURCE_PATTERN, VARIABLE_ASSIGNMENT_PATTERN
-from methods.regex.utilities import remove_comments
+from methods.shell_assignments import VARIABLE_ASSIGNMENT_PATTERN
+from methods.shell_text import remove_comments
+from methods.source_commands import SOURCE_PATTERN
 from methods.source_effects import (
     ArrayAssignment,
     Assignment,
@@ -74,5 +75,4 @@ CASE_TERMINATOR_COMMANDS = {
     "__MODASH_CASE_TERM_FALLTHROUGH__": ";&",
     "__MODASH_CASE_TERM_FALLTHROUGH_TEST__": ";;&",
 }
-
 
