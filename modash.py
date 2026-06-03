@@ -42,6 +42,31 @@ runtime commands:
   observe-compile   explicitly trace, write review artifacts, and compile
 """
 
+TRACE_ERRORS = (RuntimeSourceTraceError, RuntimeSourceObservationError)
+SUPPLEMENT_ERRORS = (
+    RuntimeSupplementGenerationError,
+    RuntimeObservationReportError,
+    RuntimeSourceGraphError,
+    RuntimeSourceObservationError,
+)
+GRAPH_ERRORS = (RuntimeSourceGraphError, RuntimeSourceObservationError)
+COMPILE_OBSERVED_ERRORS = (
+    RuntimeSupplementGenerationError,
+    RuntimeSourceGraphError,
+    RuntimeSourceObservationError,
+    UnsupportedSourceError,
+    OSError,
+)
+OBSERVE_COMPILE_ERRORS = (
+    RuntimeSourceTraceError,
+    RuntimeSupplementGenerationError,
+    RuntimeSourceGraphError,
+    RuntimeSourceObservationError,
+    UnsupportedSourceError,
+    OSError,
+)
+
+
 def main(entry_point, output_file, mode="context", source_supplement=None):
     compile_sources(entry_point, output_file, mode=mode, source_supplement=source_supplement)
 
@@ -164,6 +189,13 @@ def parse_env_overlay(values):
     return environment or None
 
 
+def parse_cli_env(parser, values):
+    try:
+        return parse_env_overlay(values)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+
 def parse_positive_seconds(value):
     try:
         timeout = float(value)
@@ -181,10 +213,7 @@ def split_trace_args(argv):
     return argv[:separator], argv[separator + 1:]
 
 
-def trace_cli(argv):
-    trace_argv, script_args = split_trace_args(argv)
-    parser = argparse.ArgumentParser(description='Run a Bash script and write runtime source observations.')
-    parser.add_argument('entrypoint', type=str, help='The Bash script to execute under source tracing.')
+def add_trace_runtime_options(parser):
     parser.add_argument('--cwd', help='Working directory for the traced script.')
     parser.add_argument(
         '--env',
@@ -193,28 +222,30 @@ def trace_cli(argv):
         metavar='KEY=VALUE',
         help='Environment overlay for the traced script. May be provided multiple times.',
     )
-    parser.add_argument('--output', help='Observation JSON file to write.')
-    parser.add_argument('--output-dir', help='Directory for the generated observation JSON file.')
     parser.add_argument(
         '--timeout',
         type=parse_positive_seconds,
         default=DEFAULT_TRACE_TIMEOUT_SECONDS,
         help='Maximum seconds to let the traced script run. Default: %(default)s.',
     )
+
+
+def trace_cli(argv):
+    trace_argv, script_args = split_trace_args(argv)
+    parser = argparse.ArgumentParser(description='Run a Bash script and write runtime source observations.')
+    parser.add_argument('entrypoint', type=str, help='The Bash script to execute under source tracing.')
+    add_trace_runtime_options(parser)
+    parser.add_argument('--output', help='Observation JSON file to write.')
+    parser.add_argument('--output-dir', help='Directory for the generated observation JSON file.')
     args = parser.parse_args(trace_argv)
     if args.output and args.output_dir:
         parser.error('--output and --output-dir are mutually exclusive')
-
-    try:
-        environment = parse_env_overlay(args.env)
-    except ValueError as exc:
-        parser.error(str(exc))
 
     return trace_main(
         args.entrypoint,
         script_args=script_args,
         cwd=args.cwd,
-        env=environment,
+        env=parse_cli_env(parser, args.env),
         output=args.output,
         output_dir=args.output_dir,
         timeout=args.timeout,
@@ -292,14 +323,7 @@ def observe_compile_cli(argv):
     )
     parser.add_argument('entrypoint', type=str, help='The Bash script to execute under source tracing.')
     parser.add_argument('output', type=str, help='Executable merged script to write.')
-    parser.add_argument('--cwd', help='Working directory for the traced script.')
-    parser.add_argument(
-        '--env',
-        action='append',
-        default=[],
-        metavar='KEY=VALUE',
-        help='Environment overlay for the traced script. May be provided multiple times.',
-    )
+    add_trace_runtime_options(parser)
     parser.add_argument(
         '--reviewed-graph-out',
         required=True,
@@ -313,18 +337,7 @@ def observe_compile_cli(argv):
         '--report',
         help='Human-readable graph review report file to write. Defaults to REVIEWED_GRAPH_OUT.report.txt.',
     )
-    parser.add_argument(
-        '--timeout',
-        type=parse_positive_seconds,
-        default=DEFAULT_TRACE_TIMEOUT_SECONDS,
-        help='Maximum seconds to let the traced script run. Default: %(default)s.',
-    )
     args = parser.parse_args(trace_argv)
-
-    try:
-        environment = parse_env_overlay(args.env)
-    except ValueError as exc:
-        parser.error(str(exc))
 
     return observe_compile_main(
         args.entrypoint,
@@ -334,69 +347,33 @@ def observe_compile_cli(argv):
         observation_output=args.observation_out,
         script_args=script_args,
         cwd=args.cwd,
-        env=environment,
+        env=parse_cli_env(parser, args.env),
         timeout=args.timeout,
     )
+
+
+def _run_subcommand(handler, argv, errors):
+    try:
+        result = handler(argv)
+    except errors as exc:
+        print(f"modash: {exc}", file=sys.stderr)
+        return 1
+    return 0 if result is None else result
 
 
 def cli_main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
 
-    if len(argv) > 0 and argv[0] == "trace":
-        try:
-            return trace_cli(argv[1:])
-        except (RuntimeSourceTraceError, RuntimeSourceObservationError) as exc:
-            print(f"modash: {exc}", file=sys.stderr)
-            return 1
-
-    if len(argv) > 0 and argv[0] == "supplement":
-        try:
-            supplement_cli(argv[1:])
-        except (
-            RuntimeSupplementGenerationError,
-            RuntimeObservationReportError,
-            RuntimeSourceGraphError,
-            RuntimeSourceObservationError,
-        ) as exc:
-            print(f"modash: {exc}", file=sys.stderr)
-            return 1
-        return 0
-
-    if len(argv) > 0 and argv[0] == "graph":
-        try:
-            graph_cli(argv[1:])
-        except (RuntimeSourceGraphError, RuntimeSourceObservationError) as exc:
-            print(f"modash: {exc}", file=sys.stderr)
-            return 1
-        return 0
-
-    if len(argv) > 0 and argv[0] == "compile-observed":
-        try:
-            compile_observed_cli(argv[1:])
-        except (
-            RuntimeSupplementGenerationError,
-            RuntimeSourceGraphError,
-            RuntimeSourceObservationError,
-            UnsupportedSourceError,
-            OSError,
-        ) as exc:
-            print(f"modash: {exc}", file=sys.stderr)
-            return 1
-        return 0
-
-    if len(argv) > 0 and argv[0] == "observe-compile":
-        try:
-            return observe_compile_cli(argv[1:])
-        except (
-            RuntimeSourceTraceError,
-            RuntimeSupplementGenerationError,
-            RuntimeSourceGraphError,
-            RuntimeSourceObservationError,
-            UnsupportedSourceError,
-            OSError,
-        ) as exc:
-            print(f"modash: {exc}", file=sys.stderr)
-            return 1
+    subcommands = {
+        "trace": (trace_cli, TRACE_ERRORS),
+        "supplement": (supplement_cli, SUPPLEMENT_ERRORS),
+        "graph": (graph_cli, GRAPH_ERRORS),
+        "compile-observed": (compile_observed_cli, COMPILE_OBSERVED_ERRORS),
+        "observe-compile": (observe_compile_cli, OBSERVE_COMPILE_ERRORS),
+    }
+    if argv and argv[0] in subcommands:
+        handler, errors = subcommands[argv[0]]
+        return _run_subcommand(handler, argv[1:], errors)
 
     parser = argparse.ArgumentParser(
         description='Merge Bash scripts into a single script.',
