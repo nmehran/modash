@@ -321,7 +321,7 @@ class SourceEvaluatorFunctionMixin:
                     "unsupported positional function argument expansion",
                     "Only quoted standalone $@/$* function arguments are supported.",
                 )
-            arguments.append(SourceEvaluator._resolve_function_exact_word(
+            arguments.append(self._resolve_function_exact_word(
                 word,
                 node,
                 state,
@@ -363,10 +363,9 @@ class SourceEvaluatorFunctionMixin:
                     names.add(name)
         return names
 
-    @staticmethod
-    def _resolve_function_exact_word(word: str, node: RawCommand, state: EvaluationState, code: str,
+    def _resolve_function_exact_word(self, word: str, node: RawCommand, state: EvaluationState, code: str,
                                      dynamic_message: str, unresolved_message: str, hint: str):
-        if SourceEvaluator._raw_word_is_single_quoted(word):
+        if self._raw_word_is_single_quoted(word):
             return strip_shell_word_quotes(word)
 
         if '$(' in word or '`' in word:
@@ -490,8 +489,7 @@ class SourceEvaluatorFunctionMixin:
             return 0
         return None
 
-    @staticmethod
-    def _printf_status_is_exact_success(arguments: list[str]):
+    def _printf_status_is_exact_success(self, arguments: list[str]):
         if not arguments:
             return False
 
@@ -510,7 +508,7 @@ class SourceEvaluatorFunctionMixin:
         format_word = arguments[index]
         if "$" in format_word or "`" in format_word:
             return False
-        return SourceEvaluator._printf_format_is_string_only(strip_shell_word_quotes(format_word))
+        return self._printf_format_is_string_only(strip_shell_word_quotes(format_word))
 
     @staticmethod
     def _printf_format_is_string_only(format_value: str):

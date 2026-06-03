@@ -272,7 +272,7 @@ class SourceEvaluatorSupportMixin:
 
     @staticmethod
     def _shell_quote_words(words: tuple[str, ...]):
-        return " ".join(SourceEvaluator._shell_quote(word) for word in words)
+        return " ".join(SourceEvaluatorSupportMixin._shell_quote(word) for word in words)
 
     @staticmethod
     def _shell_quote(value: str):
@@ -352,25 +352,25 @@ class SourceEvaluatorSupportMixin:
     def _raw_command_may_source(command: str):
         if command.strip() in {"(", ")", "{", "}"}:
             return False
-        if SourceEvaluator._continued_source_free_fragment(command):
+        if SourceEvaluatorSupportMixin._continued_source_free_fragment(command):
             return False
         return bool(
             contains_source_command(command)
             or contains_nested_source_command(command)
-            or SourceEvaluator._raw_command_payload_may_source(command)
-            or SourceEvaluator._raw_command_may_expand_to_source(command)
+            or SourceEvaluatorSupportMixin._raw_command_payload_may_source(command)
+            or SourceEvaluatorSupportMixin._raw_command_may_expand_to_source(command)
         )
 
     @staticmethod
     def _raw_command_contains_literal_source(command: str):
         if command.strip() in {"(", ")", "{", "}"}:
             return False
-        if SourceEvaluator._continued_source_free_fragment(command):
+        if SourceEvaluatorSupportMixin._continued_source_free_fragment(command):
             return False
         return bool(
             contains_source_command(command)
             or contains_nested_source_command(command)
-            or SourceEvaluator._raw_command_payload_may_source(command)
+            or SourceEvaluatorSupportMixin._raw_command_payload_may_source(command)
         )
 
     @staticmethod
@@ -511,8 +511,7 @@ class SourceEvaluatorSupportMixin:
             "Use an absolute cd target before the next source, or keep branch cwd effects convergent.",
         )
 
-    @staticmethod
-    def _expand_array_indexes(source_expression: str, node: SourceSite, state: EvaluationState):
+    def _expand_array_indexes(self, source_expression: str, node: SourceSite, state: EvaluationState):
         def replace(match):
             name, index_text = match.groups()
             if index_text == "@":
@@ -528,7 +527,7 @@ class SourceEvaluatorSupportMixin:
 
             associative_values = state.associative_arrays.get(name)
             if associative_values is not None:
-                key = SourceEvaluator._resolve_array_key(index_text, node, state)
+                key = self._resolve_array_key(index_text, node, state)
                 if key not in associative_values:
                     raise unsupported_source_error(
                         str(node.location.path),
@@ -542,7 +541,7 @@ class SourceEvaluatorSupportMixin:
                 return associative_values[key]
 
             values = state.arrays.get(name)
-            index = SourceEvaluator._resolve_array_index(index_text, node, state)
+            index = self._resolve_array_index(index_text, node, state)
             if values is None or index >= len(values):
                 raise unsupported_source_error(
                     str(node.location.path),

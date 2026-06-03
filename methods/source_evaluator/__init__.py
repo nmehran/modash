@@ -154,7 +154,7 @@ class SourceEvaluator(
 
     def _apply_assignment(self, node: Assignment, state: EvaluationState):
         if node.prefix == "local" and state.local_scopes:
-            SourceEvaluator._capture_local_variable(node.name, state)
+            self._capture_local_variable(node.name, state)
 
         shopt_snapshot = self._assignment_shopt_snapshot_value(node, state)
         if shopt_snapshot is not None:

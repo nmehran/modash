@@ -489,14 +489,3 @@ class ChildShellSourceCommand:
 class ConditionWords:
     words: tuple[str, ...]
     kind: str
-
-
-class _SourceEvaluatorProxy:
-    """Lazy proxy for legacy SourceEvaluator._helper references in extracted mixins."""
-
-    def __getattr__(self, name):
-        from methods.source_evaluator import SourceEvaluator as _SourceEvaluator
-        return getattr(_SourceEvaluator, name)
-
-
-SourceEvaluator = _SourceEvaluatorProxy()

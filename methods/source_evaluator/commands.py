@@ -107,7 +107,7 @@ class SourceEvaluatorCommandMixin:
                 name, value = word.split("=", 1)
                 if not re.fullmatch(r'[a-zA-Z_]\w*', name):
                     return False
-                SourceEvaluator._capture_local_variable(name, state)
+                self._capture_local_variable(name, state)
                 try:
                     resolved = self._resolve_function_exact_word(
                         value,
@@ -130,7 +130,7 @@ class SourceEvaluatorCommandMixin:
                 name = strip_shell_word_quotes(word)
                 if not re.fullmatch(r'[a-zA-Z_]\w*', name):
                     return False
-                SourceEvaluator._capture_local_variable(name, state)
+                self._capture_local_variable(name, state)
                 state.variables.pop(name, None)
                 state.runtime_variables.pop(name, None)
                 state.ambiguous_variables.discard(name)

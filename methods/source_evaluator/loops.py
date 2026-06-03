@@ -395,7 +395,7 @@ class SourceEvaluatorLoopMixin:
     def _read_loop_lines(path: Path, include_incomplete: bool):
         with path.open("r", newline="") as file:
             content = file.read()
-        return SourceEvaluator._read_loop_lines_from_content(content, include_incomplete)
+        return SourceEvaluatorLoopMixin._read_loop_lines_from_content(content, include_incomplete)
 
     @staticmethod
     def _read_loop_lines_from_content(content: str, include_incomplete: bool):
@@ -833,7 +833,7 @@ class SourceEvaluatorLoopMixin:
     @staticmethod
     def _head_count(value: str, node):
         if not re.fullmatch(r'\d+', value):
-            raise SourceEvaluator._unsupported_loop_words(node, "unsupported head command substitution count")
+            raise SourceEvaluatorLoopMixin._unsupported_loop_words(node, "unsupported head command substitution count")
         return int(value)
 
     @staticmethod

@@ -865,8 +865,7 @@ class SourceEvaluatorConditionMixin:
             hint,
         )
 
-    @staticmethod
-    def _merge_possible_states(target: EvaluationState, possible_states: list[EvaluationState]):
+    def _merge_possible_states(self, target: EvaluationState, possible_states: list[EvaluationState]):
         if not possible_states:
             return
         if len(possible_states) == 1:
@@ -880,34 +879,34 @@ class SourceEvaluatorConditionMixin:
         )
 
         target.ambiguous_variables.clear()
-        SourceEvaluator._merge_state_mapping(
+        self._merge_state_mapping(
             target.variables,
             [state.variables for state in possible_states],
             target.ambiguous_variables,
             [state.ambiguous_variables for state in possible_states],
             clear_ambiguous=False,
         )
-        SourceEvaluator._merge_state_mapping(
+        self._merge_state_mapping(
             target.runtime_variables,
             [state.runtime_variables for state in possible_states],
             target.ambiguous_variables,
             [state.ambiguous_variables for state in possible_states],
             clear_ambiguous=False,
         )
-        SourceEvaluator._merge_state_mapping(
+        self._merge_state_mapping(
             target.arrays,
             [state.arrays for state in possible_states],
             target.ambiguous_arrays,
             [state.ambiguous_arrays for state in possible_states],
         )
-        SourceEvaluator._merge_state_mapping(
+        self._merge_state_mapping(
             target.associative_arrays,
             [state.associative_arrays for state in possible_states],
             target.ambiguous_arrays,
             [state.ambiguous_arrays for state in possible_states],
             clear_ambiguous=False,
         )
-        SourceEvaluator._merge_function_state(target, possible_states)
+        self._merge_function_state(target, possible_states)
 
         first_shell_options = first.shell_options
         if any(state.ambiguous_shell_options for state in possible_states) or any(
@@ -976,8 +975,7 @@ class SourceEvaluatorConditionMixin:
         target.clear()
         target.update(merged)
 
-    @staticmethod
-    def _merge_function_state(target: EvaluationState, possible_states: list[EvaluationState]):
+    def _merge_function_state(self, target: EvaluationState, possible_states: list[EvaluationState]):
         target.functions.clear()
         target.function_variants.clear()
         target.ambiguous_functions.clear()
@@ -1004,7 +1002,7 @@ class SourceEvaluatorConditionMixin:
                     continue
                 for function_def in variants:
                     signature_variants = variants_by_signature.setdefault(
-                        SourceEvaluator._function_signature(function_def),
+                        self._function_signature(function_def),
                         [],
                     )
                     if function_def not in signature_variants:
@@ -1024,7 +1022,7 @@ class SourceEvaluatorConditionMixin:
         return (
             "function",
             function_def.name,
-            tuple(SourceEvaluator._node_signature(node) for node in function_def.body),
+            tuple(SourceEvaluatorConditionMixin._node_signature(node) for node in function_def.body),
         )
 
     @staticmethod
@@ -1047,7 +1045,7 @@ class SourceEvaluatorConditionMixin:
         if isinstance(node, SetCommand):
             return ("set", node.arguments)
         if isinstance(node, FunctionDef):
-            return SourceEvaluator._function_signature(node)
+            return SourceEvaluatorConditionMixin._function_signature(node)
         if isinstance(node, ForLoop):
             return (
                 "for",
@@ -1055,7 +1053,7 @@ class SourceEvaluatorConditionMixin:
                 node.words,
                 node.words_text,
                 node.is_exact,
-                tuple(SourceEvaluator._node_signature(child) for child in node.body),
+                tuple(SourceEvaluatorConditionMixin._node_signature(child) for child in node.body),
             )
         if isinstance(node, CStyleForLoop):
             return (
@@ -1063,7 +1061,7 @@ class SourceEvaluatorConditionMixin:
                 node.init,
                 node.condition,
                 node.update,
-                tuple(SourceEvaluator._node_signature(child) for child in node.body),
+                tuple(SourceEvaluatorConditionMixin._node_signature(child) for child in node.body),
             )
         if isinstance(node, WhileLoop):
             return (
@@ -1073,7 +1071,7 @@ class SourceEvaluatorConditionMixin:
                 node.trailing,
                 node.producer,
                 node.end_location.line if node.end_location else None,
-                tuple(SourceEvaluator._node_signature(child) for child in node.body),
+                tuple(SourceEvaluatorConditionMixin._node_signature(child) for child in node.body),
             )
         if isinstance(node, IfBlock):
             return (
@@ -1082,7 +1080,7 @@ class SourceEvaluatorConditionMixin:
                     (
                         branch.keyword,
                         branch.condition,
-                        tuple(SourceEvaluator._node_signature(child) for child in branch.body),
+                        tuple(SourceEvaluatorConditionMixin._node_signature(child) for child in branch.body),
                     )
                     for branch in node.branches
                 ),
@@ -1095,7 +1093,7 @@ class SourceEvaluatorConditionMixin:
                     (
                         arm.patterns,
                         arm.terminator,
-                        tuple(SourceEvaluator._node_signature(child) for child in arm.body),
+                        tuple(SourceEvaluatorConditionMixin._node_signature(child) for child in arm.body),
                     )
                     for arm in node.arms
                 ),
@@ -1304,11 +1302,10 @@ class SourceEvaluatorConditionMixin:
                 condition=condition,
             ))
 
-    @staticmethod
-    def _condition_text_may_source(condition: str):
+    def _condition_text_may_source(self, condition: str):
         return bool(
             re.search(r'(^|[\s!(&|])(?:source|\.)\s+', condition)
-            or SourceEvaluator._raw_command_may_source(condition)
+            or self._raw_command_may_source(condition)
         )
 
     def _condition_has_source_atom(self, condition: str):
@@ -1523,11 +1520,10 @@ class SourceEvaluatorConditionMixin:
 
         raise UnsupportedSourceError(f"unsupported if condition: {condition}")
 
-    @staticmethod
-    def _condition_rhs_is_pattern(raw_token: str, resolved_value: str):
+    def _condition_rhs_is_pattern(self, raw_token: str, resolved_value: str):
         if has_unquoted_glob(raw_token) or has_unquoted_extglob(raw_token):
             return True
-        if SourceEvaluator._raw_word_is_single_quoted(raw_token) or SourceEvaluator._raw_word_is_double_quoted(raw_token):
+        if self._raw_word_is_single_quoted(raw_token) or self._raw_word_is_double_quoted(raw_token):
             return False
         return has_unquoted_glob(resolved_value) or has_unquoted_extglob(resolved_value)
 
@@ -1812,11 +1808,10 @@ class SourceEvaluatorConditionMixin:
             raise UnsupportedSourceError(f"unsupported integer if condition: {condition}")
         return int(resolved)
 
-    @staticmethod
-    def _condition_path(value: str, state: EvaluationState, condition: str):
+    def _condition_path(self, value: str, state: EvaluationState, condition: str):
         if state.ambiguous_cwd:
             raise UnsupportedSourceError(f"unsupported branch-dependent cwd in if condition: {condition}")
-        resolved = SourceEvaluator._condition_value(value, state)
+        resolved = self._condition_value(value, state)
         if resolved is None:
             return None
         resolved = resolve_shell_path_commands(resolved, str(state.cwd))
