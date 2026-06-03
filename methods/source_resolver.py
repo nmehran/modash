@@ -83,6 +83,8 @@ class ResolvedSource:
     condition: str | None = None
     positional_assignment_generation: int | None = None
     sync_positionals: bool = False
+    source_location_path: str | None = None
+    source_location_line: int | None = None
 
 
 @dataclass(frozen=True)

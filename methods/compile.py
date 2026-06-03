@@ -159,9 +159,19 @@ def render_missing_source_failure(source_declaration, indent: str):
         messages = [f"{source_declaration.source_value}: No such file or directory"]
 
     first_message, *remaining_messages = messages
+    diagnostic_path = (
+        shell_quote(source_declaration.source_location_path)
+        if source_declaration.source_location_path is not None
+        else '"${BASH_SOURCE[0]}"'
+    )
+    diagnostic_line = (
+        shell_quote(str(source_declaration.source_location_line))
+        if source_declaration.source_location_line is not None
+        else '"${LINENO}"'
+    )
     lines = [
         f"{indent}printf '%s: line %s: %s\\n' "
-        f'"${{BASH_SOURCE[0]}}" "${{LINENO}}" {shell_quote(first_message)} >&2'
+        f"{diagnostic_path} {diagnostic_line} {shell_quote(first_message)} >&2"
     ]
     for message in remaining_messages:
         lines.append(f"{indent}printf '%s\\n' {shell_quote(message)} >&2")
@@ -1304,6 +1314,8 @@ def context_from_source_events(events, disabled_sources=(), line_replacements=()
                 else None
             ),
             sync_positionals=event.sync_positionals,
+            source_location_path=str(event.location.path),
+            source_location_line=event.location.line,
         ))
 
     for disabled_source in disabled_sources:
@@ -1316,6 +1328,8 @@ def context_from_source_events(events, disabled_sources=(), line_replacements=()
             source_column=disabled_source.location.column,
             occurrence_model="once",
             condition=disabled_source.condition,
+            source_location_path=str(disabled_source.location.path),
+            source_location_line=disabled_source.location.line,
         ))
 
     for line_replacement in line_replacements:

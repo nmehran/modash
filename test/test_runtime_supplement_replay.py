@@ -1,4 +1,5 @@
 import copy
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -405,11 +406,24 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                 [("missing-source", 1), ("file", 0)],
             )
             compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
-            result = project.run(compiled)
+            expected = subprocess.run(
+                ["bash", str(entrypoint)],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            actual = subprocess.run(
+                ["bash", str(compiled)],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
 
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("./missing.sh: No such file or directory\n", result.stdout)
-        self.assertTrue(result.stdout.endswith("b\nok:beta\n"), result.stdout)
+        self.assertEqual(actual.returncode, expected.returncode, actual.stderr)
+        self.assertEqual(actual.stdout, expected.stdout)
+        self.assertEqual(actual.stderr, expected.stderr)
 
     def test_compile_observed_replays_helper_missing_source_fallback(self):
         with ScriptProject() as project:

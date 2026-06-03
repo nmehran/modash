@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.6.0 - 2026-06-02
+## v0.6.0 - 2026-06-03
 
 ### Added
 
@@ -49,7 +49,7 @@
 
 ### Validation
 
-- Full unit suite: `592` tests, `9` skipped.
+- Full unit suite: `593` tests, `9` skipped.
 - Opt-in real-world suite with runtime trace, supplement replay, runtime
   parity, trusted graph replay, and observe-compile gates: `17` tests passed.
 - Opt-in installed-wheel smoke built the local wheel, installed it into a fresh

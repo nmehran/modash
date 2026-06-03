@@ -63,6 +63,37 @@ class CompileRegressionTestCase(unittest.TestCase):
 
                 project.assert_compiled_matches(self, entry_path, cwd=cwd)
 
+    def test_missing_source_diagnostic_matches_bash_file_and_line(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'printf "before\\n"',
+                    "source ./missing/*.sh",
+                    'printf "after\\n"',
+                    "",
+                ]),
+            )
+            compiled = project.compile("main.sh", mode="executable")
+            expected = subprocess.run(
+                ["bash", str(entrypoint)],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            actual = subprocess.run(
+                ["bash", str(compiled)],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stderr)
+        self.assertEqual(actual.stdout, expected.stdout)
+        self.assertEqual(actual.stderr, expected.stderr)
+
     def test_builtin_and_command_source_invocations_match_bash(self):
         cases = {
             "builtin source": 'builtin source ./dep.sh builtin-source "two words"\n',
