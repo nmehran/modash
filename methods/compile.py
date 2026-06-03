@@ -3,8 +3,7 @@ import os
 import re
 from collections import defaultdict
 
-from methods.regex.patterns import SOURCE_PATTERN
-from methods.shell.line import first_top_level_pipeline_index, get_commands
+from methods.shell.line import get_commands
 from methods.source_evaluator import SourceEvaluator
 from methods.source_effects import (
     CaseBlock,
@@ -848,33 +847,6 @@ def render_bash_c_source_command(
     return rewritten
 
 
-def source_site_for_match(match):
-    _, command_name, arguments = match.groups()
-    return f"{command_name.strip()} {(arguments or '').strip()}".strip()
-
-
-def source_column_for_match(match):
-    return match.start(2) + 1
-
-
-def pop_source_declarations_for_match(match, declarations_by_column, group_fallback=True):
-    grouped_declarations = declarations_by_column.pop(source_column_for_match(match), [])
-    if grouped_declarations:
-        return grouped_declarations
-
-    match_source_site = source_site_for_match(match)
-    for source_column, declarations in list(declarations_by_column.items()):
-        if declarations and declarations[0].source_site == match_source_site:
-            if not group_fallback:
-                grouped_declarations = [declarations.pop(0)]
-                if not declarations:
-                    declarations_by_column.pop(source_column)
-                return grouped_declarations
-            return declarations_by_column.pop(source_column)
-
-    return []
-
-
 def group_source_declarations_by_column(source_declarations):
     declarations_by_column = defaultdict(list)
     fallback_declarations = []
@@ -978,20 +950,41 @@ def find_unquoted_source_site_span(line: str, source_site: str, occupied_spans):
     return None
 
 
-def find_source_declaration_span(line: str, source_declaration, occupied_spans):
+def source_declaration_site_candidates(source_declaration, runtime_reference_path: str | None, entry_point: str | None):
     source_site = source_declaration.source_site.strip()
+    candidates = [source_site]
+    if runtime_reference_path is not None and entry_point is not None:
+        rewritten = replace_runtime_source_references(source_site, runtime_reference_path, entry_point)
+        if rewritten not in candidates:
+            candidates.append(rewritten)
+    return tuple(candidates)
+
+
+def find_source_declaration_span(
+    line: str,
+    source_declaration,
+    occupied_spans,
+    *,
+    runtime_reference_path: str | None = None,
+    entry_point: str | None = None,
+):
     source_column = source_declaration.source_column
     if source_column is not None:
         source_index = source_column - 1
-        span = (source_index, source_index + len(source_site))
-        if (
-            source_index >= 0
-            and line.startswith(source_site, source_index)
-            and not any(spans_overlap(span, occupied_span) for occupied_span in occupied_spans)
-        ):
-            return span
+        if source_index >= 0:
+            for source_site in source_declaration_site_candidates(source_declaration, runtime_reference_path, entry_point):
+                span = (source_index, source_index + len(source_site))
+                if (
+                    line.startswith(source_site, source_index)
+                    and not any(spans_overlap(span, occupied_span) for occupied_span in occupied_spans)
+                ):
+                    return span
 
-    return find_unquoted_source_site_span(line, source_site, occupied_spans)
+    for source_site in source_declaration_site_candidates(source_declaration, runtime_reference_path, entry_point):
+        span = find_unquoted_source_site_span(line, source_site, occupied_spans)
+        if span is not None:
+            return span
+    return None
 
 
 def apply_line_replacements(line: str, replacements):
@@ -1032,47 +1025,25 @@ def replace_source_site_declarations(
     source_declarations,
     render_source,
     positional_frame_names: dict[str, str] | None = None,
+    *,
+    runtime_reference_path: str | None = None,
+    entry_point: str | None = None,
 ):
     if not source_declarations:
         return line
 
-    if first_top_level_pipeline_index(line) is None:
-        matches = [
-            match for match in SOURCE_PATTERN.finditer(line)
-            if not match.group(0).lstrip().startswith('$(')
-        ]
-    else:
-        matches = []
     declarations_by_column, fallback_declarations = group_source_declarations_by_column(source_declarations)
     replacements = []
     occupied_spans = []
 
-    for match in matches:
-        grouped_declarations = pop_source_declarations_for_match(
-            match,
-            declarations_by_column,
-            group_fallback=len(matches) == 1,
-        )
-        if not grouped_declarations and fallback_declarations:
-            grouped_declarations.append(fallback_declarations.pop(0))
-        if not grouped_declarations:
-            continue
-
-        separator = match.group(1) or ''
-        indent = re.match(r'\s*', separator).group(0) if separator else ''
-        replacement = render_source_site_replacement(
-            separator,
-            grouped_declarations,
-            render_source,
-            indent,
-            positional_frame_names,
-        )
-        span = (match.start(), match.end())
-        replacements.append((*span, replacement))
-        occupied_spans.append(span)
-
     for grouped_declarations in remaining_source_declaration_groups(declarations_by_column, fallback_declarations):
-        span = find_source_declaration_span(line, grouped_declarations[0], occupied_spans)
+        span = find_source_declaration_span(
+            line,
+            grouped_declarations[0],
+            occupied_spans,
+            runtime_reference_path=runtime_reference_path,
+            entry_point=entry_point,
+        )
         if span is None:
             source_site = grouped_declarations[0].source_site.strip()
             raise ValueError(f"Could not replace resolved source declaration: {source_site}")
@@ -1113,8 +1084,6 @@ def assert_no_unresolved_source_sites(content: str):
 
 
 def line_contains_unresolved_source(line: str):
-    if SOURCE_PATTERN.findall(line):
-        return True
     if any(contains_source_command(command) for command in get_commands(line)):
         return True
     if "source" not in line and not re.search(r'(^|[\s;&|({])\.\s+', line):
@@ -1243,6 +1212,8 @@ def render_executable_script(entry_point: str, context: dict):
                         source_site_declarations,
                         render_source_file,
                         positional_frame_names,
+                        runtime_reference_path=filepath,
+                        entry_point=entry_point,
                     )
                 output.append(line)
 
