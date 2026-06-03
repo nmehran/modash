@@ -17,7 +17,11 @@ from methods.runtime_evaluator.observations import (
     load_observation,
     validate_observation,
 )
-from methods.source_commands import is_trace_wrapper_source_command, source_command_invocation
+from methods.source_commands import (
+    is_trace_wrapper_source_command,
+    shell_quote as _shell_quote,
+    source_command_invocation,
+)
 from methods.source_resolver import (
     parse_shell_words_preserving_quotes,
     strip_shell_word_quotes,
@@ -384,12 +388,6 @@ def _review_edge_lines(edge):
         )
     lines.append(f"  xtrace: {xtrace['file']}:{xtrace['line']}: {xtrace['command']}")
     return lines
-
-
-def _shell_quote(value: str):
-    if value and all(character.isalnum() or character in "@%_+=:,./-" for character in value):
-        return value
-    return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
 def _display_timeout(value):

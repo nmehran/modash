@@ -20,6 +20,8 @@ from methods.source_frontend import LineParserFrontend
 from methods.source_commands import (
     contains_nested_source_command,
     contains_source_command,
+    shell_quote_words,
+    shell_single_quote as shell_quote,
     source_command_invocation,
 )
 from methods.source_resolver import (
@@ -40,11 +42,6 @@ from methods.source_supplements import load_source_supplement
 from methods.sources import validate_path
 
 SET_SHEBANG = "#!/bin/bash"
-
-
-def shell_quote(value: str):
-    return "'" + value.replace("'", "'\"'\"'") + "'"
-
 
 def replace_runtime_source_references(line: str, filepath: str, entry_point: str):
     return ''.join(
@@ -131,10 +128,6 @@ def indent_shell_block(content: str, prefix: str):
         output.append(f"{prefix}{line}" if line else line)
         active_heredocs.extend(extract_heredoc_delimiters(line))
     return '\n'.join(output)
-
-
-def shell_quote_words(words):
-    return " ".join(shell_quote(word) for word in words)
 
 
 def source_command_name(source_site: str):
@@ -249,7 +242,7 @@ def construct_context_source_comment(source_declaration, entry_point: str):
         suffix = f" ({source_declaration.execution_model})"
 
     if source_declaration.source_arguments:
-        suffix = f"{suffix} (args: {shell_quote_words(source_declaration.source_arguments)})"
+        suffix = f"{suffix} (args: {shell_quote_words(source_declaration.source_arguments, always_quote=True)})"
 
     if source_declaration.replacement_kind.startswith("noop-"):
         condition = f": {source_declaration.condition}" if source_declaration.condition else ""
@@ -536,7 +529,7 @@ def render_source_call_wrapper(filepath: str, content: str, source_arguments=Non
     if source_arguments is None:
         call_arguments = ' "$@"'
     elif source_arguments:
-        call_arguments = " " + shell_quote_words(source_arguments)
+        call_arguments = " " + shell_quote_words(source_arguments, always_quote=True)
     else:
         call_arguments = ""
     definitions = (

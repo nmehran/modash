@@ -272,11 +272,11 @@ class SourceEvaluatorSupportMixin:
 
     @staticmethod
     def _shell_quote_words(words: tuple[str, ...]):
-        return " ".join(SourceEvaluatorSupportMixin._shell_quote(word) for word in words)
+        return quote_shell_words(words, always_quote=True)
 
     @staticmethod
     def _shell_quote(value: str):
-        return "'" + value.replace("'", "'\"'\"'") + "'"
+        return shell_single_quote(value)
 
     def _disable_unreachable_sources(self, nodes, condition: str):
         for node in nodes:

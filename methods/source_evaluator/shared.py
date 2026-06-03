@@ -29,6 +29,8 @@ from methods.source_conditions import (
 from methods.source_commands import (
     contains_nested_source_command,
     contains_source_command,
+    shell_quote_words as quote_shell_words,
+    shell_single_quote,
     source_command_index,
     source_command_invocation,
 )

@@ -299,10 +299,19 @@ def contains_nested_source_command(command: str):
     return _contains_nested_source_command(command, depth=0)
 
 
+def shell_single_quote(value: str):
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
 def shell_quote(value: str):
     if value and all(character.isalnum() or character in "@%_+=:,./-" for character in value):
         return value
-    return "'" + value.replace("'", "'\"'\"'") + "'"
+    return shell_single_quote(value)
+
+
+def shell_quote_words(words: Sequence[str], *, always_quote: bool = False):
+    quote = shell_single_quote if always_quote else shell_quote
+    return " ".join(quote(word) for word in words)
 
 
 def _builtin_source_command_index(words: Sequence[str], command_start: int = 0):
