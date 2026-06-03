@@ -7,8 +7,10 @@ from methods.source_evaluator.shared import *  # noqa: F401,F403
 # dataclasses, and signal types above are defined because the mixins reference
 # those names during module import.
 from methods.source_evaluator.assignments import SourceEvaluatorAssignmentMixin
+from methods.source_evaluator.case import SourceEvaluatorCaseMixin
 from methods.source_evaluator.commands import SourceEvaluatorCommandMixin
 from methods.source_evaluator.conditions import SourceEvaluatorConditionMixin
+from methods.source_evaluator.condition_tests import SourceEvaluatorConditionTestMixin
 from methods.source_evaluator.functions import SourceEvaluatorFunctionMixin
 from methods.source_evaluator.loops import SourceEvaluatorLoopMixin
 from methods.source_evaluator.retained_helpers import SourceEvaluatorRetainedHelperMixin
@@ -19,8 +21,10 @@ from methods.source_evaluator.support import SourceEvaluatorSupportMixin
 
 class SourceEvaluator(
     SourceEvaluatorAssignmentMixin,
+    SourceEvaluatorCaseMixin,
     SourceEvaluatorCommandMixin,
     SourceEvaluatorConditionMixin,
+    SourceEvaluatorConditionTestMixin,
     SourceEvaluatorFunctionMixin,
     SourceEvaluatorLoopMixin,
     SourceEvaluatorRetainedHelperMixin,
