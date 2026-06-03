@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+from functools import partial
 from pathlib import Path
 
+from methods.runtime_evaluator import schema as runtime_schema
 from methods.runtime_evaluator.observations import (
     EnvironmentInfo,
     FILE_FINGERPRINT_ROLES,
@@ -743,30 +745,19 @@ def _edge_to_node(event, source_fingerprint_paths):
     return _missing_source_node(event)
 
 
-def _require_keys(data, expected_keys, label: str):
-    if not isinstance(data, dict):
-        raise RuntimeSourceGraphError(f"{label} must be an object")
-    missing = sorted(expected_keys - set(data))
-    if missing:
-        raise RuntimeSourceGraphError(f"{label} missing required keys: {', '.join(missing)}")
-    unknown = sorted(set(data) - expected_keys)
-    if unknown:
-        raise RuntimeSourceGraphError(f"{label} has unknown keys: {', '.join(unknown)}")
+def _schema_error(message: str):
+    return RuntimeSourceGraphError(message)
 
 
-def _object_list(value, label: str):
-    if not isinstance(value, list):
-        raise RuntimeSourceGraphError(f"{label} must be a list")
-    for index, item in enumerate(value):
-        if not isinstance(item, dict):
-            raise RuntimeSourceGraphError(f"{label}[{index}] must be an object")
-    return value
-
-
-def _string_list(value, label: str):
-    if not isinstance(value, list):
-        raise RuntimeSourceGraphError(f"{label} must be a list")
-    return tuple(_exact_string(item, f"{label}[]") for item in value)
+_require_keys = partial(runtime_schema.require_keys, error_factory=_schema_error)
+_object_list = partial(runtime_schema.object_list, error_factory=_schema_error)
+_string_list = partial(runtime_schema.string_list, error_factory=_schema_error)
+_absolute_path = partial(runtime_schema.absolute_path, error_factory=_schema_error)
+_exact_string = partial(runtime_schema.exact_string, error_factory=_schema_error)
+_nonempty_string = partial(runtime_schema.nonempty_string, error_factory=_schema_error)
+_positive_int = partial(runtime_schema.positive_int, error_factory=_schema_error)
+_nonnegative_int = partial(runtime_schema.nonnegative_int, error_factory=_schema_error)
+_integer = partial(runtime_schema.integer, error_factory=_schema_error)
 
 
 def _call_site(value):
@@ -842,49 +833,6 @@ def _xtrace(value):
         "cwd": _absolute_path(value["cwd"], "edges[].xtrace.cwd"),
         "command": _nonempty_string(value["command"], "edges[].xtrace.command"),
     }
-
-
-def _absolute_path(value, label: str):
-    value = _nonempty_string(value, label)
-    candidate = Path(os.path.expanduser(value))
-    if not candidate.is_absolute():
-        raise RuntimeSourceGraphError(f"{label} must be an absolute path")
-    return str(candidate.resolve(strict=False))
-
-
-def _exact_string(value, label: str):
-    if not isinstance(value, str):
-        raise RuntimeSourceGraphError(f"{label} values must be strings")
-    if "\0" in value:
-        raise RuntimeSourceGraphError(f"{label} values must not contain NUL bytes")
-    return value
-
-
-def _nonempty_string(value, label: str):
-    value = _exact_string(value, label)
-    if not value:
-        raise RuntimeSourceGraphError(f"{label} must not be empty")
-    return value
-
-
-def _positive_int(value, label: str):
-    value = _integer(value, label)
-    if value < 1:
-        raise RuntimeSourceGraphError(f"{label} must be greater than 0")
-    return value
-
-
-def _nonnegative_int(value, label: str):
-    value = _integer(value, label)
-    if value < 0:
-        raise RuntimeSourceGraphError(f"{label} must be greater than or equal to 0")
-    return value
-
-
-def _integer(value, label: str):
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise RuntimeSourceGraphError(f"{label} must be an integer")
-    return value
 
 
 def _parse_int(value: str, label: str):

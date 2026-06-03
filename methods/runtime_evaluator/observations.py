@@ -5,7 +5,10 @@ import os
 import hashlib
 import math
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
+
+from methods.runtime_evaluator import schema as runtime_schema
 
 OBSERVATION_VERSION = 8
 TOP_LEVEL_KEYS = frozenset({
@@ -804,46 +807,20 @@ def _coerce_observation(observation):
     return validate_observation(observation)
 
 
-def _require_keys(data, expected_keys, label: str):
-    if not isinstance(data, dict):
-        raise _schema_error(f"{label} must be an object")
-
-    missing = sorted(expected_keys - set(data))
-    if missing:
-        raise _schema_error(f"{label} missing required keys: {', '.join(missing)}")
-
-    unknown = sorted(set(data) - expected_keys)
-    if unknown:
-        raise _schema_error(f"{label} has unknown keys: {', '.join(unknown)}")
+def _schema_error(message: str):
+    return RuntimeSourceObservationError(message)
 
 
-def _object_list(value, label: str):
-    if not isinstance(value, list):
-        raise _schema_error(f"{label} must be a list")
-    for index, item in enumerate(value):
-        if not isinstance(item, dict):
-            raise _schema_error(f"{label}[{index}] must be an object")
-    return value
-
-
-def _string_list(value, label: str):
-    if not isinstance(value, list):
-        raise _schema_error(f"{label} must be a list")
-    return tuple(_exact_string(item, f"{label}[]") for item in value)
-
-
-def _sequence(value, label: str):
-    if isinstance(value, (str, bytes)) or not hasattr(value, "__iter__"):
-        raise _schema_error(f"{label} must be a sequence")
-    return tuple(value)
-
-
-def _absolute_path(value, label: str):
-    value = _nonempty_string(value, label)
-    candidate = Path(os.path.expanduser(value))
-    if not candidate.is_absolute():
-        raise _schema_error(f"{label} must be an absolute path")
-    return str(candidate.resolve(strict=False))
+_require_keys = partial(runtime_schema.require_keys, error_factory=_schema_error)
+_object_list = partial(runtime_schema.object_list, error_factory=_schema_error)
+_string_list = partial(runtime_schema.string_list, error_factory=_schema_error)
+_sequence = partial(runtime_schema.sequence, error_factory=_schema_error)
+_absolute_path = partial(runtime_schema.absolute_path, error_factory=_schema_error)
+_exact_string = partial(runtime_schema.exact_string, error_factory=_schema_error)
+_nonempty_string = partial(runtime_schema.nonempty_string, error_factory=_schema_error)
+_positive_int = partial(runtime_schema.positive_int, error_factory=_schema_error)
+_nonnegative_int = partial(runtime_schema.nonnegative_int, error_factory=_schema_error)
+_integer = partial(runtime_schema.integer, error_factory=_schema_error)
 
 
 def _environment_key(value, label: str):
@@ -877,35 +854,6 @@ def _file_sha256(path: Path):
     return digest.hexdigest()
 
 
-def _exact_string(value, label: str):
-    if not isinstance(value, str):
-        raise _schema_error(f"{label} values must be strings")
-    if "\0" in value:
-        raise _schema_error(f"{label} values must not contain NUL bytes")
-    return value
-
-
-def _nonempty_string(value, label: str):
-    value = _exact_string(value, label)
-    if not value:
-        raise _schema_error(f"{label} must not be empty")
-    return value
-
-
-def _positive_int(value, label: str):
-    value = _integer(value, label)
-    if value < 1:
-        raise _schema_error(f"{label} must be greater than 0")
-    return value
-
-
-def _nonnegative_int(value, label: str):
-    value = _integer(value, label)
-    if value < 0:
-        raise _schema_error(f"{label} must be greater than or equal to 0")
-    return value
-
-
 def _optional_positive_number(value, label: str):
     if value is None:
         return None
@@ -914,13 +862,3 @@ def _optional_positive_number(value, label: str):
     if not math.isfinite(float(value)) or float(value) <= 0:
         raise _schema_error(f"{label} must be a positive number or null")
     return float(value)
-
-
-def _integer(value, label: str):
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise _schema_error(f"{label} must be an integer")
-    return value
-
-
-def _schema_error(message: str):
-    return RuntimeSourceObservationError(message)
