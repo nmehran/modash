@@ -1613,7 +1613,7 @@ class SourceEvaluator:
 
         for iteration in range(MAX_MODELED_LOOP_ITERATIONS):
             try:
-                condition_status = self._evaluate_condition(node.condition, state)
+                condition_status = self._evaluate_condition(node.condition, state, node, stack)
             except UnsupportedSourceError as exc:
                 if self.mode == "context":
                     if self._node_list_may_source(node.body):

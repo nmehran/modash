@@ -34,7 +34,7 @@ from methods.runtime_source_supplements import (
 )
 from methods.shell_line import get_commands
 from methods.source_effects import SourceSite
-from methods.source_evaluator import SourceOverride
+from methods.source_evaluator import SourceEvaluator, SourceOverride
 from methods.source_frontend import LineParserFrontend
 from methods.source_resolver import (
     UnsupportedSourceError,
@@ -186,11 +186,42 @@ def _source_overrides_from_graph_payload(graph_payload):
 
 
 def _source_override_command(edge):
+    condition_sites = _source_condition_sites(edge["call_site"]["command"])
+    if len(condition_sites) == 1:
+        return condition_sites[0]
+    if len(condition_sites) > 1:
+        xtrace_site = _first_direct_source_site(edge.get("xtrace", {}).get("command", ""))
+        if xtrace_site in condition_sites:
+            return xtrace_site
+
     parsed_sites = _source_sites_on_line(edge["call_site"]["file"], edge["call_site"]["line"])
     if len(parsed_sites) == 1:
         return parsed_sites[0]
     source_site = _first_direct_source_site(edge["call_site"]["command"])
     return source_site or edge["call_site"]["command"]
+
+
+def _source_condition_sites(command: str):
+    condition = _control_source_condition(command)
+    if condition is None:
+        return ()
+    try:
+        atoms = SourceEvaluator._source_logical_condition_atoms_from_text(condition)
+    except UnsupportedSourceError:
+        return ()
+    return tuple(
+        f"{atom.source_command} {atom.source_expression}"
+        for atom in atoms
+        if atom.source_command is not None
+    )
+
+
+def _control_source_condition(command: str):
+    stripped = command.strip()
+    match = re.fullmatch(r'(?:if|elif|while|until)\s+(.+?)(?:\s*;\s*(?:then|do).*)?$', stripped, re.S)
+    if match is None:
+        return None
+    return match.group(1).strip()
 
 
 def _source_sites_on_line(path: str, line: int):
