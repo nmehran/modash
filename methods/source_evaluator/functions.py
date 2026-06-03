@@ -661,7 +661,7 @@ class SourceEvaluatorFunctionMixin:
             "Function return/shift semantics must be exact for source-aware lowering.",
         )
 
-    def _apply_loop_control(self, node: RawCommand, state: EvaluationState):
+    def _apply_loop_control(self, node: RawCommand, state: EvaluationState, stack: tuple[Path, ...]):
         try:
             words = parse_shell_words_preserving_quotes(node.text.strip())
         except UnsupportedSourceError:
@@ -692,7 +692,7 @@ class SourceEvaluatorFunctionMixin:
             raise LoopBreakSignal()
         raise LoopContinueSignal()
 
-    def _apply_array_population_command(self, node: RawCommand, state: EvaluationState):
+    def _apply_array_population_command(self, node: RawCommand, state: EvaluationState, stack: tuple[Path, ...]):
         stripped = node.text.strip()
         if not re.match(r'^(?:mapfile|readarray)\b', stripped):
             return False
@@ -755,7 +755,7 @@ class SourceEvaluatorFunctionMixin:
             "Use mapfile/readarray -t ARRAY < exact_file for modeled dynamic arrays.",
         )
 
-    def _apply_arithmetic_command(self, node: RawCommand, state: EvaluationState):
+    def _apply_arithmetic_command(self, node: RawCommand, state: EvaluationState, stack: tuple[Path, ...]):
         stripped = node.text.strip()
         if not stripped.startswith("((") or not stripped.endswith("))"):
             return False

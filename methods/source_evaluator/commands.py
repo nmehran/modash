@@ -9,36 +9,9 @@ class SourceEvaluatorCommandMixin:
         if self._raw_command_skipped_by_known_status(node, state):
             return
 
-        if self._apply_local_declaration(node, state):
-            return
-
-        if self._apply_function_call(node, state, stack):
-            return
-
-        if self._apply_loop_control(node, state):
-            return
-
-        if self._raw_function_return_command(node):
-            if state.function_body_depth > 0:
-                raise FunctionReturnSignal(self._function_return_status(node, state), node)
-            if state.source_depth > 0:
-                raise SourceReturnSignal(self._function_return_status(node, state), node)
-
-        if self._raw_function_shift_command(node):
-            self._apply_function_shift(node, state)
-            return
-
-        if self._apply_array_population_command(node, state):
-            return
-
-        if self._apply_arithmetic_command(node, state):
-            return
-
-        if self._apply_exact_non_source_eval(node, state):
-            return
-
-        if self._apply_child_shell_sources(node, state, stack):
-            return
+        for handler in self._pre_source_command_handlers():
+            if handler(node, state, stack):
+                return
 
         exact_status = self._raw_exact_status_command(node, state)
         if exact_status is not None:
@@ -102,7 +75,20 @@ class SourceEvaluatorCommandMixin:
                 source_status = self._evaluate_sourced_file(source_path, state, stack)
         state.last_status = source_status
 
-    def _apply_local_declaration(self, node: RawCommand, state: EvaluationState):
+    def _pre_source_command_handlers(self):
+        return (
+            self._apply_local_declaration,
+            self._apply_function_call,
+            self._apply_loop_control,
+            self._apply_return_command,
+            self._apply_shift_command,
+            self._apply_array_population_command,
+            self._apply_arithmetic_command,
+            self._apply_exact_non_source_eval,
+            self._apply_child_shell_sources,
+        )
+
+    def _apply_local_declaration(self, node: RawCommand, state: EvaluationState, stack: tuple[Path, ...]):
         if state.function_body_depth <= 0 or not state.local_scopes:
             return False
         if contains_source_command(node.text) or contains_nested_source_command(node.text):
@@ -149,6 +135,21 @@ class SourceEvaluatorCommandMixin:
                 state.runtime_variables.pop(name, None)
                 state.ambiguous_variables.discard(name)
         state.last_status = 0
+        return True
+
+    def _apply_return_command(self, node: RawCommand, state: EvaluationState, stack: tuple[Path, ...]):
+        if not self._raw_function_return_command(node):
+            return False
+        if state.function_body_depth > 0:
+            raise FunctionReturnSignal(self._function_return_status(node, state), node)
+        if state.source_depth > 0:
+            raise SourceReturnSignal(self._function_return_status(node, state), node)
+        return False
+
+    def _apply_shift_command(self, node: RawCommand, state: EvaluationState, stack: tuple[Path, ...]):
+        if not self._raw_function_shift_command(node):
+            return False
+        self._apply_function_shift(node, state)
         return True
 
     def _apply_child_shell_sources(self, node: RawCommand, state: EvaluationState, stack: tuple[Path, ...]):
@@ -437,7 +438,7 @@ class SourceEvaluatorCommandMixin:
         )
 
 
-    def _apply_exact_non_source_eval(self, node: RawCommand, state: EvaluationState):
+    def _apply_exact_non_source_eval(self, node: RawCommand, state: EvaluationState, stack: tuple[Path, ...]):
         try:
             words = parse_shell_words_preserving_quotes(node.text.strip())
         except UnsupportedSourceError:
