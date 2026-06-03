@@ -1,16 +1,18 @@
 import os
 
+from methods.compile_context import (
+    context_from_source_events,
+    context_paths_from_source_events,
+    render_context_files,
+    write_output,
+)
 from methods.compile_renderer import (
     SET_SHEBANG,
     assert_no_unresolved_source_sites,
-    context_from_source_events,
-    context_paths_from_source_events,
     find_unquoted_substring,
     line_contains_unresolved_source,
-    render_context_files,
     render_executable_script,
     replace_runtime_source_references,
-    write_output,
 )
 from methods.source_evaluator import SourceEvaluator
 from methods.source_supplements import load_source_supplement
