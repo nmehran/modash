@@ -616,6 +616,44 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(helper_event.call_site.line, 2)
         self.assertEqual(helper_event.call_site.command, 'source "$@"')
 
+    def test_trace_records_sourced_helper_builtin_source_call(self):
+        with ScriptProject() as project:
+            library = project.write("lib.sh", 'load() { builtin source "$1"; }\n')
+            dependency = project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write("main.sh", "source ./lib.sh\nload ./dep.sh\n")
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(
+            [event.resolved_path for event in result.observation.sources],
+            [str(library.resolve(strict=False)), str(dependency.resolve(strict=False))],
+        )
+        helper_event = result.observation.sources[1]
+        self.assertEqual(helper_event.call_site.file, str(library.resolve(strict=False)))
+        self.assertEqual(helper_event.call_site.command, 'load() { builtin source "$1"; }')
+        self.assertEqual(result.observation.xtrace[helper_event.xtrace_index].command, "builtin source ./dep.sh")
+
+    def test_trace_records_sourced_helper_command_source_call(self):
+        with ScriptProject() as project:
+            library = project.write("lib.sh", 'load() { command source "$1"; }\n')
+            dependency = project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write("main.sh", "source ./lib.sh\nload ./dep.sh\n")
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(
+            [event.resolved_path for event in result.observation.sources],
+            [str(library.resolve(strict=False)), str(dependency.resolve(strict=False))],
+        )
+        helper_event = result.observation.sources[1]
+        self.assertEqual(helper_event.call_site.file, str(library.resolve(strict=False)))
+        self.assertEqual(helper_event.call_site.command, 'load() { command source "$1"; }')
+        self.assertEqual(result.observation.xtrace[helper_event.xtrace_index].command, "command source ./dep.sh")
+
     def test_trace_uses_sourced_function_definition_file_during_parent_source(self):
         with ScriptProject() as project:
             library = project.write("lib.sh", 'load() { source "$1"; }\n')
@@ -1104,6 +1142,20 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
         self.assertIn("load", str(context.exception))
 
+    def test_trace_fails_closed_on_single_eval_function_provenance(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write("lib.sh", 'eval \'load() { source "$1"; }\'\n')
+            project.write("dep.sh", f"touch {str(sentinel)!r}\n")
+            project.write("main.sh", "source ./lib.sh\nload ./dep.sh\n")
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh")
+
+        self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
+        self.assertIn("load", str(context.exception))
+        self.assertFalse(sentinel.exists())
+
     def test_trace_fails_closed_on_dynamic_eval_function_provenance(self):
         with ScriptProject() as project:
             for directory in ("dir1", "dir2"):
@@ -1133,6 +1185,27 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
 
         self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
         self.assertIn("load", str(context.exception))
+
+    def test_trace_fails_closed_on_single_dynamic_eval_function_provenance(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write(
+                "lib.sh",
+                "\n".join([
+                    'body=\'load() { source "$1"; }\'',
+                    'eval "$body"',
+                    "",
+                ]),
+            )
+            project.write("dep.sh", f"touch {str(sentinel)!r}\n")
+            project.write("main.sh", "source ./lib.sh\nload ./dep.sh\n")
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh")
+
+        self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
+        self.assertIn("load", str(context.exception))
+        self.assertFalse(sentinel.exists())
 
     def test_trace_fails_closed_on_trap_function_provenance(self):
         with ScriptProject() as project:
@@ -1166,6 +1239,27 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
         self.assertIn("load", str(context.exception))
 
+    def test_trace_fails_closed_on_single_trap_function_provenance(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write(
+                "lib.sh",
+                "\n".join([
+                    'trap \'load() { source "$1"; }\' USR1',
+                    "kill -USR1 $$",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", f"touch {str(sentinel)!r}\n")
+            project.write("main.sh", "source ./lib.sh\nload ./dep.sh\n")
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh")
+
+        self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
+        self.assertIn("load", str(context.exception))
+        self.assertFalse(sentinel.exists())
+
     def test_trace_fails_closed_on_alias_function_provenance(self):
         with ScriptProject() as project:
             for directory in ("dir1", "dir2"):
@@ -1197,6 +1291,52 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
 
         self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
         self.assertIn("load", str(context.exception))
+
+    def test_trace_fails_closed_on_single_alias_function_provenance(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write(
+                "lib.sh",
+                "\n".join([
+                    "shopt -s expand_aliases",
+                    'alias make_load=\'load() { source "$1"; }\'',
+                    "make_load",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", f"touch {str(sentinel)!r}\n")
+            project.write("main.sh", "source ./lib.sh\nload ./dep.sh\n")
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh")
+
+        self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
+        self.assertIn("load", str(context.exception))
+        self.assertFalse(sentinel.exists())
+
+    def test_trace_fails_closed_on_exported_function_call_site(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write(
+                "lib.sh",
+                "\n".join([
+                    "load() {",
+                    '  source "$1"',
+                    "}",
+                    "export -f load",
+                    "",
+                ]),
+            )
+            project.write("child.sh", "load ./dep.sh\n")
+            project.write("dep.sh", f"touch {str(sentinel)!r}\n")
+            project.write("main.sh", "source ./lib.sh\nbash ./child.sh\n")
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh")
+
+        self.assertEqual(context.exception.code, "runtime.trace.untrusted-call-site")
+        self.assertIn("stable source call site", str(context.exception))
+        self.assertFalse(sentinel.exists())
 
     def test_trace_tracks_function_provenance_when_extdebug_is_enabled(self):
         with ScriptProject() as project:

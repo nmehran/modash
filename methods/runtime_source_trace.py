@@ -406,7 +406,7 @@ def condition_truth(condition):
 def collect_definitions(nodes, status, records):
     for node in nodes:
         if isinstance(node, FunctionDef):
-            records.add((status, node.name))
+            records.add((status, node.name, node.location.line))
             for child in node.body:
                 collect_unknown_definitions(child, records)
         elif isinstance(node, IfBlock):
@@ -417,7 +417,7 @@ def collect_definitions(nodes, status, records):
 
 def collect_unknown_definitions(node, records):
     if isinstance(node, FunctionDef):
-        records.add(("unknown", node.name))
+        records.add(("unknown", node.name, node.location.line))
         for child in node.body:
             collect_unknown_definitions(child, records)
     elif isinstance(node, IfBlock):
@@ -552,10 +552,10 @@ def main(argv):
         if line_number in dead_lines:
             continue
         for name in names:
-            if not any(record_name == name for _, record_name in records):
-                records.add(("unknown", name))
-    for status, name in sorted(records):
-        print(f"{{status}}\\t{{name}}")
+            if not any(record_name == name for _, record_name, _ in records):
+                records.add(("unknown", name, line_number))
+    for status, name, line_number in sorted(records):
+        print(f"{{status}}\\t{{name}}\\t{{line_number}}")
     return 0
 
 
@@ -1406,6 +1406,8 @@ def _is_xtrace_source_like(command: str):
     command = command.strip()
     if not command:
         return False
+    if _parse_xtrace_source_invocation(command) is not None:
+        return True
     return (
         command == "source"
         or command.startswith("source ")
@@ -1627,12 +1629,11 @@ __modash_function_definition_metadata() {
 }
 
 __modash_record_sourced_functions() {
-  local resolved_path=$1 name declared_name current_definition current_metadata definition_file definition_path
+  local resolved_path=$1 name declared_name declared_line current_metadata definition_file definition_line definition_path
   local scanner_status function_records function_record_status function_records_loaded=0
-  local -n definitions_before_ref=$2
-  local -n metadata_before_ref=$3
   local -A live_function_map=()
   local -A unknown_function_map=()
+  local -A unknown_function_line_map=()
 
   while IFS= read -r name; do
     [[ -n $name ]] || continue
@@ -1641,50 +1642,49 @@ __modash_record_sourced_functions() {
         continue
         ;;
     esac
-    current_definition=$(declare -f "$name")
     current_metadata=$(__modash_function_definition_metadata "$name") || continue
+    definition_line=${current_metadata%%$'\t'*}
     definition_file=${current_metadata#*$'\t'}
     definition_path=$(__modash_current_source_file "$definition_file" "")
     [[ $definition_path == "$resolved_path" ]] || continue
-    if [[ -n ${definitions_before_ref[$name]+set} \
-      && ${definitions_before_ref[$name]} == "$current_definition" \
-      && ${metadata_before_ref[$name]-} == "$current_metadata" ]]; then
-      if ((function_records_loaded == 0)); then
-        function_records_loaded=1
-        function_records=$("$MODASH_TRACE_PYTHON" "$MODASH_TRACE_FUNCTION_SCANNER" "$resolved_path")
-        scanner_status=$?
-        case "$scanner_status" in
-          0)
-            while IFS=$'\t' read -r function_record_status declared_name; do
-              [[ -n $declared_name ]] || continue
-              case "$function_record_status" in
-                live)
-                  live_function_map["$declared_name"]=1
-                  ;;
-                unknown)
+    if ((function_records_loaded == 0)); then
+      function_records_loaded=1
+      function_records=$("$MODASH_TRACE_PYTHON" "$MODASH_TRACE_FUNCTION_SCANNER" "$resolved_path")
+      scanner_status=$?
+      case "$scanner_status" in
+        0)
+          while IFS=$'\t' read -r function_record_status declared_name declared_line; do
+            [[ -n $declared_name ]] || continue
+            case "$function_record_status" in
+              live)
+                live_function_map["$declared_name"]=1
+                ;;
+              unknown)
+                if [[ $declared_name == "*" && -n $declared_line ]]; then
+                  unknown_function_line_map["$declared_line"]=1
+                else
                   unknown_function_map["$declared_name"]=1
-                  ;;
-              esac
-            done <<< "$function_records"
-            ;;
-          1)
-            ;;
-          *)
-            __modash_trace_abort \
-              "runtime.trace.function-scanner" \
-              "modash: runtime trace could not scan sourced function definitions: ${resolved_path}"
-            ;;
-        esac
-      fi
-      if [[ -n ${live_function_map[$name]+set} ]]; then
-        :
-      elif [[ -n ${unknown_function_map[$name]+set} || -n ${unknown_function_map["*"]+set} ]]; then
-        __modash_trace_abort \
-          "runtime.trace.ambiguous-function-provenance" \
-          "modash: runtime trace cannot disambiguate branch-dependent function provenance: ${name} in ${resolved_path}"
-      else
-        continue
-      fi
+                fi
+                ;;
+            esac
+          done <<< "$function_records"
+          ;;
+        1)
+          ;;
+        *)
+          __modash_trace_abort \
+            "runtime.trace.function-scanner" \
+            "modash: runtime trace could not scan sourced function definitions: ${resolved_path}"
+          ;;
+      esac
+    fi
+    if [[ -n ${unknown_function_map[$name]+set} || -n ${unknown_function_line_map[$definition_line]+set} ]]; then
+      __modash_trace_abort \
+        "runtime.trace.ambiguous-function-provenance" \
+        "modash: runtime trace cannot disambiguate branch-dependent function provenance: ${name} in ${resolved_path}"
+    fi
+    if [[ -z ${live_function_map[$name]+set} ]]; then
+      continue
     fi
     __modash_function_file_map["$name"]=$resolved_path
     __modash_function_metadata_map["$name"]=$current_metadata
@@ -1780,9 +1780,9 @@ __modash_trace_source_common() {
   event_index=$(__modash_next_source_index)
 
   local caller_file caller_line cwd source_path resolved_path status source_arg_count track_functions
-  local function_name function_definition function_metadata
+  local function_name function_definition
   local -a source_args explicit_source_args
-  local -A function_definitions_before function_metadata_before
+  local -A function_definitions_before
   source_args=("$@")
   source_arg_count=${#source_args[@]}
   caller_file=$(__modash_current_source_file "${BASH_SOURCE[2]:-}" "${FUNCNAME[2]:-}")
@@ -1791,6 +1791,12 @@ __modash_trace_source_common() {
   source_path=${source_args[0]-}
   resolved_path=$(__modash_resolve_source_path "$source_path")
   track_functions=0
+
+  if ! [[ $caller_line =~ ^[0-9]+$ ]] || ((caller_line < 1)); then
+    __modash_trace_abort \
+      "runtime.trace.untrusted-call-site" \
+      "modash: runtime trace cannot identify a stable source call site for ${source_path}"
+  fi
 
   if ((source_arg_count == 1)); then
     if ((__modash_caller_positionals_captured == 0)); then
@@ -1810,9 +1816,7 @@ __modash_trace_source_common() {
     while IFS= read -r function_name; do
       [[ -n $function_name ]] || continue
       function_definition=$(declare -f "$function_name")
-      function_metadata=$(__modash_function_definition_metadata "$function_name" || true)
       function_definitions_before["$function_name"]=$function_definition
-      function_metadata_before["$function_name"]=$function_metadata
     done < <(compgen -A function)
   fi
 
@@ -1836,7 +1840,7 @@ __modash_trace_source_common() {
 
   if ((track_functions)); then
     __modash_forget_deleted_sourced_functions function_definitions_before
-    __modash_record_sourced_functions "$resolved_path" function_definitions_before function_metadata_before
+    __modash_record_sourced_functions "$resolved_path"
   fi
 
   if [[ -n $source_path ]]; then
