@@ -27,6 +27,9 @@
 - Trusted runtime graph replay now records file-backed helper-call provenance
   for dynamic wrapper helpers and uses it to replay the observed parent helper
   call without guessing through transitive helper bodies.
+- Runtime tracing now attributes source calls in sourced one-line helper
+  functions to the helper definition file even while the parent file is still
+  being sourced, preventing duplicate parent-source graph edges.
 - Graph-backed dynamic helper dispatch now uses the next unconsumed observed
   source edge to disambiguate between multiple source-capable helpers.
 - The real-world harness now distinguishes promoted static expectations from
@@ -37,7 +40,7 @@
 
 ### Validation
 
-- Full unit suite: `527` tests, `8` skipped.
+- Full unit suite: `531` tests, `8` skipped.
 - Opt-in real-world suite with runtime trace, supplement replay, runtime
   parity, trusted graph replay, and observe-compile gates: `15` tests, `1`
   skipped, covering `62` pinned compile expectations, `10` trusted graph replay

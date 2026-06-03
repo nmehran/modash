@@ -761,6 +761,40 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, expected.returncode, result.stdout)
         self.assertEqual(result.stdout, expected.stdout)
 
+    def test_sourced_runner_dynamic_helper_graph_replays_definition_call_site(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./runner.sh\n")
+            project.write(
+                "runner.sh",
+                "\n".join([
+                    "source ./lib.sh",
+                    '"$MODASH_TEST_HELPER" ./dep.sh',
+                    "",
+                ]),
+            )
+            project.write("lib.sh", 'load() { source "$1"; }\n')
+            project.write("dep.sh", 'printf "dep\\n"\n')
+            expected = project.run("main.sh", env={"MODASH_TEST_HELPER": "load"})
+            trace = project.trace("main.sh", env={"MODASH_TEST_HELPER": "load"})
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            self.assertEqual(
+                [Path(edge["call_site"]["file"]).name for edge in graph["edges"]],
+                ["main.sh", "runner.sh", "lib.sh"],
+            )
+            self.assertEqual(graph["edges"][2]["function_call"]["function"], "load")
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled, env={"MODASH_TEST_HELPER": "load"})
+
+        self.assertEqual(expected.returncode, 0, expected.stdout)
+        self.assertEqual(trace.returncode, expected.returncode, trace.stderr)
+        self.assertEqual(trace.stdout, expected.stdout)
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
+
     def test_dynamic_helper_name_graph_replays_mixed_short_circuit_edges(self):
         with ScriptProject() as project:
             entrypoint = project.write(

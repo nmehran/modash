@@ -17,6 +17,7 @@ from methods.runtime_source_observations import (
     load_observation,
     validate_observation,
 )
+from methods.source_resolver import parse_shell_words_preserving_quotes, strip_shell_word_quotes
 
 GRAPH_VERSION = 2
 GRAPH_TOP_LEVEL_KEYS = frozenset({
@@ -315,9 +316,9 @@ def validate_observed_source_graph(data):
         status = _nonnegative_int(edge.get("status"), "edges[].status")
         _string_list(edge.get("arguments"), "edges[].arguments")
         call_site = _call_site(edge.get("call_site"))
-        _string_list(edge.get("function_stack"), "edges[].function_stack")
+        function_stack = _string_list(edge.get("function_stack"), "edges[].function_stack")
         function_call = _function_call(edge.get("function_call"))
-        _validate_function_call(function_call, file_roles)
+        _validate_function_call(function_call, function_stack, file_roles)
         xtrace = _xtrace(edge.get("xtrace"))
         xtrace_indexes.append(xtrace["index"])
         _validate_edge_from_node(edge, node_ids[edge["from"]], process_index, call_site, file_roles)
@@ -814,13 +815,39 @@ def _function_call(value):
     }
 
 
-def _validate_function_call(function_call, file_roles):
+def _validate_function_call(function_call, function_stack, file_roles):
     if function_call is None:
         return
     if str(Path(function_call["file"]).resolve(strict=False)) not in file_roles:
         raise RuntimeSourceGraphError(
             "edges[].function_call.file must have a file fingerprint",
         )
+    if function_call["function"] not in function_stack:
+        raise RuntimeSourceGraphError(
+            "edges[].function_call.function must be present in edges[].function_stack",
+        )
+    parsed = _function_call_command(function_call["command"])
+    if parsed is None:
+        raise RuntimeSourceGraphError("edges[].function_call.command must be a shell function call")
+    function_name, arguments = parsed
+    if function_name != function_call["function"] or arguments != function_call["arguments"]:
+        raise RuntimeSourceGraphError(
+            "edges[].function_call.command must match function and arguments",
+        )
+
+
+def _function_call_command(command: str):
+    try:
+        words = parse_shell_words_preserving_quotes(command)
+    except Exception:
+        return None
+    if not words:
+        return None
+    function_name = strip_shell_word_quotes(words[0])
+    if not function_name:
+        return None
+    arguments = tuple(strip_shell_word_quotes(word) for word in words[1:])
+    return function_name, arguments
 
 
 def _xtrace(value):

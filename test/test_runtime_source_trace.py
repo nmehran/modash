@@ -616,6 +616,32 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(helper_event.call_site.line, 2)
         self.assertEqual(helper_event.call_site.command, 'source "$@"')
 
+    def test_trace_uses_sourced_function_definition_file_during_parent_source(self):
+        with ScriptProject() as project:
+            library = project.write("lib.sh", 'load() { source "$1"; }\n')
+            runner = project.write(
+                "runner.sh",
+                'source ./lib.sh\n"$MODASH_TEST_HELPER" ./dep.sh\n',
+            )
+            dependency = project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write("main.sh", "source ./runner.sh\n")
+
+            result = project.trace("main.sh", env={"MODASH_TEST_HELPER": "load"})
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(
+            [Path(event.call_site.file).name for event in result.observation.sources],
+            ["main.sh", "runner.sh", "lib.sh"],
+        )
+        helper_event = result.observation.sources[2]
+        self.assertEqual(helper_event.call_site.file, str(library.resolve(strict=False)))
+        self.assertEqual(helper_event.call_site.line, 1)
+        self.assertEqual(helper_event.resolved_path, str(dependency.resolve(strict=False)))
+        self.assertEqual(helper_event.function_call.file, str(runner.resolve(strict=False)))
+        self.assertEqual(helper_event.function_call.line, 2)
+        self.assertEqual(helper_event.function_call.function, "load")
+
     def test_trace_records_child_bash_script_sources(self):
         with ScriptProject() as project:
             parent = project.write("main.sh", 'bash ./child.sh\n')

@@ -369,6 +369,8 @@ class RuntimeSourceEvent:
         )
         if self.function_call is not None and not isinstance(self.function_call, RuntimeFunctionCall):
             raise _schema_error("sources[].function_call must be null or a RuntimeFunctionCall")
+        if self.function_call is not None and self.function_call.function not in self.function_stack:
+            raise _schema_error("sources[].function_call.function must be present in sources[].function_stack")
         object.__setattr__(self, "status", _nonnegative_int(self.status, "sources[].status"))
 
     @classmethod
@@ -718,6 +720,13 @@ def _validate_fingerprint_coverage(entrypoint: str, processes, sources, files):
                 event.call_site.file,
                 "call-site",
                 "sources[].call_site.file",
+            )
+        if event.function_call is not None:
+            _require_fingerprint_role(
+                roles_by_path,
+                event.function_call.file,
+                "call-site",
+                "sources[].function_call.file",
             )
 
 

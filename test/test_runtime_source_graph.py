@@ -310,6 +310,24 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
 
         self.assertIn("function_call.file must have a file fingerprint", str(context.exception))
 
+    def test_validate_graph_rejects_function_call_outside_recorded_stack(self):
+        graph = self._dynamic_helper_graph()
+        graph["edges"][0]["function_call"]["function"] = "other"
+
+        with self.assertRaises(RuntimeSourceGraphError) as context:
+            validate_observed_source_graph(graph)
+
+        self.assertIn("function_call.function must be present", str(context.exception))
+
+    def test_validate_graph_rejects_function_call_command_tampering(self):
+        graph = self._dynamic_helper_graph()
+        graph["edges"][0]["function_call"]["arguments"] = ["./other.sh"]
+
+        with self.assertRaises(RuntimeSourceGraphError) as context:
+            validate_observed_source_graph(graph)
+
+        self.assertIn("function_call.command must match", str(context.exception))
+
     def test_validate_graph_rejects_missing_source_target_tampering(self):
         graph = self._missing_source_graph()
         graph["edges"][0]["status"] = 0
@@ -450,6 +468,23 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
             project.write("one.sh", "echo one\n")
             project.write("two.sh", "echo two\n")
             graph = build_observed_source_graph(entrypoint, project.trace("main.sh").observation)
+        return copy.deepcopy(graph)
+
+    def _dynamic_helper_graph(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'load() { source "$1"; }',
+                    '"$MODASH_TEST_HELPER" ./dep.sh',
+                    "",
+                ]),
+            )
+            project.write("dep.sh", "echo dep\n")
+            graph = build_observed_source_graph(
+                entrypoint,
+                project.trace("main.sh", env={"MODASH_TEST_HELPER": "load"}).observation,
+            )
         return copy.deepcopy(graph)
 
 

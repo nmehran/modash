@@ -607,6 +607,8 @@ def _observation_file_fingerprints(entrypoint_path, events):
     for event in events:
         if _is_file_backed_call_site(event.call_site):
             add_role(event.call_site.file, "call-site")
+        if event.function_call is not None and Path(event.function_call.file).is_file():
+            add_role(event.function_call.file, "call-site")
         resolved_path = Path(event.resolved_path).resolve(strict=False)
         if resolved_path.is_file():
             add_role(resolved_path, "source")
@@ -806,8 +808,12 @@ def _reconcile_xtrace_source_coverage(raw_events, xtrace_commands):
         commands = sorted(commands, key=lambda item: item.index)
         for occurrence, (event, command) in enumerate(zip(events, commands)):
             event_file = str(Path(event.caller_file).resolve(strict=False))
-            command_file = _normalized_xtrace_file(command, event)
-            if command.file and event_file != command_file:
+            command_file = _normalized_xtrace_file(command, None)
+            if (
+                command.file
+                and event_file != command_file
+                and not _trusted_xtrace_call_site_file_alias(event, command, command_file)
+            ):
                 raise RuntimeSourceTraceError(
                     "runtime source trace/xtrace call-site mismatch: "
                     f"source event {event.caller_file}:{event.caller_line} "
@@ -1068,15 +1074,45 @@ def _source_key_sort_tuple(key: _SourceInvocationKey):
 
 
 def _normalized_xtrace_file(command: _XtraceSourceCommand, event: _RawSourceEvent | None):
-    if not command.file:
-        if event is None:
-            return str(Path(command.cwd).resolve(strict=False))
-        return str(Path(event.caller_file).resolve(strict=False))
+    if event is not None:
+        event_file = str(Path(event.caller_file).resolve(strict=False))
+        if not command.file:
+            return event_file
+        command_file = _normalized_xtrace_command_file(command)
+        if _trusted_xtrace_call_site_file_alias(event, command, command_file):
+            return event_file
+        return command_file
 
+    if not command.file:
+        return str(Path(command.cwd).resolve(strict=False))
+    return _normalized_xtrace_command_file(command)
+
+
+def _normalized_xtrace_command_file(command: _XtraceSourceCommand):
     candidate = Path(command.file)
     if not candidate.is_absolute():
         candidate = Path(command.cwd) / candidate
     return str(candidate.resolve(strict=False))
+
+
+def _trusted_xtrace_call_site_file_alias(
+    event: _RawSourceEvent,
+    command: _XtraceSourceCommand,
+    command_file: str,
+):
+    event_file = str(Path(event.caller_file).resolve(strict=False))
+    if event_file == command_file:
+        return False
+    event_line = _source_line(event_file, event.caller_line)
+    if not _is_xtrace_source_like(event_line):
+        return False
+    invocation = _parse_xtrace_source_invocation(command.command)
+    if invocation is None:
+        return False
+    return (
+        invocation.source_path == event.source_path
+        and invocation.arguments == event.arguments
+    )
 
 
 def _xtrace_commands(raw_xtrace: bytes, *, prelude_path: str):
@@ -1331,14 +1367,14 @@ __modash_resolve_source_path() {
 __modash_current_source_file() {
   local bash_source=${1-}
   local depth=${#__modash_source_stack[@]}
-  if (( depth > 0 )); then
-    printf '%s' "${__modash_source_stack[$((depth - 1))]}"
-  elif [[ -n $bash_source && -n ${__modash_source_file_map[$bash_source]+set} ]]; then
+  if [[ -n $bash_source && -n ${__modash_source_file_map[$bash_source]+set} ]]; then
     printf '%s' "${__modash_source_file_map[$bash_source]}"
   elif [[ -n $bash_source && $bash_source == /* ]]; then
     printf '%s' "$bash_source"
   elif [[ -n $bash_source && $bash_source != "$0" ]]; then
     printf '%s/%s' "$MODASH_TRACE_INITIAL_CWD" "$bash_source"
+  elif (( depth > 0 )); then
+    printf '%s' "${__modash_source_stack[$((depth - 1))]}"
   else
     printf '%s' "$__modash_trace_process_entrypoint"
   fi
