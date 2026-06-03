@@ -978,6 +978,33 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
         self.assertIn("load", str(context.exception))
 
+    def test_trace_fails_closed_on_eval_function_provenance(self):
+        with ScriptProject() as project:
+            for directory in ("dir1", "dir2"):
+                project.write(
+                    f"{directory}/lib.sh",
+                    'eval \'load() { source "$1"; }\'\n',
+                )
+            project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write(
+                "main.sh",
+                "\n".join([
+                    "cd dir1",
+                    "source ./lib.sh",
+                    "cd ../dir2",
+                    "source ./lib.sh",
+                    "cd ..",
+                    "load ./dep.sh",
+                    "",
+                ]),
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh")
+
+        self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
+        self.assertIn("load", str(context.exception))
+
     def test_trace_tracks_function_provenance_when_extdebug_is_enabled(self):
         with ScriptProject() as project:
             library = project.write("lib.sh", 'load() { source "$1"; }\n')

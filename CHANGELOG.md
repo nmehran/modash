@@ -34,7 +34,7 @@
   `BASH_SOURCE` path text, so helper calls remain attributable when multiple
   directories source files with the same relative name or redefine identical
   helper bodies, without treating inert heredoc text as a live definition or
-  accepting branch/control-context provenance that cannot be trusted.
+  accepting branch/control/eval-context provenance that cannot be trusted.
 - Graph-backed dynamic helper dispatch now uses the next unconsumed observed
   source edge to disambiguate between multiple source-capable helpers.
 - The real-world harness now distinguishes promoted static expectations from
@@ -45,7 +45,7 @@
 
 ### Validation
 
-- Full unit suite: `544` tests, `8` skipped.
+- Full unit suite: `545` tests, `8` skipped.
 - Opt-in real-world suite with runtime trace, supplement replay, runtime
   parity, trusted graph replay, and observe-compile gates: `15` tests, `1`
   skipped, covering `62` pinned compile expectations, `10` trusted graph replay

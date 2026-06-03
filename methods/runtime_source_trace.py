@@ -386,6 +386,10 @@ FUNCTION_DECLARATION_PATTERN = re.compile(
     r"(?=(?:^|[;&|(){{}}]|\\bthen\\b|\\bdo\\b)\\s*"
     r"(?:(?:function\\s+([a-zA-Z_]\\w*)(?:\\s*\\(\\s*\\))?)|([a-zA-Z_]\\w*)\\s*\\(\\s*\\))\\s*(?:\\{{|$))"
 )
+EVAL_COMMAND_PATTERN = re.compile(r"(?:^|[;&|()]|\\bthen\\b|\\bdo\\b)\\s*eval(?:\\s|$)")
+EMBEDDED_FUNCTION_DECLARATION_PATTERN = re.compile(
+    r"(?:(?:function\\s+([a-zA-Z_]\\w*)(?:\\s*\\(\\s*\\))?)|([a-zA-Z_]\\w*)\\s*\\(\\s*\\))\\s*\\{{"
+)
 
 
 def condition_truth(condition):
@@ -506,6 +510,11 @@ def possible_function_names_by_line(content):
             name = match.group(1) or match.group(2)
             if name:
                 names_by_line.setdefault(index, set()).add(name)
+        if EVAL_COMMAND_PATTERN.search(code_line):
+            for match in EMBEDDED_FUNCTION_DECLARATION_PATTERN.finditer(code_line):
+                name = match.group(1) or match.group(2)
+                if name:
+                    names_by_line.setdefault(index, set()).add(name)
         active_heredocs.extend(extract_heredoc_delimiters(line))
     return names_by_line
 
