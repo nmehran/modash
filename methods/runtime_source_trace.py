@@ -366,11 +366,46 @@ if REPO_ROOT and REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 try:
-    from methods.source_effects import FunctionDef
+    from methods.source_effects import FunctionDef, IfBlock
     from methods.source_frontend import LineParserFrontend
 except Exception as exc:
     print(f"modash function scanner import failed: {{exc}}", file=sys.stderr)
     sys.exit(2)
+
+
+def condition_truth(condition):
+    normalized = " ".join((condition or "").strip().split())
+    if normalized in ("true", ":"):
+        return True
+    if normalized == "false":
+        return False
+    return None
+
+
+def collect_definitions(nodes, status, records):
+    for node in nodes:
+        if isinstance(node, FunctionDef):
+            records.add((status, node.name))
+        elif isinstance(node, IfBlock):
+            collect_if_block(node, status, records)
+
+
+def collect_if_block(node, status, records):
+    branch_unknown = False
+    for branch in node.branches:
+        if branch.condition is None:
+            collect_definitions(branch.body, "unknown" if branch_unknown else status, records)
+            return
+
+        truth = condition_truth(branch.condition)
+        if truth is True:
+            collect_definitions(branch.body, "unknown" if branch_unknown else status, records)
+            return
+        if truth is False:
+            continue
+
+        branch_unknown = True
+        collect_definitions(branch.body, "unknown", records)
 
 
 def main(argv):
@@ -388,11 +423,10 @@ def main(argv):
     except Exception as exc:
         print(f"modash function scanner failed for {{path}}: {{exc}}", file=sys.stderr)
         return 2
-    seen = set()
-    for node in ir.nodes:
-        if isinstance(node, FunctionDef) and node.name not in seen:
-            seen.add(node.name)
-            print(node.name)
+    records = set()
+    collect_definitions(ir.nodes, "live", records)
+    for status, name in sorted(records):
+        print(f"{{status}}\\t{{name}}")
     return 0
 
 
@@ -1444,10 +1478,11 @@ __modash_function_definition_metadata() {
 
 __modash_record_sourced_functions() {
   local resolved_path=$1 name declared_name current_definition current_metadata definition_file definition_path
-  local scanner_status top_level_function_names top_level_functions_loaded=0
+  local scanner_status function_records function_record_status function_records_loaded=0
   local -n definitions_before_ref=$2
   local -n metadata_before_ref=$3
-  local -A top_level_function_map=()
+  local -A live_function_map=()
+  local -A unknown_function_map=()
 
   while IFS= read -r name; do
     [[ -n $name ]] || continue
@@ -1456,16 +1491,23 @@ __modash_record_sourced_functions() {
     if [[ -n ${definitions_before_ref[$name]+set} \
       && ${definitions_before_ref[$name]} == "$current_definition" \
       && ${metadata_before_ref[$name]-} == "$current_metadata" ]]; then
-      if ((top_level_functions_loaded == 0)); then
-        top_level_functions_loaded=1
-        top_level_function_names=$("$MODASH_TRACE_PYTHON" "$MODASH_TRACE_FUNCTION_SCANNER" "$resolved_path")
+      if ((function_records_loaded == 0)); then
+        function_records_loaded=1
+        function_records=$("$MODASH_TRACE_PYTHON" "$MODASH_TRACE_FUNCTION_SCANNER" "$resolved_path")
         scanner_status=$?
         case "$scanner_status" in
           0)
-            while IFS= read -r declared_name; do
+            while IFS=$'\t' read -r function_record_status declared_name; do
               [[ -n $declared_name ]] || continue
-              top_level_function_map["$declared_name"]=1
-            done <<< "$top_level_function_names"
+              case "$function_record_status" in
+                live)
+                  live_function_map["$declared_name"]=1
+                  ;;
+                unknown)
+                  unknown_function_map["$declared_name"]=1
+                  ;;
+              esac
+            done <<< "$function_records"
             ;;
           1)
             ;;
@@ -1476,7 +1518,15 @@ __modash_record_sourced_functions() {
             ;;
         esac
       fi
-      [[ -n ${top_level_function_map[$name]+set} ]] || continue
+      if [[ -n ${live_function_map[$name]+set} ]]; then
+        :
+      elif [[ -n ${unknown_function_map[$name]+set} ]]; then
+        __modash_trace_abort \
+          "runtime.trace.ambiguous-function-provenance" \
+          "modash: runtime trace cannot disambiguate branch-dependent function provenance: ${name} in ${resolved_path}"
+      else
+        continue
+      fi
     fi
     definition_file=${current_metadata#*$'\t'}
     definition_path=$(__modash_current_source_file "$definition_file" "")

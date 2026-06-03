@@ -801,6 +801,88 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(result.observation.sources[1].resolved_path, str(second_library.resolve(strict=False)))
         self.assertEqual(result.observation.sources[2].call_site.file, str(second_library.resolve(strict=False)))
 
+    def test_trace_updates_same_line_branch_function_provenance(self):
+        with ScriptProject() as project:
+            first_library = project.write(
+                "dir1/lib.sh",
+                "\n".join([
+                    "if true; then",
+                    '  load() { source "$1"; }',
+                    "fi",
+                    "",
+                ]),
+            )
+            second_library = project.write(
+                "dir2/lib.sh",
+                "\n".join([
+                    "if true; then",
+                    '  load() { source "$1"; }',
+                    "fi",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write(
+                "main.sh",
+                "\n".join([
+                    "cd dir1",
+                    "source ./lib.sh",
+                    "cd ../dir2",
+                    "source ./lib.sh",
+                    "cd ..",
+                    "load ./dep.sh",
+                    "",
+                ]),
+            )
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(result.observation.sources[0].resolved_path, str(first_library.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[1].resolved_path, str(second_library.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[2].call_site.file, str(second_library.resolve(strict=False)))
+
+    def test_trace_fails_closed_on_ambiguous_branch_function_provenance(self):
+        with ScriptProject() as project:
+            project.write(
+                "dir1/lib.sh",
+                "\n".join([
+                    "if true; then",
+                    '  load() { source "$1"; }',
+                    "fi",
+                    "",
+                ]),
+            )
+            project.write(
+                "dir2/lib.sh",
+                "\n".join([
+                    'if [[ ${MODASH_TEST_REDEFINE:-} == yes ]]; then',
+                    '  load() { source "$1"; }',
+                    "fi",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write(
+                "main.sh",
+                "\n".join([
+                    "cd dir1",
+                    "source ./lib.sh",
+                    "cd ../dir2",
+                    "source ./lib.sh",
+                    "cd ..",
+                    "load ./dep.sh",
+                    "",
+                ]),
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh", env={"MODASH_TEST_REDEFINE": "yes"})
+
+        self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
+        self.assertIn("load", str(context.exception))
+
     def test_trace_tracks_function_provenance_when_extdebug_is_enabled(self):
         with ScriptProject() as project:
             library = project.write("lib.sh", 'load() { source "$1"; }\n')
