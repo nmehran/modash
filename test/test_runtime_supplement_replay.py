@@ -795,6 +795,53 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, expected.returncode, result.stdout)
         self.assertEqual(result.stdout, expected.stdout)
 
+    def test_same_relative_sourced_helper_files_replay_definition_call_sites(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    "cd dir1",
+                    "source ./lib.sh",
+                    "cd ../dir2",
+                    "source ./lib.sh",
+                    "cd ..",
+                    "load_one ./one.sh",
+                    "load_two ./two.sh",
+                    "",
+                ]),
+            )
+            project.write("dir1/lib.sh", 'load_one() { source "$1"; }\n')
+            project.write("dir2/lib.sh", 'load_two() { source "$1"; }\n')
+            project.write("one.sh", 'printf "one\\n"\n')
+            project.write("two.sh", 'printf "two\\n"\n')
+            expected = project.run("main.sh")
+            trace = project.trace("main.sh")
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            self.assertEqual(
+                [
+                    (Path(edge["call_site"]["file"]).relative_to(project.root).as_posix(), edge["call_site"]["line"])
+                    for edge in graph["edges"]
+                ],
+                [
+                    ("main.sh", 2),
+                    ("main.sh", 4),
+                    ("dir1/lib.sh", 1),
+                    ("dir2/lib.sh", 1),
+                ],
+            )
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled)
+
+        self.assertEqual(expected.returncode, 0, expected.stdout)
+        self.assertEqual(trace.returncode, expected.returncode, trace.stderr)
+        self.assertEqual(trace.stdout, expected.stdout)
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
+
     def test_dynamic_helper_name_graph_replays_mixed_short_circuit_edges(self):
         with ScriptProject() as project:
             entrypoint = project.write(

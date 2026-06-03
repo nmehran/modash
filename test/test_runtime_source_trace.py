@@ -642,6 +642,37 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(helper_event.function_call.line, 2)
         self.assertEqual(helper_event.function_call.function, "load")
 
+    def test_trace_distinguishes_same_relative_sourced_function_files(self):
+        with ScriptProject() as project:
+            first_library = project.write("dir1/lib.sh", 'load_one() { source "$1"; }\n')
+            second_library = project.write("dir2/lib.sh", 'load_two() { source "$1"; }\n')
+            project.write("one.sh", 'printf "one\\n"\n')
+            project.write("two.sh", 'printf "two\\n"\n')
+            project.write(
+                "main.sh",
+                "\n".join([
+                    "cd dir1",
+                    "source ./lib.sh",
+                    "cd ../dir2",
+                    "source ./lib.sh",
+                    "cd ..",
+                    "load_one ./one.sh",
+                    "load_two ./two.sh",
+                    "",
+                ]),
+            )
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "one\ntwo\n")
+        self.assertEqual(
+            [Path(event.call_site.file).name for event in result.observation.sources],
+            ["main.sh", "main.sh", "lib.sh", "lib.sh"],
+        )
+        self.assertEqual(result.observation.sources[2].call_site.file, str(first_library.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[3].call_site.file, str(second_library.resolve(strict=False)))
+
     def test_trace_records_child_bash_script_sources(self):
         with ScriptProject() as project:
             parent = project.write("main.sh", 'bash ./child.sh\n')

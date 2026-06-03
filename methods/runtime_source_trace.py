@@ -1104,7 +1104,10 @@ def _trusted_xtrace_call_site_file_alias(
     if event_file == command_file:
         return False
     event_line = _source_line(event_file, event.caller_line)
-    if not _is_xtrace_source_like(event_line):
+    if (
+        not _is_xtrace_source_like(event_line)
+        and (not command.function or command.function not in event.function_stack)
+    ):
         return False
     invocation = _parse_xtrace_source_invocation(command.command)
     if invocation is None:
@@ -1246,6 +1249,7 @@ PS4=$'+MODASH_XTRACE\x1f${BASHPID}\x1f${PWD}\x1f${BASH_SOURCE[0]}\x1f${LINENO}\x
 
 __modash_source_stack=()
 declare -A __modash_source_file_map=()
+declare -A __modash_function_file_map=()
 declare -A __modash_source_positional_mutation_cache=()
 __modash_caller_positionals=()
 __modash_source_call_args=()
@@ -1365,9 +1369,11 @@ __modash_resolve_source_path() {
 }
 
 __modash_current_source_file() {
-  local bash_source=${1-}
+  local bash_source=${1-} function_name=${2-}
   local depth=${#__modash_source_stack[@]}
-  if [[ -n $bash_source && -n ${__modash_source_file_map[$bash_source]+set} ]]; then
+  if [[ -n $function_name && -n ${__modash_function_file_map[$function_name]+set} ]]; then
+    printf '%s' "${__modash_function_file_map[$function_name]}"
+  elif [[ -n $bash_source && -n ${__modash_source_file_map[$bash_source]+set} ]]; then
     printf '%s' "${__modash_source_file_map[$bash_source]}"
   elif [[ -n $bash_source && $bash_source == /* ]]; then
     printf '%s' "$bash_source"
@@ -1378,6 +1384,24 @@ __modash_current_source_file() {
   else
     printf '%s' "$__modash_trace_process_entrypoint"
   fi
+}
+
+__modash_record_sourced_functions() {
+  local resolved_path=$1 name current_definition
+  local -n definitions_before_ref=$2
+  local -n function_files_before_ref=$3
+
+  while read -r _ _ name; do
+    [[ -n $name ]] || continue
+    current_definition=$(declare -f "$name")
+    if [[ -n ${definitions_before_ref[$name]+set} ]]; then
+      [[ ${definitions_before_ref[$name]} != "$current_definition" ]] || continue
+      [[ ${__modash_function_file_map[$name]-} == "${function_files_before_ref[$name]-}" ]] || continue
+    elif [[ -n ${__modash_function_file_map[$name]+set} ]]; then
+      continue
+    fi
+    __modash_function_file_map["$name"]=$resolved_path
+  done < <(declare -F)
 }
 
 __modash_process_entrypoint() {
@@ -1451,15 +1475,18 @@ __modash_trace_source_common() {
   local event_index
   event_index=$(__modash_next_source_index)
 
-  local caller_file caller_line cwd source_path resolved_path status source_arg_count
+  local caller_file caller_line cwd source_path resolved_path status source_arg_count track_functions
+  local function_name function_definition
   local -a source_args explicit_source_args
+  local -A function_definitions_before function_files_before
   source_args=("$@")
   source_arg_count=${#source_args[@]}
-  caller_file=$(__modash_current_source_file "${BASH_SOURCE[2]:-}")
+  caller_file=$(__modash_current_source_file "${BASH_SOURCE[2]:-}" "${FUNCNAME[2]:-}")
   caller_line=${BASH_LINENO[1]:-1}
   cwd=$PWD
   source_path=${source_args[0]-}
   resolved_path=$(__modash_resolve_source_path "$source_path")
+  track_functions=0
 
   if ((source_arg_count == 1)); then
     if ((__modash_caller_positionals_captured == 0)); then
@@ -1472,6 +1499,16 @@ __modash_trace_source_common() {
         "runtime.trace.nontransparent-source-positionals" \
         "modash: runtime trace cannot transparently observe no-argument source of a file that may mutate caller positionals: ${resolved_path}"
     fi
+  fi
+
+  if [[ -n $source_path && -r $resolved_path ]]; then
+    track_functions=1
+    while read -r _ _ function_name; do
+      [[ -n $function_name ]] || continue
+      function_definition=$(declare -f "$function_name")
+      function_definitions_before["$function_name"]=$function_definition
+      function_files_before["$function_name"]=${__modash_function_file_map[$function_name]-}
+    done < <(declare -F)
   fi
 
   if [[ -n $source_path ]]; then
@@ -1491,6 +1528,10 @@ __modash_trace_source_common() {
     builtin "$builtin_name" "${source_args[@]}"
   fi
   status=$?
+
+  if ((track_functions)); then
+    __modash_record_sourced_functions "$resolved_path" function_definitions_before function_files_before
+  fi
 
   if [[ -n $source_path ]]; then
     unset '__modash_source_stack[-1]'
