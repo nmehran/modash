@@ -74,7 +74,11 @@ current support matrix and fail-closed boundaries.
 Most `source` dependencies can be resolved without running the script. When a
 project chooses a source path at runtime, use runtime discovery explicitly. It
 runs the target once, records the source files that were actually loaded, writes
-review artifacts, and then compiles from that reviewed graph.
+review artifacts, and then compiles from that reviewed graph. In 0.7,
+`compile-observed` uses a graph-tape compiler that rewrites the observed source
+operations into trusted replay groups and bundles the observed files. The
+original script still decides whether each source site runs; modash replaces
+only the source operation that the trusted graph observed.
 
 Use this for patterns like hook dispatchers, plugin loaders, or helper
 functions where a normal executable compile correctly fails closed because the
@@ -93,8 +97,10 @@ sites ran, which files were loaded, and whether the files still match the trace.
 One trace represents one execution path; it is not proof that every branch was
 covered.
 
-If you want to keep the generated compiler input as a separate file, write an
-explicit supplement and pass it to executable compile:
+If you want to keep a declarative compiler input as a separate file for static
+executable compile, write an explicit supplement and pass it to executable
+compile. This remains useful for review and compatibility, while
+`compile-observed` is the preferred 0.7 runtime path:
 
 ```sh
 modash supplement scripts/main.sh --from-graph runtime-graph.json --output source-supplement.json
@@ -108,10 +114,12 @@ and report, and compiles from that newly observed graph:
 modash observe-compile scripts/main.sh merged.sh --reviewed-graph-out runtime-graph.json -- --flag
 ```
 
-Normal compile never traces. Runtime artifacts are data, not shell code, and
-generated supplements contain exact values for source resolution rather than
-commands to execute. See
-[Runtime Source Discovery](docs/runtime-source-discovery.md) for the detailed
+Normal compile never traces. Runtime artifacts are data, not shell code. The
+0.7 runtime compiler consumes a trusted graph and fails closed if any observed
+edge cannot be mapped precisely, if an unobserved source site runs later, or if
+a trusted edge is left unused. See
+[Runtime Source Discovery](docs/runtime-source-discovery.md) and
+[Runtime Graph Compiler](docs/runtime-graph-compiler.md) for the detailed
 artifact formats, trust checks, and safety model.
 
 ## Commands
@@ -136,8 +144,8 @@ Useful options:
 - `graph --from-observation FILE`: build a trusted source graph from a trace
   observation.
 - `graph --report FILE`: choose the human-readable graph review report path.
-- `compile-observed --from-graph FILE`: compile executable output using a
-  trusted graph and an in-memory generated supplement.
+- `compile-observed --from-graph FILE`: compile executable output with the
+  trusted runtime graph compiler.
 - `observe-compile --reviewed-graph-out FILE`: explicitly run tracing, write
   review artifacts, and compile executable output from the newly observed graph.
 - `supplement --report FILE`: choose where to write the review report.

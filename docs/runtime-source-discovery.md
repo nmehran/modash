@@ -1,7 +1,7 @@
 # Runtime Source Discovery
 
-Runtime source discovery is the explicit observe -> graph -> review ->
-supplement path for source dependencies that cannot be resolved statically.
+Runtime source discovery is the explicit observe -> graph -> review -> compile
+path for source dependencies that cannot be resolved statically.
 
 Normal `modash` compile never executes the target script. Runtime discovery does
 execute it, so it is a separate command and produces review artifacts rather
@@ -11,11 +11,15 @@ than silently changing compiler behavior.
 
 - Runtime tracing records concrete source behavior for one execution.
 - One observation is not proof of all branches.
-- Generated supplements are declarative exact JSON, not shell code.
+- Generated supplements are declarative exact JSON, not shell code, and remain
+  available for static executable compile compatibility.
 - `modash graph` rejects stale or untrusted observations before writing a graph.
 - `modash supplement` rejects stale observations or graphs before deriving
   compiler input.
-- Executable compile remains deterministic and fail-closed.
+- `modash compile-observed` uses the 0.7 trusted runtime graph compiler, which
+  rewrites observed source call sites into scope-preserving replay groups and
+  fails closed on graph-tape drift.
+- Normal executable compile remains deterministic, trace-free, and fail-closed.
 - Xtrace source provenance is persisted and reconciled with wrapper-observed
   source events by observed invocation identity before a graph is trusted.
 
@@ -24,15 +28,15 @@ than silently changing compiler behavior.
 ```sh
 modash trace ./entry.sh --output observation.json --timeout 30 -- ./args
 modash graph ./entry.sh --from-observation observation.json --output runtime-graph.json
-modash supplement ./entry.sh --from-graph runtime-graph.json --output source-supplement.json
-modash ./entry.sh merged.sh --mode executable --source-supplement source-supplement.json
+modash compile-observed ./entry.sh merged.sh --from-graph runtime-graph.json
 ```
 
-After graph review, `compile-observed` can skip the intermediate supplement
-file and generate the same deterministic supplement in memory:
+The supplement command is still available when you explicitly want declarative
+source-resolution input for normal executable compile:
 
 ```sh
-modash compile-observed ./entry.sh merged.sh --from-graph runtime-graph.json
+modash supplement ./entry.sh --from-graph runtime-graph.json --output source-supplement.json
+modash ./entry.sh merged.sh --mode executable --source-supplement source-supplement.json
 ```
 
 For automation, `observe-compile` performs an explicit one-shot trace, writes
@@ -49,11 +53,12 @@ The separation matters:
 2. `graph` validates observed source events against sanitized xtrace provenance
    and replayable file call sites, then writes a trusted graph artifact plus a
    compact text review report.
-3. `supplement` turns reviewed observations or graphs into explicit compiler
-   input.
-4. normal executable compile consumes only deterministic supplement data.
-5. `compile-observed` is a shortcut for step 3 plus executable compile from an
-   already reviewed graph; it does not run tracing.
+3. `compile-observed` compiles from an already reviewed graph by rewriting
+   observed source call sites into graph-backed replay groups; it does not run
+   tracing.
+4. `supplement` optionally turns reviewed observations or graphs into explicit
+   source-resolution input for normal executable compile.
+5. normal executable compile consumes only deterministic static/supplement data.
 6. `observe-compile` is the explicit automation path for tracing and compiling
    in one command; it still writes graph and report artifacts for review, and
    normal compile remains trace-free.
@@ -71,8 +76,8 @@ Current observations use schema `8`. They record:
 - source identities that link wrapper-observed events to xtrace provenance
 - linked xtrace source provenance for every trusted trace source event
 - source call-site provenance
-- source function stacks and file-backed observed helper-call provenance when
-  a runtime graph needs it for deterministic replay
+- source function stacks and file-backed observed helper-call provenance for
+  review and compatibility with graph validation
 - resolved source paths, source arguments, and source status
 - file fingerprints for the entrypoint, file-backed source files, and
   file-backed call sites, including sourced files that return non-zero status
@@ -101,7 +106,7 @@ Small example:
   },
   "run": {
     "observed_at_utc": "2026-06-02T12:00:00Z",
-    "modash_version": "0.6.0",
+    "modash_version": "0.7.0",
     "platform": "Linux-6.x-x86_64-with-glibc2.x",
     "python_version": "3.14.0",
     "shell": "/usr/bin/bash",
@@ -232,10 +237,10 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
   target exits nonzero.
 - `graph` and `supplement` refuse to promote observations whose traced target
   exited nonzero. Those observations remain diagnostic trace artifacts only.
-- Graph replay is limited to observed source edges whose file-backed call site
-  can be replayed by the compiler. Runtime-observed source effects hidden
-  behind `eval` remain trace data, but they are not promoted into trusted graph
-  replay.
+- Runtime graph compile is limited to observed source edges whose call site can
+  be mapped exactly in an entrypoint, sourced file, or observed child `bash -c`
+  payload. Runtime-observed source effects hidden behind `eval` remain trace
+  data, but they are not promoted into trusted graph compilation.
 - No-argument `source file` tracing preserves inherited positional parameters
   through the trace alias. If that alias is removed before the source call, or
   if the sourced file may mutate caller positionals at top level with `shift`
@@ -254,9 +259,9 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - finite helper signatures where the observed source path is not the first
   helper argument, including direct `$2`, helper-local aliases, and exact
   `case` arms
-- graph-backed recursive helper replay with finite observed source edges
-- graph-backed runtime-selected helper-name replay when exactly one finite
-  observed source helper signature matches
+- graph-backed runtime compilation that does not need to statically model
+  recursive helper dispatch, runtime-selected helper names, helper-local aliases,
+  or finite loops once the trusted graph maps the observed source sites
 - repeated guarded runtime-selected source sites from a trusted graph, such as
   a mkinitcpio-style `. "$root/$hook"` hook loop observed for a finite hook list
 - child Bash process propagation and parent/child process provenance
@@ -267,17 +272,16 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - trusted runtime source graph construction
 - strict graph invariant validation for reviewed graph replay
 - compact human-readable graph review reports
-- source supplement generation from trusted graphs
-- explicit self-supplemented executable compile from a trusted graph
+- source supplement generation from trusted graphs for static compile
+  compatibility
+- explicit runtime observed compile from a trusted graph
 - explicit one-shot observe -> graph/report -> compile workflow
 - review reports for unobserved source-capable file-backed sites
 - real-world replay probes against pinned pacman and mkinitcpio fixtures,
   including mkinitcpio runtime hook-dispatch graph replay
 
-## Release Scope
+## Runtime Compiler
 
-The 0.6 coverage-completion scope is tracked in
-[modash 0.6 Release Scope](roadmap-0.6.md). It covers broader real-world
-`observe-compile` promotion, finite runtime-dynamic helper shapes,
-recursive/runtime-dynamic dispatch through trusted finite graphs, deterministic
-static edge semantics, and maintainability cleanup.
+The 0.7 compiler architecture is documented in
+[Runtime Graph Compiler](runtime-graph-compiler.md). The 0.6 release-scope
+history remains in [modash 0.6 Release Scope](roadmap-0.6.md).

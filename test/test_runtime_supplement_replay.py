@@ -695,15 +695,13 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
             compiled = project.path("compiled.sh")
             write_observed_source_graph(graph, graph_path)
 
-            with self.assertRaises(NotImplementedError) as context:
-                compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled, env={"ROOT": str(project.root)})
 
-        self.assertIn(context.exception.code, {
-            "unsupported.source.function-argument",
-            "unsupported.source.function-recursion",
-            "unsupported.source.unresolved",
-        })
-        self.assertFalse(compiled.exists())
+        self.assertEqual(result.returncode, 125, result.stdout)
+        self.assertIn("alpha\n", result.stdout)
+        self.assertIn("modash runtime replay error: unobserved or over-consumed source edge", result.stdout)
+        self.assertNotEqual(result.stdout, "alpha\nbeta\n")
 
     def test_dynamic_helper_name_graph_replays_through_compile_observed(self):
         with ScriptProject() as project:

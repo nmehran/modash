@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added the 0.7 trusted runtime graph compiler. `compile-observed` now
+  rewrites graph-backed source call sites into scope-preserving replay groups
+  and bundles the observed source files, instead of routing replay through the
+  static `SourceEvaluator` override path.
+- Runtime graph compilation now fails closed on unmapped, over-consumed,
+  unconsumed, stale, or unbundled graph edges before or during generated script
+  execution.
+- Runtime graph compilation preserves Bash's own source semantics for trusted
+  graph edges by executing `builtin source` at the rewritten source site,
+  including caller locals, inherited no-argument source positionals, explicit
+  source arguments, top-level `return`, nested observed sources, child
+  `bash -c` payload arguments, and original `BASH_SOURCE` / `$0` references in
+  bundled files.
+- Added synthetic coverage for runtime-selected helpers, same-relative-path
+  identical helper files, `BASH_SOURCE` reference rewriting, top-level return
+  propagation, and fail-closed unobserved graph-tape drift.
+
+### Changed
+
+- `observe-compile` and `compile-observed` now use the new runtime observed
+  compiler path by default. Normal static compile remains deterministic,
+  trace-free, and backed by the existing static evaluator.
+- Removed the obsolete graph-to-`SourceOverride` replay adapter from `modash.py`,
+  substantially reducing CLI plumbing and separating runtime graph compilation
+  from static source evaluation.
+- Documentation now describes runtime observed compilation as graph-tape
+  rewriting rather than in-memory supplement replay.
+
+### Validation
+
+- Full unit suite: `604` tests, `9` skipped.
+- Targeted runtime graph compiler suite: `7` tests passed.
+- Opt-in real-world suite with runtime parity, trace, supplement replay,
+  trusted graph replay, and observe-compile gates: `17` tests passed.
+- Python bytecode compilation passed for `modash.py`, all `methods` modules, and
+  all tests.
+
 ## v0.6.0 - 2026-06-03
 
 ### Added

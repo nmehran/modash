@@ -409,12 +409,12 @@ The remaining source-resolution surface is narrower than general Bash support:
   function-return guards when the current positional frame is exact.
 - Recursive or runtime-dynamic source-bearing function dispatch outside a
   finite trusted runtime graph. Exact makepkg-style helper calls using quoted
-  `$@` / `$*` are covered by [Source Supplements](source-supplements.md).
-  Retained helper definitions that remain callable after merging are supported
-  only for finite exact or supplement-backed argument vectors.
-- Broader runtime-discovered helper shapes. The implemented
-  observe-to-graph-to-deterministic-compile workflow is captured in
-  [Runtime Source Discovery](runtime-source-discovery.md), including finite
-  recursive and runtime-selected helper replay. Broader helper arrays, dynamic
-  call graphs, or ambiguous dispatch still need reviewable graph models before
-  they can be merged safely.
+  `$@` / `$*` are also covered by [Source Supplements](source-supplements.md).
+  Retained helper definitions that remain callable after static merging are
+  supported only for finite exact or supplement-backed argument vectors.
+- Broader runtime-discovered helper shapes should flow through
+  [Runtime Source Discovery](runtime-source-discovery.md). In 0.7, observed
+  compile uses graph-tape source rewriting so the static evaluator does not
+  need bespoke support for every dynamic helper, loop, or dispatcher shape.
+  Ambiguous dispatch still needs a reviewable trusted graph before it can be
+  merged safely.

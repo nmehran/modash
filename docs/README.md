@@ -11,9 +11,12 @@ by tests, changelog entries, and user-facing docs.
   remaining static gaps.
 - [Source Supplements](source-supplements.md): JSON supplement format and exact
   helper-source workflow for runtime-dynamic values.
-- [Runtime Source Discovery](runtime-source-discovery.md): north-star runtime
-  observe -> graph -> review/supplement -> deterministic compile workflow,
-  current observation and graph schemas, and safety model.
+- [Runtime Source Discovery](runtime-source-discovery.md): explicit runtime
+  observe -> graph -> review -> compile workflow, current observation and
+  graph schemas, and safety model.
+- [Runtime Graph Compiler](runtime-graph-compiler.md): 0.7 trusted graph-tape
+  compiler architecture for `compile-observed` / `observe-compile`, including
+  replay groups, bundling, and fail-closed boundaries.
 - [0.6 Release Scope](roadmap-0.6.md): coverage-completion scope for broader
   real-world observe-compile promotion, finite runtime-dynamic helpers,
   recursive/runtime-dynamic dispatch, static edge semantics, and cleanup.
