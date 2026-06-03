@@ -1461,6 +1461,7 @@ PS4=$'+MODASH_XTRACE\x1f${BASHPID}\x1f${PWD}\x1f${BASH_SOURCE[0]}\x1f${LINENO}\x
 __modash_source_stack=()
 declare -A __modash_source_file_map=()
 declare -A __modash_function_file_map=()
+declare -A __modash_function_metadata_map=()
 declare -A __modash_source_positional_mutation_cache=()
 __modash_caller_positionals=()
 __modash_source_call_args=()
@@ -1579,12 +1580,11 @@ __modash_resolve_source_path() {
   printf '%s/%s' "$PWD" "$source_path"
 }
 
-__modash_current_source_file() {
-  local bash_source=${1-} function_name=${2-}
+__modash_source_file_from_bash_source() {
+  local bash_source=${1-}
   local depth=${#__modash_source_stack[@]}
-  if [[ -n $function_name && -n ${__modash_function_file_map[$function_name]+set} ]]; then
-    printf '%s' "${__modash_function_file_map[$function_name]}"
-  elif [[ -n $bash_source && -n ${__modash_source_file_map[$bash_source]+set} ]]; then
+
+  if [[ -n $bash_source && -n ${__modash_source_file_map[$bash_source]+set} ]]; then
     printf '%s' "${__modash_source_file_map[$bash_source]}"
   elif [[ -n $bash_source && $bash_source == /* ]]; then
     printf '%s' "$bash_source"
@@ -1595,6 +1595,27 @@ __modash_current_source_file() {
   else
     printf '%s' "$__modash_trace_process_entrypoint"
   fi
+}
+
+__modash_current_source_file() {
+  local bash_source=${1-} function_name=${2-}
+  local mapped_file source_file current_metadata
+
+  if [[ -n $function_name && -n ${__modash_function_file_map[$function_name]+set} ]]; then
+    mapped_file=${__modash_function_file_map[$function_name]}
+    current_metadata=$(__modash_function_definition_metadata "$function_name" || true)
+    if [[ -z $current_metadata || ${__modash_function_metadata_map[$function_name]-} != "$current_metadata" ]]; then
+      source_file=$(__modash_source_file_from_bash_source "$bash_source")
+      unset "__modash_function_file_map[$function_name]"
+      unset "__modash_function_metadata_map[$function_name]"
+      printf '%s' "$source_file"
+      return
+    fi
+    printf '%s' "$mapped_file"
+    return
+  fi
+
+  __modash_source_file_from_bash_source "$bash_source"
 }
 
 __modash_function_definition_metadata() {
@@ -1666,7 +1687,25 @@ __modash_record_sourced_functions() {
       fi
     fi
     __modash_function_file_map["$name"]=$resolved_path
+    __modash_function_metadata_map["$name"]=$current_metadata
   done < <(compgen -A function)
+}
+
+__modash_forget_deleted_sourced_functions() {
+  local name
+  local -n definitions_before_ref=$1
+
+  for name in "${!definitions_before_ref[@]}"; do
+    case "$name" in
+      __modash_*|source|.)
+        continue
+        ;;
+    esac
+    if [[ -n ${__modash_function_file_map[$name]+set} ]] && ! declare -F "$name" >/dev/null; then
+      unset "__modash_function_file_map[$name]"
+      unset "__modash_function_metadata_map[$name]"
+    fi
+  done
 }
 
 __modash_process_entrypoint() {
@@ -1796,6 +1835,7 @@ __modash_trace_source_common() {
   status=$?
 
   if ((track_functions)); then
+    __modash_forget_deleted_sourced_functions function_definitions_before
     __modash_record_sourced_functions "$resolved_path" function_definitions_before function_metadata_before
   fi
 

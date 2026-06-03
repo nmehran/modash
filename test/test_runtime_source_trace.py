@@ -699,6 +699,105 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(result.observation.sources[1].resolved_path, str(second_library.resolve(strict=False)))
         self.assertEqual(result.observation.sources[2].call_site.file, str(second_library.resolve(strict=False)))
 
+    def test_trace_drops_sourced_function_provenance_after_entrypoint_redefinition(self):
+        with ScriptProject() as project:
+            library = project.write("lib.sh", 'load() { source "$1"; }\n')
+            dependency = project.write("dep.sh", 'printf "dep\\n"\n')
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    "source ./lib.sh",
+                    "load() {",
+                    '  source "$1"',
+                    "}",
+                    "load ./dep.sh",
+                    "",
+                ]),
+            )
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(
+            [event.resolved_path for event in result.observation.sources],
+            [str(library.resolve(strict=False)), str(dependency.resolve(strict=False))],
+        )
+        helper_event = result.observation.sources[1]
+        self.assertEqual(helper_event.call_site.file, str(entrypoint.resolve(strict=False)))
+        self.assertEqual(helper_event.call_site.line, 3)
+        self.assertEqual(helper_event.call_site.command, 'source "$1"')
+
+    def test_trace_forgets_sourced_function_provenance_after_unset(self):
+        with ScriptProject() as project:
+            library = project.write("lib.sh", 'load() { source "$1"; }\n')
+            cleanup = project.write("cleanup.sh", "unset -f load\n")
+            dependency = project.write("dep.sh", 'printf "dep\\n"\n')
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    "source ./lib.sh",
+                    "source ./cleanup.sh",
+                    "load() {",
+                    '  source "$1"',
+                    "}",
+                    "load ./dep.sh",
+                    "",
+                ]),
+            )
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(
+            [event.resolved_path for event in result.observation.sources],
+            [
+                str(library.resolve(strict=False)),
+                str(cleanup.resolve(strict=False)),
+                str(dependency.resolve(strict=False)),
+            ],
+        )
+        helper_event = result.observation.sources[2]
+        self.assertEqual(helper_event.call_site.file, str(entrypoint.resolve(strict=False)))
+        self.assertEqual(helper_event.call_site.line, 4)
+        self.assertEqual(helper_event.call_site.command, 'source "$1"')
+
+    def test_trace_drops_sourced_function_provenance_after_sourced_parent_redefinition(self):
+        with ScriptProject() as project:
+            library = project.write("lib.sh", 'load() { source "$1"; }\n')
+            dependency = project.write("dep.sh", 'printf "dep\\n"\n')
+            runner = project.write(
+                "runner.sh",
+                "\n".join([
+                    "source ./lib.sh",
+                    "load() {",
+                    '  source "$1"',
+                    "}",
+                    "load ./dep.sh",
+                    "",
+                ]),
+            )
+            entrypoint = project.write("main.sh", "source ./runner.sh\n")
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(
+            [event.resolved_path for event in result.observation.sources],
+            [
+                str(runner.resolve(strict=False)),
+                str(library.resolve(strict=False)),
+                str(dependency.resolve(strict=False)),
+            ],
+        )
+        self.assertEqual(result.observation.sources[0].call_site.file, str(entrypoint.resolve(strict=False)))
+        helper_event = result.observation.sources[2]
+        self.assertEqual(helper_event.call_site.file, str(runner.resolve(strict=False)))
+        self.assertEqual(helper_event.call_site.line, 3)
+        self.assertEqual(helper_event.call_site.command, 'source "$1"')
+
     def test_trace_ignores_heredoc_function_text_for_provenance(self):
         with ScriptProject() as project:
             first_library = project.write("dir1/lib.sh", 'load() { source "$1"; }\n')
