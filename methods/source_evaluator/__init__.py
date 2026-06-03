@@ -13,6 +13,8 @@ from methods.source_evaluator.conditions import SourceEvaluatorConditionMixin
 from methods.source_evaluator.condition_tests import SourceEvaluatorConditionTestMixin
 from methods.source_evaluator.functions import SourceEvaluatorFunctionMixin
 from methods.source_evaluator.loops import SourceEvaluatorLoopMixin
+from methods.source_evaluator.loop_readers import SourceEvaluatorLoopReadMixin
+from methods.source_evaluator.loop_words import SourceEvaluatorLoopWordMixin
 from methods.source_evaluator.retained_helpers import SourceEvaluatorRetainedHelperMixin
 from methods.source_evaluator.sources import SourceEvaluatorSourceSiteMixin
 from methods.source_evaluator.state_commands import SourceEvaluatorStateCommandMixin
@@ -27,6 +29,8 @@ class SourceEvaluator(
     SourceEvaluatorConditionTestMixin,
     SourceEvaluatorFunctionMixin,
     SourceEvaluatorLoopMixin,
+    SourceEvaluatorLoopReadMixin,
+    SourceEvaluatorLoopWordMixin,
     SourceEvaluatorRetainedHelperMixin,
     SourceEvaluatorSourceSiteMixin,
     SourceEvaluatorStateCommandMixin,
