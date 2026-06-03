@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from methods.runtime_evaluator.observations import RuntimeSourceObservationError
+from methods.runtime_evaluator.observation_model import RuntimeSourceObservationError
 
 GRAPH_VERSION = 2
 GRAPH_TOP_LEVEL_KEYS = frozenset({
