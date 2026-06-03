@@ -387,6 +387,7 @@ FUNCTION_DECLARATION_PATTERN = re.compile(
     r"(?:(?:function\\s+([a-zA-Z_]\\w*)(?:\\s*\\(\\s*\\))?)|([a-zA-Z_]\\w*)\\s*\\(\\s*\\))\\s*(?:\\{{|$))"
 )
 EVAL_COMMAND_PATTERN = re.compile(r"(?:^|[;&|()]|\\bthen\\b|\\bdo\\b)\\s*eval(?:\\s|$)")
+TRAP_COMMAND_PATTERN = re.compile(r"(?:^|[;&|()]|\\bthen\\b|\\bdo\\b)\\s*trap(?:\\s|$)")
 EMBEDDED_FUNCTION_DECLARATION_PATTERN = re.compile(
     r"(?:(?:function\\s+([a-zA-Z_]\\w*)(?:\\s*\\(\\s*\\))?)|([a-zA-Z_]\\w*)\\s*\\(\\s*\\))\\s*\\{{"
 )
@@ -510,11 +511,15 @@ def possible_function_names_by_line(content):
             name = match.group(1) or match.group(2)
             if name:
                 names_by_line.setdefault(index, set()).add(name)
-        if EVAL_COMMAND_PATTERN.search(code_line):
+        if EVAL_COMMAND_PATTERN.search(code_line) or TRAP_COMMAND_PATTERN.search(code_line):
+            found_embedded_function = False
             for match in EMBEDDED_FUNCTION_DECLARATION_PATTERN.finditer(code_line):
                 name = match.group(1) or match.group(2)
                 if name:
+                    found_embedded_function = True
                     names_by_line.setdefault(index, set()).add(name)
+            if not found_embedded_function:
+                names_by_line.setdefault(index, set()).add("*")
         active_heredocs.extend(extract_heredoc_delimiters(line))
     return names_by_line
 
@@ -1605,8 +1610,16 @@ __modash_record_sourced_functions() {
 
   while IFS= read -r name; do
     [[ -n $name ]] || continue
+    case "$name" in
+      __modash_*|source|.)
+        continue
+        ;;
+    esac
     current_definition=$(declare -f "$name")
     current_metadata=$(__modash_function_definition_metadata "$name") || continue
+    definition_file=${current_metadata#*$'\t'}
+    definition_path=$(__modash_current_source_file "$definition_file" "")
+    [[ $definition_path == "$resolved_path" ]] || continue
     if [[ -n ${definitions_before_ref[$name]+set} \
       && ${definitions_before_ref[$name]} == "$current_definition" \
       && ${metadata_before_ref[$name]-} == "$current_metadata" ]]; then
@@ -1639,7 +1652,7 @@ __modash_record_sourced_functions() {
       fi
       if [[ -n ${live_function_map[$name]+set} ]]; then
         :
-      elif [[ -n ${unknown_function_map[$name]+set} ]]; then
+      elif [[ -n ${unknown_function_map[$name]+set} || -n ${unknown_function_map["*"]+set} ]]; then
         __modash_trace_abort \
           "runtime.trace.ambiguous-function-provenance" \
           "modash: runtime trace cannot disambiguate branch-dependent function provenance: ${name} in ${resolved_path}"
@@ -1647,9 +1660,6 @@ __modash_record_sourced_functions() {
         continue
       fi
     fi
-    definition_file=${current_metadata#*$'\t'}
-    definition_path=$(__modash_current_source_file "$definition_file" "")
-    [[ $definition_path == "$resolved_path" ]] || continue
     __modash_function_file_map["$name"]=$resolved_path
   done < <(compgen -A function)
 }
