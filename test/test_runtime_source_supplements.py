@@ -93,6 +93,30 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
             ],
         })
 
+    def test_graph_supplement_keeps_observed_missing_helper_argument_exact(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'load() { if source "$1" || source "$2"; then printf "ok:%s\\n" "$VALUE"; fi; }',
+                    "load ./missing.sh ./fallback.sh",
+                    "",
+                ]),
+            )
+            project.write("fallback.sh", 'VALUE=fallback\nprintf "fallback\\n"\n')
+            graph = build_observed_source_graph(entrypoint, project.trace("main.sh").observation)
+
+            supplement = generate_source_supplement_from_graph(entrypoint, graph)
+
+        self.assertEqual(supplement.to_dict()["functions"], {
+            "load": [
+                {
+                    "arguments": ["./missing.sh", "fallback.sh"],
+                    "source_index": 1,
+                },
+            ],
+        })
+
     def test_generates_function_signature_from_first_positional_alias_and_shifted_variadic_args(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", 'source ./helpers.sh\nsource_alias "$TARGET" "arg one" arg-two\n')

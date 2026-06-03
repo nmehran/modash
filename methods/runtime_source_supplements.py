@@ -4,8 +4,16 @@ import json
 import os
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
+from methods.source_evaluator import SourceEvaluator
+from methods.source_frontend import LineParserFrontend
+from methods.source_resolver import (
+    UnsupportedSourceError,
+    parse_shell_words_preserving_quotes,
+    strip_shell_word_quotes,
+)
 from methods.runtime_source_observations import (
     RuntimeSourceObservation,
     RuntimeSourceObservationError,
@@ -19,7 +27,6 @@ from methods.runtime_source_graph import (
     load_observed_source_graph,
     validate_observed_source_graph,
 )
-from methods.source_resolver import parse_shell_words_preserving_quotes, strip_shell_word_quotes
 from methods.source_supplements import SUPPLEMENT_VERSION, source_supplement_from_payload
 
 SOURCE_COMMANDS = frozenset({"source", "."})
@@ -58,11 +65,14 @@ class GeneratedSourceSupplement:
 
 @dataclass(frozen=True)
 class _SupplementSourceEvent:
+    index: int
     call_site_file: str
     call_site_line: int
     call_site_command: str
     resolved_path: str
     arguments: tuple[str, ...]
+    status: int = 0
+    to_node: str = ""
 
 
 @dataclass(frozen=True)
@@ -97,11 +107,13 @@ def generate_source_supplement(entrypoint: str | os.PathLike, observation, *, va
         entrypoint_path,
         (
             _SupplementSourceEvent(
+                index=event.index,
                 call_site_file=event.call_site.file,
                 call_site_line=event.call_site.line,
                 call_site_command=event.call_site.command,
                 resolved_path=event.resolved_path,
                 arguments=event.arguments,
+                status=event.status,
             )
             for event in observation.sources
         ),
@@ -115,27 +127,44 @@ def generate_source_supplement_from_graph(entrypoint: str | os.PathLike, graph, 
     if validate_fingerprints:
         ensure_graph_fingerprints_current(graph)
 
+    condition_functions, skipped_edges = _condition_helper_signatures_from_graph(graph, entrypoint_path.parent)
     return _generate_source_supplement_from_events(
         entrypoint_path,
         (
             _SupplementSourceEvent(
+                index=edge["index"],
                 call_site_file=edge["call_site"]["file"],
                 call_site_line=edge["call_site"]["line"],
                 call_site_command=edge["call_site"]["command"],
                 resolved_path=edge["resolved_path"],
                 arguments=tuple(edge["arguments"]),
+                status=edge["status"],
+                to_node=edge["to"],
             )
             for edge in graph["edges"]
         ),
+        initial_functions=condition_functions,
+        skipped_event_indexes=skipped_edges,
     )
 
 
-def _generate_source_supplement_from_events(entrypoint_path: Path, source_events):
+def _generate_source_supplement_from_events(
+    entrypoint_path: Path,
+    source_events,
+    *,
+    initial_functions=None,
+    skipped_event_indexes=frozenset(),
+):
     entrypoint_directory = entrypoint_path.parent
     variables = {}
-    functions: dict[str, list[dict[str, list[str]]]] = {}
+    functions: dict[str, list[dict[str, list[str]]]] = {
+        name: list(entries)
+        for name, entries in (initial_functions or {}).items()
+    }
 
     for event in source_events:
+        if event.index in skipped_event_indexes or _event_is_missing_source(event):
+            continue
         invocation = _source_invocation_from_command(event.call_site_command)
         if invocation is None:
             continue
@@ -176,6 +205,210 @@ def _generate_source_supplement_from_events(entrypoint_path: Path, source_events
     }
     load_source_supplement_from_payload(payload, entrypoint_directory)
     return GeneratedSourceSupplement(payload)
+
+
+def _event_is_missing_source(event: _SupplementSourceEvent):
+    return event.to_node.startswith("missing-source:") or (event.status != 0 and not Path(event.resolved_path).is_file())
+
+
+def _condition_helper_signatures_from_graph(graph: dict, entrypoint_directory: Path):
+    functions: dict[str, list[dict[str, list[str]]]] = {}
+    skipped_edges = set()
+    grouped_edges = {}
+    for edge in graph["edges"]:
+        if not edge["from"].startswith("file:"):
+            continue
+        grouped_edges.setdefault(_edge_group_key(edge), []).append(edge)
+
+    for group in grouped_edges.values():
+        function_name = _enclosing_function_name(
+            group[0]["call_site"]["file"],
+            group[0]["call_site"]["line"],
+        )
+        if function_name is None:
+            continue
+        signature = _condition_helper_signature_for_group(group, entrypoint_directory)
+        if signature is None:
+            continue
+        entry = {"arguments": list(signature.arguments)}
+        if signature.source_index:
+            entry["source_index"] = signature.source_index
+        functions.setdefault(function_name, [])
+        if entry not in functions[function_name]:
+            functions[function_name].append(entry)
+        skipped_edges.update(edge["index"] for edge in group)
+
+    return functions, frozenset(skipped_edges)
+
+
+def _edge_group_key(edge):
+    call_site = edge["call_site"]
+    return call_site["file"], call_site["line"], call_site["command"]
+
+
+def _condition_helper_signature_for_group(edges, entrypoint_directory: Path):
+    sequences = _source_condition_atom_sequences_for_edge(edges[0])
+    if len(sequences) != 1:
+        return None
+
+    mapped = _source_condition_edges(edges, sequences[0])
+    if mapped is None:
+        return None
+
+    signature = {}
+    source_index = None
+    for edge, atom in mapped:
+        words = _source_expression_words(atom.source_expression)
+        if not words:
+            return None
+        source_position = _positional_word_index(words[0])
+        if source_position is None:
+            return None
+        signature[source_position] = _observed_function_argument(edge, entrypoint_directory)
+        if source_index is None and edge["to"].startswith("file:"):
+            source_index = source_position - 1
+
+        for argument_index, word in enumerate(words[1:]):
+            position = _positional_word_index(word)
+            if position is None or argument_index >= len(edge["arguments"]):
+                return None
+            signature[position] = edge["arguments"][argument_index]
+        if len(words) - 1 != len(edge["arguments"]):
+            return None
+
+    if source_index is None or not signature:
+        return None
+    signature_length = max(signature)
+    if any(index not in signature for index in range(1, signature_length + 1)):
+        return None
+    return _HelperSignature(
+        tuple(signature[index] for index in range(1, signature_length + 1)),
+        source_index=source_index,
+    )
+
+
+def _source_condition_edges(edges, atoms):
+    mapped = []
+    edge_index = 0
+    status = "true"
+    for atom in atoms:
+        if atom.separator == "&&" and status == "false":
+            continue
+        if atom.separator == "||" and status == "true":
+            continue
+
+        if atom.source_command is not None:
+            if edge_index >= len(edges):
+                return None
+            edge = edges[edge_index]
+            mapped.append((edge, atom))
+            edge_index += 1
+            status = "true" if edge["status"] == 0 else "false"
+            if atom.negated:
+                status = _negate_condition_status(status)
+            continue
+
+        status = _static_condition_atom_status(atom.text)
+        if status is None:
+            return None
+        if atom.negated:
+            status = _negate_condition_status(status)
+
+    if edge_index != len(edges):
+        return None
+    return tuple(mapped)
+
+
+def _source_condition_atom_sequences_for_edge(edge):
+    condition = _control_source_condition(edge["call_site"]["command"])
+    if condition is not None:
+        atoms = _source_condition_atoms_from_text(condition)
+        return (atoms,) if atoms else ()
+    return _source_condition_atom_sequences_on_line(
+        edge["call_site"]["file"],
+        edge["call_site"]["line"],
+    )
+
+
+def _source_condition_atoms_from_text(condition: str):
+    try:
+        return SourceEvaluator._source_logical_condition_atoms_from_text(condition)
+    except UnsupportedSourceError:
+        return ()
+
+
+def _control_source_condition(command: str):
+    stripped = command.strip()
+    match = re.fullmatch(r'(?:if|elif|while|until)\s+(.+?)(?:\s*;\s*(?:then|do).*)?$', stripped, re.S)
+    if match is None:
+        return None
+    return match.group(1).strip()
+
+
+@lru_cache(maxsize=512)
+def _source_condition_atom_sequences_on_line(path: str, line: int):
+    candidate = Path(path)
+    try:
+        content = candidate.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    try:
+        ir = LineParserFrontend().parse(candidate, content)
+    except Exception:
+        return ()
+
+    sequences = []
+
+    def collect(nodes):
+        for node in nodes:
+            if getattr(node, "condition", None) and node.location.line == line:
+                atoms = _source_condition_atoms_from_text(node.condition)
+                if atoms:
+                    sequences.append(atoms)
+            body = getattr(node, "body", None)
+            if body:
+                collect(body)
+            for branch in getattr(node, "branches", ()):
+                condition_location = getattr(branch, "condition_location", None)
+                if branch.condition and condition_location is not None and condition_location.line == line:
+                    atoms = _source_condition_atoms_from_text(branch.condition)
+                    if atoms:
+                        sequences.append(atoms)
+                collect(getattr(branch, "body", ()))
+            for arm in getattr(node, "arms", ()):
+                collect(getattr(arm, "body", ()))
+
+    collect(ir.nodes)
+    return tuple(sequences)
+
+
+def _source_expression_words(source_expression: str):
+    try:
+        return tuple(_clean_source_word(word) for word in parse_shell_words_preserving_quotes(source_expression))
+    except Exception:
+        return ()
+
+
+def _observed_function_argument(edge, entrypoint_directory: Path):
+    if edge["to"].startswith("file:"):
+        return _review_path(edge["resolved_path"], entrypoint_directory)
+    source_site = _source_invocation_from_command(edge["xtrace"]["command"])
+    if source_site is not None:
+        return source_site[0]
+    return _review_path(edge["resolved_path"], entrypoint_directory)
+
+
+def _static_condition_atom_status(text: str):
+    stripped = text.strip()
+    if stripped in {":", "true"}:
+        return "true"
+    if stripped == "false":
+        return "false"
+    return None
+
+
+def _negate_condition_status(status: str):
+    return "false" if status == "true" else "true"
 
 
 def generate_source_supplement_from_observation_file(entrypoint: str | os.PathLike, observation_path: str | os.PathLike):
