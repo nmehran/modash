@@ -83,6 +83,7 @@ def build_observed_source_graph(entrypoint: str | os.PathLike, observation, *, v
     entrypoint_path = Path(entrypoint).resolve(strict=False)
     observation = _coerce_observation(observation)
     _ensure_graph_entrypoint(entrypoint_path, observation)
+    _ensure_successful_observation_run(observation.run)
     if validate_fingerprints:
         _ensure_fingerprints_current(observation)
         _ensure_source_presence_matches_fingerprints(observation)
@@ -251,7 +252,8 @@ def validate_observed_source_graph(data):
     if _nonnegative_int(data["observation_version"], "observation_version") != OBSERVATION_VERSION:
         raise RuntimeSourceGraphError(f"observation_version must be {OBSERVATION_VERSION}")
     EnvironmentInfo.from_dict(data["environment"])
-    RuntimeRunInfo.from_dict(data["run"])
+    run = RuntimeRunInfo.from_dict(data["run"])
+    _ensure_successful_graph_run(run)
     summary = _summary(data["summary"])
     nodes = _object_list(data["nodes"], "nodes")
     edges = _object_list(data["edges"], "edges")
@@ -632,23 +634,55 @@ def _is_trusted_xtrace_source_command(command: str):
 
 
 def _is_trace_wrapper_source_command(command: str):
-    command = command.strip()
-    return (
-        command == "__modash_trace_source_alias"
-        or command.startswith("__modash_trace_source_alias ")
-        or command == "__modash_trace_dot_source"
-        or command.startswith("__modash_trace_dot_source ")
-        or command.startswith("__modash_trace_builtin ")
-        or command.startswith("__modash_trace_command ")
-        or command == "__modash_trace_builtin source"
-        or command.startswith("__modash_trace_builtin source ")
-        or command == "__modash_trace_builtin ."
-        or command.startswith("__modash_trace_builtin . ")
-        or command == "__modash_trace_command source"
-        or command.startswith("__modash_trace_command source ")
-        or command == "__modash_trace_command ."
-        or command.startswith("__modash_trace_command . ")
-    )
+    try:
+        words = parse_shell_words_preserving_quotes(command.strip())
+    except Exception:
+        return False
+    words = [strip_shell_word_quotes(word) for word in words]
+    if not words:
+        return False
+    if words[0] == "__modash_trace_source_alias":
+        try:
+            separator = words.index("--", 4)
+        except ValueError:
+            return False
+        return bool(words[separator + 1:])
+    if words[0] not in {"__modash_trace_builtin", "__modash_trace_command"}:
+        return False
+    try:
+        separator = words.index("--", 1)
+    except ValueError:
+        return False
+    return _source_command_index(words[separator + 1:]) is not None
+
+
+def _source_command_index(words):
+    if not words:
+        return None
+    if words[0] in {"source", "."}:
+        return 0
+    if words[0] == "builtin":
+        index = 1
+        if index < len(words) and words[index] == "--":
+            index += 1
+        if index < len(words) and words[index] in {"source", "."}:
+            return index
+        return None
+    if words[0] == "command":
+        index = 1
+        while index < len(words) and words[index].startswith("-"):
+            option = words[index]
+            if option == "--":
+                index += 1
+                break
+            if "v" in option[1:] or "V" in option[1:]:
+                return None
+            if set(option[1:]) != {"p"}:
+                return None
+            index += 1
+        if index < len(words) and words[index] in {"source", "."}:
+            return index
+    return None
 
 
 def _coerce_observation(observation):
@@ -663,6 +697,22 @@ def _ensure_graph_entrypoint(entrypoint_path: Path, observation: RuntimeSourceOb
         raise RuntimeSourceGraphError(
             f"observation entrypoint does not match requested entrypoint: {observed_entrypoint}",
             code="runtime.graph.entrypoint_mismatch",
+        )
+
+
+def _ensure_successful_observation_run(run: RuntimeRunInfo):
+    if run.target_status != 0:
+        raise RuntimeSourceGraphError(
+            f"runtime source observation target exited with status {run.target_status}; refusing trusted graph promotion",
+            code="runtime.graph.nonzero_trace",
+        )
+
+
+def _ensure_successful_graph_run(run: RuntimeRunInfo):
+    if run.target_status != 0:
+        raise RuntimeSourceGraphError(
+            f"runtime source graph target exited with status {run.target_status}; refusing trusted graph replay",
+            code="runtime.graph.nonzero_trace",
         )
 
 

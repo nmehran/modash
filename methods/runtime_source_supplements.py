@@ -101,6 +101,7 @@ def generate_source_supplement(entrypoint: str | os.PathLike, observation, *, va
     entrypoint_path = Path(entrypoint).resolve(strict=False)
     observation = _coerce_observation(observation)
     _ensure_observation_matches_entrypoint(entrypoint_path, observation)
+    _ensure_successful_observation_run(observation)
     if validate_fingerprints:
         _ensure_observation_fingerprints_current(observation)
         _ensure_observation_source_presence_current(observation)
@@ -494,6 +495,15 @@ def _ensure_observation_matches_entrypoint(entrypoint_path: Path, observation: R
         raise RuntimeSupplementGenerationError(
             f"observation entrypoint does not match requested entrypoint: {observed_entrypoint}",
             code="runtime.supplement.entrypoint_mismatch",
+        )
+
+
+def _ensure_successful_observation_run(observation: RuntimeSourceObservation):
+    if observation.run.target_status != 0:
+        raise RuntimeSupplementGenerationError(
+            "runtime source observation target exited with status "
+            f"{observation.run.target_status}; refusing source supplement generation",
+            code="runtime.supplement.nonzero_trace",
         )
 
 

@@ -60,11 +60,11 @@ The separation matters:
 
 ## Observation Schema
 
-Current observations use schema `7`. They record:
+Current observations use schema `8`. They record:
 
 - entrypoint, cwd, argv, Bash version, trace implementation version
 - run metadata: observed timestamp, modash version, platform, Python version,
-  shell command, and timeout
+  shell command, target status, and timeout
 - environment policy and recorded overlay keys
 - traced Bash processes and parent linkage
 - source events in execution order
@@ -85,7 +85,7 @@ Small example:
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "entrypoint": "/abs/project/entry.sh",
   "cwd": "/abs/project",
   "argv": ["--flag"],
@@ -105,6 +105,7 @@ Small example:
     "platform": "Linux-6.x-x86_64-with-glibc2.x",
     "python_version": "3.14.0",
     "shell": "/usr/bin/bash",
+    "target_status": 0,
     "timeout_seconds": 30.0
   },
   "processes": [
@@ -170,7 +171,7 @@ Small example:
 
 ## Trusted Source Graph
 
-`modash graph` consumes a schema `7` observation and writes a graph artifact.
+`modash graph` consumes a schema `8` observation and writes a graph artifact.
 The graph is still data, not executable shell code. It contains:
 
 - process nodes
@@ -229,6 +230,8 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
   traces or auto-supplements silently.
 - `observe-compile` refuses to build graph or executable output when the traced
   target exits nonzero.
+- `graph` and `supplement` refuse to promote observations whose traced target
+  exited nonzero. Those observations remain diagnostic trace artifacts only.
 - Graph replay is limited to observed source edges whose file-backed call site
   can be replayed by the compiler. Runtime-observed source effects hidden
   behind `eval` remain trace data, but they are not promoted into trusted graph
@@ -259,7 +262,7 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - child Bash process propagation and parent/child process provenance
 - persisted xtrace provenance linked to wrapper-observed source events
 - observed helper-call provenance for graph-backed dynamic wrapper replay
-- schema `7` source identities, file fingerprints, and stale observation
+- schema `8` source identities, file fingerprints, and stale observation
   rejection
 - trusted runtime source graph construction
 - strict graph invariant validation for reviewed graph replay

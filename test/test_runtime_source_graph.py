@@ -40,7 +40,7 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
             graph = build_observed_source_graph(entrypoint, observation)
 
         self.assertEqual(graph["version"], 2)
-        self.assertEqual(graph["observation_version"], 7)
+        self.assertEqual(graph["observation_version"], 8)
         self.assertEqual(graph["environment"]["policy"], "inherit")
         self.assertIn("shell", graph["run"])
         self.assertEqual(graph["summary"]["processes"], 1)
@@ -105,6 +105,18 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
                 if "source" in file["roles"]
             },
         )
+
+    def test_build_rejects_nonzero_target_observation(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./dep.sh\nexit 7\n")
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            observation = project.trace("main.sh").observation
+
+            with self.assertRaises(RuntimeSourceGraphError) as context:
+                build_observed_source_graph(entrypoint, observation)
+
+        self.assertEqual(context.exception.code, "runtime.graph.nonzero_trace")
+        self.assertIn("status 7", str(context.exception))
 
     def test_rejects_stale_observation_before_building_graph(self):
         with ScriptProject() as project:
@@ -278,6 +290,25 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
 
         self.assertIn("source_identity must match", str(context.exception))
 
+    def test_validate_graph_rejects_nonzero_target_status_tampering(self):
+        graph = self._direct_source_graph()
+        graph["run"]["target_status"] = 7
+
+        with self.assertRaises(RuntimeSourceGraphError) as context:
+            validate_observed_source_graph(graph)
+
+        self.assertEqual(context.exception.code, "runtime.graph.nonzero_trace")
+        self.assertIn("status 7", str(context.exception))
+
+    def test_validate_graph_rejects_non_source_trace_wrapper_tampering(self):
+        graph = self._direct_source_graph()
+        graph["edges"][0]["xtrace"]["command"] = "__modash_trace_command -- echo not-source"
+
+        with self.assertRaises(RuntimeSourceGraphError) as context:
+            validate_observed_source_graph(graph)
+
+        self.assertIn("xtrace.command must be a source-like command", str(context.exception))
+
     def test_validate_graph_rejects_duplicate_source_identity_tampering(self):
         graph = self._two_source_graph()
         graph["edges"][1]["source_identity"] = graph["edges"][0]["source_identity"]
@@ -431,6 +462,7 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
                     "",
                 ]),
             )
+            project.write("dep.sh", "echo dep\n")
             graph = build_observed_source_graph(
                 entrypoint,
                 project.trace("main.sh", env={"MODASH_TEST_HELPER": "load"}).observation,

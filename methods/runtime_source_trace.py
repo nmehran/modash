@@ -246,6 +246,7 @@ def trace_sources(
                 platform=platform.platform(),
                 python_version=sys.version.split()[0],
                 shell=_resolved_shell(bash),
+                target_status=completed.returncode,
                 timeout_seconds=timeout_seconds,
             ),
             processes=processes,

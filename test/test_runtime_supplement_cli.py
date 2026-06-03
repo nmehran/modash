@@ -48,7 +48,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
         self.assertIn("modash: runtime source graph:", result.stderr)
         self.assertIn("modash: runtime graph review report:", result.stderr)
         self.assertEqual(graph["version"], 2)
-        self.assertEqual(graph["observation_version"], 7)
+        self.assertEqual(graph["observation_version"], 8)
         self.assertEqual(graph["environment"]["policy"], "inherit")
         self.assertIn("shell", graph["run"])
         self.assertEqual(graph["edges"][0]["resolved_path"], str(dependency.resolve(strict=False)))
@@ -201,7 +201,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             "functions": {},
         })
         self.assertEqual(report["version"], 1)
-        self.assertEqual(report["observation_version"], 7)
+        self.assertEqual(report["observation_version"], 8)
         self.assertEqual(report["environment"]["policy"], "overlay")
         self.assertEqual(report["environment"]["recorded_keys"], ["LIB_DIR"])
         self.assertIn("timeout_seconds", report["run"])
@@ -575,9 +575,10 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "dep:exact\nmain\n")
-        self.assertEqual(graph["observation_version"], 7)
+        self.assertEqual(graph["observation_version"], 8)
         self.assertEqual(graph["environment"]["recorded_keys"], ["LIB_DIR"])
-        self.assertEqual(observation["version"], 7)
+        self.assertEqual(observation["version"], 8)
+        self.assertEqual(observation["run"]["target_status"], 0)
         self.assertIn("trusted: yes", report)
         self.assertIn("modash: compiled from newly observed trusted runtime graph:", result.stderr)
         self.assertEqual(run_result.returncode, 0, run_result.stderr)
@@ -630,6 +631,123 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
         self.assertFalse(graph_exists)
         self.assertFalse(report_exists)
         self.assertFalse(output_exists)
+
+    def test_graph_cli_rejects_nonzero_trace_observation(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./dep.sh\nexit 7\n")
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            observation_path = project.path("artifacts/observation.json")
+            graph_path = project.path("artifacts/runtime-graph.json")
+            output_path = project.path("dist/compiled.sh")
+
+            trace_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "trace",
+                    str(entrypoint),
+                    "--output",
+                    str(observation_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            graph_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "graph",
+                    str(entrypoint),
+                    "--from-observation",
+                    str(observation_path),
+                    "--output",
+                    str(graph_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            compile_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "compile-observed",
+                    str(entrypoint),
+                    str(output_path),
+                    "--from-graph",
+                    str(graph_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            graph_exists = graph_path.exists()
+            observation_exists = observation_path.is_file()
+            output_exists = output_path.exists()
+
+        self.assertEqual(trace_result.returncode, 7)
+        self.assertEqual(trace_result.stdout, "dep\n")
+        self.assertTrue(observation_exists)
+        self.assertEqual(graph_result.returncode, 1)
+        self.assertIn("status 7", graph_result.stderr)
+        self.assertFalse(graph_exists)
+        self.assertEqual(compile_result.returncode, 1)
+        self.assertIn("does not exist", compile_result.stderr)
+        self.assertFalse(output_exists)
+
+    def test_supplement_cli_rejects_nonzero_trace_observation(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./dep.sh\nexit 7\n")
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            observation_path = project.path("artifacts/observation.json")
+            supplement_path = project.path("artifacts/source-supplement.json")
+            report_path = project.path("artifacts/source-supplement.report.json")
+
+            trace_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "trace",
+                    str(entrypoint),
+                    "--output",
+                    str(observation_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            supplement_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "supplement",
+                    str(entrypoint),
+                    "--from-observation",
+                    str(observation_path),
+                    "--output",
+                    str(supplement_path),
+                    "--report",
+                    str(report_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            supplement_exists = supplement_path.exists()
+            report_exists = report_path.exists()
+
+        self.assertEqual(trace_result.returncode, 7)
+        self.assertEqual(trace_result.stdout, "dep\n")
+        self.assertEqual(supplement_result.returncode, 1)
+        self.assertIn("status 7", supplement_result.stderr)
+        self.assertFalse(supplement_exists)
+        self.assertFalse(report_exists)
 
     def test_observe_compile_cli_stops_after_alias_perturbed_trace(self):
         with ScriptProject() as project:

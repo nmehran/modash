@@ -7,7 +7,7 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
-OBSERVATION_VERSION = 7
+OBSERVATION_VERSION = 8
 TOP_LEVEL_KEYS = frozenset({
     "version",
     "entrypoint",
@@ -31,6 +31,7 @@ RUN_KEYS = frozenset({
     "platform",
     "python_version",
     "shell",
+    "target_status",
     "timeout_seconds",
 })
 PROCESS_KEYS = frozenset({
@@ -151,6 +152,7 @@ class RuntimeRunInfo:
     platform: str = "unknown"
     python_version: str = "unknown"
     shell: str = "bash"
+    target_status: int = 0
     timeout_seconds: float | None = None
 
     def __post_init__(self):
@@ -159,6 +161,7 @@ class RuntimeRunInfo:
         object.__setattr__(self, "platform", _nonempty_string(self.platform, "run.platform"))
         object.__setattr__(self, "python_version", _nonempty_string(self.python_version, "run.python_version"))
         object.__setattr__(self, "shell", _nonempty_string(self.shell, "run.shell"))
+        object.__setattr__(self, "target_status", _integer(self.target_status, "run.target_status"))
         object.__setattr__(
             self,
             "timeout_seconds",
@@ -174,6 +177,7 @@ class RuntimeRunInfo:
             platform=data["platform"],
             python_version=data["python_version"],
             shell=data["shell"],
+            target_status=data["target_status"],
             timeout_seconds=data["timeout_seconds"],
         )
 
@@ -184,6 +188,7 @@ class RuntimeRunInfo:
             "platform": self.platform,
             "python_version": self.python_version,
             "shell": self.shell,
+            "target_status": self.target_status,
             "timeout_seconds": self.timeout_seconds,
         }
 

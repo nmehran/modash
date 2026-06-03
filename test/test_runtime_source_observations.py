@@ -80,9 +80,10 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
 
         self.assertEqual(loaded, observation)
         self.assertTrue(text.endswith("\n"))
-        self.assertTrue(text.startswith('{\n  "version": 7,\n  "entrypoint": '))
+        self.assertTrue(text.startswith('{\n  "version": 8,\n  "entrypoint": '))
         self.assertEqual(data["environment"]["recorded_keys"], ["A_VAR", "Z_VAR"])
         self.assertEqual(data["run"]["shell"], "bash")
+        self.assertEqual(data["run"]["target_status"], 0)
         self.assertIsNone(data["run"]["timeout_seconds"])
         self.assertEqual(data["processes"][0]["pid"], 100)
         self.assertIsNone(data["processes"][0]["parent_index"])
@@ -100,7 +101,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             dependency = project.write("dep.sh", "echo dep\n")
 
             observation = validate_observation({
-                "version": 7,
+                "version": 8,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
@@ -182,7 +183,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             entrypoint = project.write("main.sh", "source ./dep.sh\n")
             dependency = project.write("dep.sh", "echo dep\n")
             valid = {
-                "version": 7,
+                "version": 8,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
@@ -228,7 +229,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             }
 
             cases = [
-                ("wrong version", {**valid, "version": 1}, "version must be 7"),
+                ("wrong version", {**valid, "version": 1}, "version must be 8"),
                 ("unknown top-level key", {**valid, "extra": True}, "unknown keys"),
                 (
                     "missing argv",
@@ -310,7 +311,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
     def test_write_observation_validates_plain_json_before_writing(self):
         with ScriptProject() as project:
             with self.assertRaises(RuntimeSourceObservationError):
-                write_observation(project.observation_path(), {"version": 7})
+                write_observation(project.observation_path(), {"version": 8})
 
             self.assertFalse(project.observation_path().exists())
 
@@ -380,7 +381,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             entrypoint = project.write("main.sh", "source ./dep.sh\n")
             dependency = project.write("dep.sh", "echo dep\n")
             valid = {
-                "version": 7,
+                "version": 8,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
@@ -484,6 +485,7 @@ def _run_info_payload(**updates):
         "platform": "test-platform",
         "python_version": "3.14.0",
         "shell": "/bin/bash",
+        "target_status": 0,
         "timeout_seconds": 30,
     }
     payload.update(updates)
