@@ -1,6 +1,6 @@
 # modash 0.6 Release Scope
 
-Status: 0.6.0 release candidate.
+Status: 0.6.0 release scope.
 
 0.6 is the coverage-completion milestone after the 0.5 trusted runtime graph
 release. The goal is not another diagnostic layer. The goal is to make the

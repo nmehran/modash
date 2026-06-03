@@ -147,8 +147,8 @@ Useful options:
 Run the local verification suite:
 
 ```sh
-python -m unittest
-python -m py_compile modash.py methods/*.py methods/regex/*.py test/*.py
+pytest -q
+python -m py_compile $(find methods -name '*.py' -print) $(find test -name '*.py' -print) modash.py
 git diff --check
 ```
 
