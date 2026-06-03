@@ -21,30 +21,6 @@ class SourceEvaluatorFunctionMixin:
 
         function_name, exact_dispatch = self._resolve_function_name(words[index], node, state)
         if not exact_dispatch:
-            graph_dispatch = self._graph_backed_dynamic_function_dispatch(words[index + 1:], node, state)
-            if graph_dispatch is not None:
-                function_name, function_def, variants, arguments = graph_dispatch
-                prefix_words = words[:index]
-                if len(variants) != 1:
-                    return self._apply_function_variants(
-                        variants,
-                        function_name,
-                        arguments,
-                        prefix_words,
-                        node,
-                        state,
-                        stack,
-                    )
-                self._apply_function_call_variant(
-                    function_def,
-                    function_name,
-                    arguments,
-                    prefix_words,
-                    node,
-                    state,
-                    stack,
-                )
-                return True
             if self._state_has_source_relevant_functions(state):
                 raise unsupported_source_error(
                     str(node.location.path),
@@ -63,8 +39,6 @@ class SourceEvaluatorFunctionMixin:
             if variants is not None and not self._function_variants_may_source(variants):
                 return False
             if variants is None and function_def is not None and not self._node_list_may_source(function_def.body):
-                return False
-            if variants is None and function_def is None and self.source_overrides:
                 return False
             raise unsupported_source_error(
                 str(node.location.path),
@@ -94,19 +68,18 @@ class SourceEvaluatorFunctionMixin:
                 "unsupported.source.function-guard",
                 f"unsupported unknown guarded source-relevant function call: {function_name}",
                 "Source-relevant function calls behind unknown &&/|| guards must be modeled explicitly before lowering.",
-            )
+        )
 
         if function_name in state.function_call_stack:
-            if not self._graph_backed_recursion_allowed(function_name, state):
-                raise unsupported_source_error(
-                    str(node.location.path),
-                    node.location.line - 1,
-                    node.text,
-                    node.text,
-                    "unsupported.source.function-recursion",
-                    f"unsupported recursive function call: {function_name}",
-                    "Recursive source effects need an explicit bounded recursion model.",
-                )
+            raise unsupported_source_error(
+                str(node.location.path),
+                node.location.line - 1,
+                node.text,
+                node.text,
+                "unsupported.source.function-recursion",
+                f"unsupported recursive function call: {function_name}",
+                "Recursive source effects need an explicit bounded recursion model.",
+            )
 
         try:
             arguments = self._resolve_function_arguments(function_name, words[index + 1:], node, state)
@@ -165,174 +138,6 @@ class SourceEvaluatorFunctionMixin:
 
         self._merge_possible_states(state, [outcome.state for outcome in outcomes])
         return True
-
-    def _graph_backed_dynamic_function_dispatch(
-        self,
-        argument_words: list[str],
-        node: RawCommand,
-        state: EvaluationState,
-    ):
-        if not self.source_overrides:
-            return None
-
-        observed_call = self._next_unconsumed_function_call_for_node(node, state)
-        if observed_call is not None:
-            return observed_call
-
-        candidates = []
-        for function_name, function_def in sorted(state.functions.items()):
-            variants = state.function_variants.get(function_name, (function_def,))
-            if not self._function_variants_may_source(variants):
-                continue
-            signatures = self.source_supplement.function_signatures(function_name)
-            if not signatures:
-                continue
-            matching_signatures = tuple(
-                signature for signature in signatures if len(signature) == len(argument_words)
-            )
-            candidates.append((function_name, function_def, variants, matching_signatures))
-
-        next_override = self._next_unconsumed_source_override()
-        if next_override is not None:
-            matched_candidates = tuple(
-                candidate
-                for candidate in candidates
-                if self._function_variants_contain_source_override(candidate[2], next_override)
-            )
-            if matched_candidates:
-                candidates = list(matched_candidates)
-
-        if len(candidates) > 1:
-            raise unsupported_source_error(
-                str(node.location.path),
-                node.location.line - 1,
-                node.text,
-                node.text,
-                "unsupported.source.function-dispatch",
-                "ambiguous graph-backed dynamic function dispatch",
-                "Trusted graph replay can bind a dynamic source helper only when one finite observed helper signature matches.",
-            )
-        if len(candidates) == 1:
-            function_name, function_def, variants, signatures = candidates[0]
-            try:
-                arguments = self._resolve_function_exact_arguments(argument_words, node, state)
-            except UnsupportedSourceError:
-                arguments = self._graph_backed_dynamic_function_arguments(function_name, signatures)
-                if arguments is None:
-                    return None
-            return function_name, function_def, variants, arguments
-        return None
-
-    def _next_unconsumed_function_call_for_node(self, node: RawCommand, state: EvaluationState):
-        next_override = self._next_unconsumed_source_override()
-        if next_override is None or next_override.function_call is None:
-            return None
-        function_name, path, line, arguments = next_override.function_call
-        if node.location.path.resolve(strict=False) != Path(path).resolve(strict=False):
-            return None
-        if node.location.line != line:
-            return None
-        function_def = state.functions.get(function_name)
-        if function_def is None:
-            return None
-        variants = state.function_variants.get(function_name, (function_def,))
-        return function_name, function_def, variants, arguments
-
-    def _next_unconsumed_source_override(self):
-        next_item = None
-        for key, overrides in self.source_overrides.items():
-            consumed = self._source_override_indexes[key]
-            if consumed >= len(overrides):
-                continue
-            override = overrides[consumed]
-            graph_index = override.graph_index
-            if graph_index < 0:
-                graph_index = 1_000_000_000
-            item = (graph_index, override)
-            if next_item is None or item[0] < next_item[0]:
-                next_item = item
-        return None if next_item is None else next_item[1]
-
-    def _function_variants_contain_source_override(self, variants: tuple[FunctionDef, ...], override: SourceOverride):
-        return any(self._node_list_contains_source_override(variant.body, override) for variant in variants)
-
-    def _node_list_contains_source_override(self, nodes, override: SourceOverride):
-        for node in nodes:
-            if isinstance(node, SourceSite) and self._source_site_matches_override(node, override):
-                return True
-            if isinstance(node, IfBlock):
-                for branch in node.branches:
-                    if self._condition_matches_source_override(
-                        branch.condition,
-                        branch.condition_location or node.location,
-                        override,
-                    ):
-                        return True
-                    if self._node_list_contains_source_override(branch.body, override):
-                        return True
-                continue
-            if isinstance(node, WhileLoop):
-                if self._condition_matches_source_override(node.condition, node.location, override):
-                    return True
-                if self._node_list_contains_source_override(node.body, override):
-                    return True
-                continue
-            if isinstance(node, ForLoop):
-                if self._node_list_contains_source_override(node.body, override):
-                    return True
-                continue
-            if isinstance(node, CStyleForLoop):
-                if self._node_list_contains_source_override(node.body, override):
-                    return True
-                continue
-            if isinstance(node, CaseBlock):
-                if any(self._node_list_contains_source_override(arm.body, override) for arm in node.arms):
-                    return True
-                continue
-            if isinstance(node, FunctionDef):
-                if self._node_list_contains_source_override(node.body, override):
-                    return True
-        return False
-
-    def _source_site_matches_override(self, site: SourceSite, override: SourceOverride):
-        return (
-            site.location.path.resolve(strict=False) == Path(override.path).resolve(strict=False)
-            and site.location.line == override.line
-            and self._source_override_command_key(site.text) == self._source_override_command_key(override.command)
-        )
-
-    def _condition_matches_source_override(self, condition: str | None, location: SourceLocation, override: SourceOverride):
-        if not condition:
-            return False
-        if location.path.resolve(strict=False) != Path(override.path).resolve(strict=False):
-            return False
-        if location.line != override.line:
-            return False
-        try:
-            atoms = self._source_logical_condition_atoms_from_text(condition)
-        except UnsupportedSourceError:
-            return False
-        override_key = self._source_override_command_key(override.command)
-        return any(
-            atom.source_command is not None
-            and self._source_override_command_key(f"{atom.source_command} {atom.source_expression}") == override_key
-            for atom in atoms
-        )
-
-    def _graph_backed_dynamic_function_arguments(self, function_name: str, signatures: tuple[tuple[str, ...], ...]):
-        key = function_name
-        index = self._function_dispatch_signature_indexes[key]
-        if index >= len(signatures):
-            return None
-        self._function_dispatch_signature_indexes[key] += 1
-        return signatures[index]
-
-    def _graph_backed_recursion_allowed(self, function_name: str, state: EvaluationState):
-        if not self.source_overrides:
-            return False
-        current_depth = sum(1 for name in state.function_call_stack if name == function_name)
-        observed_source_budget = sum(len(overrides) for overrides in self.source_overrides.values())
-        return current_depth <= observed_source_budget + 1
 
     def _apply_function_call_variant(
         self,

@@ -19,6 +19,7 @@ from methods.shell.scan import (
     top_level_pipeline_segments,
 )
 from methods.source_diagnostics import unsupported_source_error, with_source_diagnostic
+from methods.source_conditions import ConditionAtom, source_logical_condition_atoms_from_text
 from methods.source_effects import (
     ArrayAssignment,
     Assignment,
@@ -131,10 +132,6 @@ VALID_SET_OPTIONS = frozenset({
     'vi',
     'xtrace',
 })
-CONTROL_SOURCE_CONDITION_PATTERN = re.compile(
-    r'^(?:if|elif|while|until)\s+(.+?)(?:\s*;\s*(?:then|do)\s*)?$',
-    re.S,
-)
 SHOPT_SHELL_OPTIONS = frozenset({
     'lastpipe',
 })
@@ -231,7 +228,6 @@ RETAINED_HELPER_POSITIONAL_SOURCE_EXPRESSIONS = QUOTED_ALL_POSITIONALS_SOURCE_EX
     '"$1"',
     '"${1}"',
 })
-SOURCE_OVERRIDE_EXHAUSTED = object()
 
 
 @dataclass
@@ -395,30 +391,6 @@ class ChildShellSourceCommand:
     replacement_kind: str = "source"
     resolve_source_site: str | None = None
     source_value: str | None = None
-
-
-@dataclass(frozen=True)
-class ConditionAtom:
-    text: str
-    offset: int
-    separator: str = ""
-    negated: bool = False
-    source_command: str | None = None
-    source_expression: str | None = None
-    source_offset: int | None = None
-
-
-@dataclass(frozen=True)
-class SourceOverride:
-    path: str
-    line: int
-    command: str
-    resolved_path: str
-    arguments: tuple[str, ...] = ()
-    replacement_kind: str = "source"
-    source_value: str | None = None
-    graph_index: int = -1
-    function_call: tuple[str, str, int, tuple[str, ...]] | None = None
 
 
 @dataclass(frozen=True)

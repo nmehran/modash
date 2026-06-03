@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from methods.source_evaluator import SourceEvaluator
+from methods.source_conditions import source_logical_condition_atoms_from_text
 from methods.source_frontend import LineParserFrontend
 from methods.source_resolver import (
     UnsupportedSourceError,
@@ -372,7 +372,7 @@ def _source_condition_atom_sequences_for_edge(edge):
 
 def _source_condition_atoms_from_text(condition: str):
     try:
-        return SourceEvaluator._source_logical_condition_atoms_from_text(condition)
+        return source_logical_condition_atoms_from_text(condition)
     except UnsupportedSourceError:
         return ()
 

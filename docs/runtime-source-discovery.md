@@ -266,7 +266,7 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
   a mkinitcpio-style `. "$root/$hook"` hook loop observed for a finite hook list
 - child Bash process propagation and parent/child process provenance
 - persisted xtrace provenance linked to wrapper-observed source events
-- observed helper-call provenance for graph-backed dynamic wrapper replay
+- observed helper-call provenance for trusted runtime graph replay
 - schema `8` source identities, file fingerprints, and stale observation
   rejection
 - trusted runtime source graph construction

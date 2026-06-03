@@ -41,47 +41,19 @@ class SourceEvaluatorSourceSiteMixin:
             )
         is_context_control_flow = node.is_control_flow and self.mode == "context"
         source_site = self._source_site_text(node)
-        source_override = self._source_override_for_node(node)
 
-        if source_override is SOURCE_OVERRIDE_EXHAUSTED:
-            if state.loop_depth > 0:
-                state.last_status = 1
-                raise LoopContinueSignal()
-            if state.occurrence_context == OccurrenceModel.CONDITIONAL:
-                self._disable_unreachable_sources([node], "trusted runtime graph conditional source")
-                state.last_status = 1
+        try:
+            self._ensure_source_state_can_resolve(node, node.source_expression, state)
+            resolved_expression = self._expand_array_indexes(node.source_expression, node, state)
+            invocation = self._resolve_source_invocation(
+                resolved_expression,
+                node,
+                state,
+            )
+        except UnsupportedSourceError:
+            if self.mode == "context":
                 return
-            source_override = None
-
-        if source_override is not None:
-            source_value = (
-                source_override.source_value
-                if source_override.source_value is not None
-                else node.source_expression.strip()
-            )
-            invocation = SourceInvocation(
-                ResolvedSource(
-                    path=source_override.resolved_path,
-                    source_expression=node.source_expression.strip(),
-                    source_site=source_site,
-                    replacement_kind=source_override.replacement_kind,
-                    source_value=source_value,
-                ),
-                source_arguments=source_override.arguments or None,
-            )
-        else:
-            try:
-                self._ensure_source_state_can_resolve(node, node.source_expression, state)
-                resolved_expression = self._expand_array_indexes(node.source_expression, node, state)
-                invocation = self._resolve_source_invocation(
-                    resolved_expression,
-                    node,
-                    state,
-                )
-            except UnsupportedSourceError:
-                if self.mode == "context":
-                    return
-                raise
+            raise
 
         resolved_source = invocation.source
         source_arguments = invocation.source_arguments
@@ -195,35 +167,6 @@ class SourceEvaluatorSourceSiteMixin:
             source_value,
             source_arguments,
         )
-
-    def _source_override_for_node(self, node: SourceSite):
-        key = (
-            node.location.path.resolve(strict=False),
-            node.location.line,
-            node.text.strip(),
-        )
-        overrides = self.source_overrides.get(key)
-        if not overrides:
-            return None
-        index = self._source_override_indexes[key]
-        if index >= len(overrides):
-            return SOURCE_OVERRIDE_EXHAUSTED
-        self._source_override_indexes[key] += 1
-        return overrides[index]
-
-    def _ensure_source_overrides_consumed(self):
-        for key, overrides in sorted(self.source_overrides.items(), key=lambda item: (str(item[0][0]), item[0][1], item[0][2])):
-            consumed = self._source_override_indexes[key]
-            if consumed >= len(overrides):
-                continue
-            path, line, command = key
-            remaining = len(overrides) - consumed
-            plural = "edge" if remaining == 1 else "edges"
-            raise UnsupportedSourceError(
-                "trusted runtime graph replay did not consume "
-                f"{remaining} source {plural}: {path}:{line}: {command}",
-                code="unsupported.source.graph-unconsumed",
-            )
 
     def _resolve_source_invocation(
         self,

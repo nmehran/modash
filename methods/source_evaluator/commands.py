@@ -214,24 +214,6 @@ class SourceEvaluatorCommandMixin:
         return True
 
     def _resolve_child_shell_source(self, node: SourceSite, state: EvaluationState):
-        source_override = self._source_override_for_node(node)
-        if source_override is SOURCE_OVERRIDE_EXHAUSTED:
-            raise unsupported_source_error(
-                str(node.location.path),
-                node.location.line - 1,
-                node.text,
-                node.text,
-                "unsupported.source.child-shell",
-                "runtime source graph override exhausted",
-                "The trusted runtime graph did not contain enough matching child-shell source events.",
-            )
-        if source_override is not None:
-            return (
-                Path(source_override.resolved_path),
-                node.source_expression.strip(),
-                source_override.arguments or None,
-            )
-
         try:
             self._ensure_source_state_can_resolve(node, node.source_expression, state)
             resolved_expression = self._expand_array_indexes(node.source_expression, node, state)

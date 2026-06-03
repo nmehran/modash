@@ -29,14 +29,10 @@ class SourceEvaluator(
         frontend: ParserFrontend | None = None,
         mode: str = "executable",
         source_supplement: SourceSupplement | None = None,
-        source_overrides=(),
     ):
         self.frontend = frontend or LineParserFrontend()
         self.mode = mode
         self.source_supplement = source_supplement or empty_source_supplement()
-        self.source_overrides = self._source_override_map(source_overrides)
-        self._source_override_indexes = Counter()
-        self._function_dispatch_signature_indexes = Counter()
         self.events: list[SourceEvent] = []
         self.disabled_sources: list[DisabledSourceSite] = []
         self.line_replacements: list[LineReplacement] = []
@@ -63,45 +59,14 @@ class SourceEvaluator(
         self.line_replacements = []
         self.retained_helper_source_sites = []
         self._retained_helper_stack = []
-        self._source_override_indexes.clear()
-        self._function_dispatch_signature_indexes.clear()
         self._evaluate_file(entrypoint, state, ())
         self._ensure_retained_helpers_resolved()
-        self._ensure_source_overrides_consumed()
         return EvaluationResult(
             events=self._with_occurrence_models(self.events),
             disabled_sources=tuple(self.disabled_sources),
             line_replacements=tuple(self.line_replacements),
             final_state=state.snapshot(),
         )
-
-    @staticmethod
-    def _source_override_map(source_overrides):
-        overrides = {}
-        for override in source_overrides or ():
-            key = (
-                Path(override.path).resolve(strict=False),
-                override.line,
-                SourceEvaluator._source_override_command_key(override.command),
-            )
-            overrides.setdefault(key, []).append(override)
-        return {key: tuple(values) for key, values in overrides.items()}
-
-    @staticmethod
-    def _source_override_command_key(command: str):
-        command = command.strip()
-        match = CONTROL_SOURCE_CONDITION_PATTERN.fullmatch(command)
-        if match is None:
-            return command
-        try:
-            atoms = SourceEvaluator._source_logical_condition_atoms_from_text(match.group(1).strip())
-        except UnsupportedSourceError:
-            return command
-        source_atoms = [atom for atom in atoms if atom.source_command is not None]
-        if len(source_atoms) != 1:
-            return command
-        atom = source_atoms[0]
-        return f"{atom.source_command} {atom.source_expression}"
 
     def _evaluate_file(
         self,

@@ -14,9 +14,9 @@ from methods.runtime_evaluator.graph import (
     validate_observed_source_graph,
 )
 from methods.shell.line import get_commands
+from methods.source_conditions import source_logical_condition_atoms_from_text
 from methods.source_effects import CaseBlock, CStyleForLoop, ForLoop, FunctionDef, IfBlock, SourceSite, WhileLoop
 from methods.source_frontend import LineParserFrontend
-from methods.source_evaluator import SourceEvaluator
 from methods.source_resolver import (
     ASSIGNMENT_WORD_PATTERN,
     UnsupportedSourceError,
@@ -339,7 +339,7 @@ def _source_candidates(unit: _RewriteUnit) -> tuple[_SourceCandidate, ...]:
 
 def _condition_source_sites(condition: str) -> tuple[tuple[str, str, int | None], ...]:
     try:
-        atoms = SourceEvaluator._source_logical_condition_atoms_from_text(condition)
+        atoms = source_logical_condition_atoms_from_text(condition)
     except Exception:
         try:
             ir = LineParserFrontend().parse("<condition>", condition + "\n")
@@ -462,7 +462,7 @@ def _assign_line_edges_from_condition(assignments: dict[str, list[_ReplayEdge]],
     if condition is None:
         return False
     try:
-        atoms = SourceEvaluator._source_logical_condition_atoms_from_text(condition)
+        atoms = source_logical_condition_atoms_from_text(condition)
     except UnsupportedSourceError:
         return False
     by_text: dict[str, list[_SourceCandidate]] = {}

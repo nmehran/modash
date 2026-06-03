@@ -1376,7 +1376,6 @@ def compile_sources(
     output_file: str,
     mode: str = "context",
     source_supplement=None,
-    source_overrides=(),
 ):
     if mode not in {"context", "executable"}:
         raise ValueError(f"Unsupported compile mode: {mode}")
@@ -1392,7 +1391,6 @@ def compile_sources(
     evaluation = SourceEvaluator(
         mode=mode,
         source_supplement=supplement,
-        source_overrides=source_overrides,
     ).evaluate(entry_point)
     context = context_from_source_events(evaluation.events, evaluation.disabled_sources, evaluation.line_replacements)
     if mode == "executable":
