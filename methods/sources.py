@@ -21,9 +21,6 @@ def validate_path(path):
     if '$' in path:
         warnings.append(f"Warning: Path may contain unresolved variables - {path}")
 
-    # Additional checks can be added here
-    # Example: overly complex expressions or deprecated syntax
-
     # Report all found issues regardless of file existence
     for warning in warnings:
         print(warning)

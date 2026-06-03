@@ -22,8 +22,7 @@ class LineParserFrontend(
 ):
     """Current parser frontend backed by the existing line-level splitter.
 
-    This is a compatibility frontend, not the final Bash parser. Its output is
-    the stable contract that a future real parser adapter must preserve.
+    Its output is the stable IR contract that parser improvements must preserve.
     """
 
     def parse(self, path: Path | str, content: str) -> ScriptIR:
