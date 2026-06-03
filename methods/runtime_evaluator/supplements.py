@@ -27,12 +27,10 @@ from methods.runtime_evaluator.observations import (
     RuntimeSourceObservationError,
     current_fingerprint_mismatch_details,
     format_fingerprint_mismatch,
-    load_observation,
     validate_observation,
 )
 from methods.runtime_evaluator.graph import (
     ensure_graph_fingerprints_current,
-    load_observed_source_graph,
     validate_observed_source_graph,
 )
 from methods.source_supplements import SUPPLEMENT_VERSION, source_supplement_from_payload
@@ -445,14 +443,6 @@ def _observed_function_argument(edge, entrypoint_directory: Path):
     return _review_path(edge.resolved_path, entrypoint_directory)
 
 
-def generate_source_supplement_from_observation_file(entrypoint: str | os.PathLike, observation_path: str | os.PathLike):
-    return generate_source_supplement(entrypoint, load_observation(observation_path))
-
-
-def generate_source_supplement_from_graph_file(entrypoint: str | os.PathLike, graph_path: str | os.PathLike):
-    return generate_source_supplement_from_graph(entrypoint, load_observed_source_graph(graph_path))
-
-
 def write_generated_supplement(supplement: GeneratedSourceSupplement | dict, path: str | os.PathLike):
     payload = _coerce_supplement(supplement).to_dict()
     target = Path(path)
@@ -529,11 +519,6 @@ def _ensure_observation_source_presence_current(observation: RuntimeSourceObserv
                 f"runtime source observation is stale for {resolved_path}: source_presence mismatch",
                 code="runtime.supplement.stale_observation",
             )
-
-
-def _source_word_from_command(command: str):
-    invocation = _source_invocation_from_command(command)
-    return invocation[0] if invocation is not None else None
 
 
 def _source_invocation_from_command(command: str):

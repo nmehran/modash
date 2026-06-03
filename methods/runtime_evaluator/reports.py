@@ -9,7 +9,6 @@ from methods.runtime_evaluator.observations import (
     RuntimeSourceObservationError,
     current_fingerprint_mismatch_details,
     format_fingerprint_mismatch,
-    load_observation,
     validate_observation,
 )
 from methods.source_commands import clean_shell_word, source_invocation_from_command
@@ -59,10 +58,6 @@ def build_observation_report(entrypoint: str | os.PathLike, observation, *, vali
         "process_command_source_sites": process_command_sites,
         "xtrace_source_commands": [command.to_dict() for command in observation.xtrace],
     }
-
-
-def build_observation_report_from_observation_file(entrypoint: str | os.PathLike, observation_path: str | os.PathLike):
-    return build_observation_report(entrypoint, load_observation(observation_path))
 
 
 def write_observation_report(report: dict, path: str | os.PathLike):

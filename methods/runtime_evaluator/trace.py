@@ -947,16 +947,6 @@ def _loose_source_key_sort_tuple(key):
     return key
 
 
-def _source_key_sort_tuple(key: _SourceInvocationKey):
-    return (
-        key.pid,
-        key.file,
-        key.line,
-        key.source_path,
-        key.arguments,
-    )
-
-
 def _normalized_xtrace_file(command: _XtraceSourceCommand, event: _RawSourceEvent | None):
     if event is not None:
         event_file = str(Path(event.caller_file).resolve(strict=False))

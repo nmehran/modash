@@ -111,11 +111,6 @@ def _single_quote_aware_segments(line: str):
     return tuple(segments)
 
 
-def indent_block(content: str, prefix: str):
-    lines = content.splitlines()
-    return '\n'.join(f"{prefix}{line}" if line else line for line in lines)
-
-
 def indent_shell_block(content: str, prefix: str):
     output = []
     active_heredocs = []

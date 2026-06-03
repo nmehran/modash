@@ -59,10 +59,6 @@ class _ReplayEdge:
         return self.to_node.startswith("file:")
 
     @property
-    def is_missing(self) -> bool:
-        return self.to_node.startswith("missing-source:")
-
-    @property
     def source_value(self) -> str:
         invocation = source_command_invocation(_first_source_segment(self.xtrace_command) or "")
         if invocation is None:

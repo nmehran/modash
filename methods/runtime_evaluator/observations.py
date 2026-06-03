@@ -652,11 +652,6 @@ def fingerprint_file(path: str | os.PathLike, roles):
     )
 
 
-def current_fingerprint_mismatch(fingerprint: RuntimeFileFingerprint):
-    details = current_fingerprint_mismatch_details(fingerprint)
-    return None if details is None else details["field"]
-
-
 def current_fingerprint_mismatch_details(fingerprint: RuntimeFileFingerprint):
     if not isinstance(fingerprint, RuntimeFileFingerprint):
         raise _schema_error("fingerprint must be a RuntimeFileFingerprint")

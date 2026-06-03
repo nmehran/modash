@@ -14,7 +14,6 @@ from methods.runtime_evaluator.observations import (
     RuntimeSourceObservationError,
     current_fingerprint_mismatch_details,
     format_fingerprint_mismatch,
-    load_observation,
     validate_observation,
 )
 from methods.source_commands import (
@@ -140,19 +139,6 @@ def build_observed_source_graph(entrypoint: str | os.PathLike, observation, *, v
         "edges": edges,
         "files": [fingerprint.to_dict() for fingerprint in observation.files],
     }
-
-
-def build_observed_source_graph_from_observation_file(
-    entrypoint: str | os.PathLike,
-    observation_path: str | os.PathLike,
-    *,
-    validate_fingerprints=True,
-):
-    return build_observed_source_graph(
-        entrypoint,
-        load_observation(observation_path),
-        validate_fingerprints=validate_fingerprints,
-    )
 
 
 def write_observed_source_graph(graph: dict, path: str | os.PathLike):
