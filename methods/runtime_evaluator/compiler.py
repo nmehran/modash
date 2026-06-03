@@ -15,7 +15,11 @@ from methods.runtime_evaluator.graph import (
 )
 from methods.shell.line import get_commands
 from methods.source_commands import contains_source_command, source_command_invocation
-from methods.source_conditions import source_logical_condition_atoms_from_text
+from methods.source_conditions import (
+    condition_exit_status_not,
+    literal_command_condition_exit_status,
+    source_logical_condition_atoms_from_text,
+)
 from methods.source_effects import CaseBlock, CStyleForLoop, ForLoop, FunctionDef, IfBlock, SourceSite, WhileLoop
 from methods.source_frontend import LineParserFrontend
 from methods.source_resolver import (
@@ -354,7 +358,7 @@ def _condition_source_sites(condition: str) -> tuple[tuple[str, str, int | None]
             sites.append((text, atom.separator, status))
             status = None
             continue
-        atom_status = _static_command_status(atom.text)
+        atom_status = literal_command_condition_exit_status(atom.text)
         if atom_status is None:
             status = None
             continue
@@ -367,15 +371,6 @@ def _condition_source_sites(condition: str) -> tuple[tuple[str, str, int | None]
         if atom.negated and status is not None:
             status = 0 if status else 1
     return tuple(sites)
-
-
-def _static_command_status(text: str) -> int | None:
-    stripped = text.strip()
-    if stripped in {":", "true"}:
-        return 0
-    if stripped == "false":
-        return 1
-    return None
 
 
 def _assign_edges_to_candidates(process_index: int, edges: tuple[_ReplayEdge, ...], candidates: tuple[_SourceCandidate, ...]) -> dict[str, list[_ReplayEdge]]:
@@ -477,10 +472,10 @@ def _assign_line_edges_from_condition(assignments: dict[str, list[_ReplayEdge]],
         if atom.separator == "||" and status == 0:
             continue
         if atom.source_command is None:
-            static_status = _static_command_status(atom.text)
+            static_status = literal_command_condition_exit_status(atom.text)
             if static_status is None:
                 return False
-            status = _negate_condition_status(static_status) if atom.negated else static_status
+            status = condition_exit_status_not(static_status) if atom.negated else static_status
             continue
         if edge_index >= len(edges):
             return False
@@ -493,7 +488,7 @@ def _assign_line_edges_from_condition(assignments: dict[str, list[_ReplayEdge]],
         edge_index += 1
         status = 0 if edge.status == 0 else 1
         if atom.negated:
-            status = _negate_condition_status(status)
+            status = condition_exit_status_not(status)
     if edge_index != len(edges):
         return False
     for edge, candidate in mapped:
@@ -518,10 +513,6 @@ def _condition_text_for_candidates(candidates: list[_SourceCandidate]) -> str | 
     if match is not None:
         return match.group(1).strip()
     return None
-
-
-def _negate_condition_status(status: int) -> int:
-    return 0 if status else 1
 
 
 def _rewrite_process_payloads(plan: _CompilePlan) -> None:

@@ -12,7 +12,11 @@ from methods.source_commands import (
     clean_shell_word,
     source_command_invocation,
 )
-from methods.source_conditions import source_logical_condition_atoms_from_text
+from methods.source_conditions import (
+    condition_status_not,
+    literal_command_condition_status,
+    source_logical_condition_atoms_from_text,
+)
 from methods.source_frontend import LineParserFrontend
 from methods.source_resolver import (
     UnsupportedSourceError,
@@ -348,14 +352,14 @@ def _source_condition_edge_prefix(edges, atoms):
             edge_index += 1
             status = "true" if edge.status == 0 else "false"
             if atom.negated:
-                status = _negate_condition_status(status)
+                status = condition_status_not(status)
             continue
 
-        status = _static_condition_atom_status(atom.text)
+        status = literal_command_condition_status(atom.text)
         if status is None:
             return None, 0
         if atom.negated:
-            status = _negate_condition_status(status)
+            status = condition_status_not(status)
 
     if not mapped:
         return None, 0
@@ -439,19 +443,6 @@ def _observed_function_argument(edge, entrypoint_directory: Path):
     if source_site is not None:
         return source_site[0]
     return _review_path(edge.resolved_path, entrypoint_directory)
-
-
-def _static_condition_atom_status(text: str):
-    stripped = text.strip()
-    if stripped in {":", "true"}:
-        return "true"
-    if stripped == "false":
-        return "false"
-    return None
-
-
-def _negate_condition_status(status: str):
-    return "false" if status == "true" else "true"
 
 
 def generate_source_supplement_from_observation_file(entrypoint: str | os.PathLike, observation_path: str | os.PathLike):

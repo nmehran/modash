@@ -1195,7 +1195,7 @@ class SourceEvaluatorConditionMixin:
 
             status = self._evaluate_logical_condition_command_atom(atom, state, condition)
             if atom.negated:
-                status = self._condition_not(status)
+                status = condition_status_not(status)
             state.last_status = self._last_status_from_condition_status(status)
 
         return status
@@ -1328,7 +1328,7 @@ class SourceEvaluatorConditionMixin:
         left, index = self._parse_condition_and(condition_words, index, state, condition)
         while index < len(words) and words[index] == "||":
             right, index = self._parse_condition_and(condition_words, index + 1, state, condition)
-            left = self._condition_or(left, right)
+            left = condition_status_or(left, right)
         return left, index
 
     def _parse_condition_and(self, condition_words: ConditionWords, index: int, state: EvaluationState, condition: str):
@@ -1336,7 +1336,7 @@ class SourceEvaluatorConditionMixin:
         left, index = self._parse_condition_not(condition_words, index, state, condition)
         while index < len(words) and words[index] == "&&":
             right, index = self._parse_condition_not(condition_words, index + 1, state, condition)
-            left = self._condition_and(left, right)
+            left = condition_status_and(left, right)
         return left, index
 
     def _parse_condition_not(self, condition_words: ConditionWords, index: int, state: EvaluationState, condition: str):
@@ -1345,7 +1345,7 @@ class SourceEvaluatorConditionMixin:
             raise UnsupportedSourceError(f"unsupported if condition: {condition}")
         if words[index] == "!":
             result, next_index = self._parse_condition_not(condition_words, index + 1, state, condition)
-            return self._condition_not(result), next_index
+            return condition_status_not(result), next_index
         if words[index] == "(":
             result, next_index = self._parse_condition_or(condition_words, index + 1, state, condition)
             if next_index >= len(words) or words[next_index] != ")":
@@ -1530,30 +1530,6 @@ class SourceEvaluatorConditionMixin:
         if SourceEvaluator._raw_word_is_single_quoted(raw_token) or SourceEvaluator._raw_word_is_double_quoted(raw_token):
             return False
         return has_unquoted_glob(resolved_value) or has_unquoted_extglob(resolved_value)
-
-    @staticmethod
-    def _condition_and(left: str, right: str):
-        if left == "false" or right == "false":
-            return "false"
-        if left == "true" and right == "true":
-            return "true"
-        return "unknown"
-
-    @staticmethod
-    def _condition_or(left: str, right: str):
-        if left == "true" or right == "true":
-            return "true"
-        if left == "false" and right == "false":
-            return "false"
-        return "unknown"
-
-    @staticmethod
-    def _condition_not(result: str):
-        if result == "true":
-            return "false"
-        if result == "false":
-            return "true"
-        return "unknown"
 
     def _evaluate_condition_regex(self, left_token: str, right_token: str, state: EvaluationState, condition: str):
         left = self._condition_value(left_token, state)

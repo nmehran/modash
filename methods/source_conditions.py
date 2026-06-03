@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 from methods.source_commands import contains_nested_source_command, contains_source_command
 from methods.source_resolver import UnsupportedSourceError, has_unsupported_shell_operator
+
+ConditionStatus = Literal["true", "false", "unknown"]
 
 CONTROL_SOURCE_CONDITION_PATTERN = re.compile(
     r'^(?:if|elif|while|until)\s+(.+?)(?:\s*;\s*(?:then|do)\s*)?$',
@@ -21,6 +24,52 @@ class ConditionAtom:
     source_command: str | None = None
     source_expression: str | None = None
     source_offset: int | None = None
+
+
+def condition_status_and(left: ConditionStatus, right: ConditionStatus) -> ConditionStatus:
+    if left == "false" or right == "false":
+        return "false"
+    if left == "true" and right == "true":
+        return "true"
+    return "unknown"
+
+
+def condition_status_or(left: ConditionStatus, right: ConditionStatus) -> ConditionStatus:
+    if left == "true" or right == "true":
+        return "true"
+    if left == "false" and right == "false":
+        return "false"
+    return "unknown"
+
+
+def condition_status_not(status: ConditionStatus) -> ConditionStatus:
+    if status == "true":
+        return "false"
+    if status == "false":
+        return "true"
+    return "unknown"
+
+
+def literal_command_condition_status(text: str) -> ConditionStatus | None:
+    stripped = text.strip()
+    if stripped in {":", "true"}:
+        return "true"
+    if stripped == "false":
+        return "false"
+    return None
+
+
+def literal_command_condition_exit_status(text: str) -> int | None:
+    status = literal_command_condition_status(text)
+    if status == "true":
+        return 0
+    if status == "false":
+        return 1
+    return None
+
+
+def condition_exit_status_not(status: int) -> int:
+    return 0 if status else 1
 
 
 def source_logical_condition_atoms_from_text(condition: str) -> tuple[ConditionAtom, ...]:

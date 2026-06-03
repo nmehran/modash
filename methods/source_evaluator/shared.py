@@ -19,7 +19,13 @@ from methods.shell.scan import (
     top_level_pipeline_segments,
 )
 from methods.source_diagnostics import unsupported_source_error, with_source_diagnostic
-from methods.source_conditions import ConditionAtom, source_logical_condition_atoms_from_text
+from methods.source_conditions import (
+    ConditionAtom,
+    condition_status_and,
+    condition_status_not,
+    condition_status_or,
+    source_logical_condition_atoms_from_text,
+)
 from methods.source_commands import (
     contains_nested_source_command,
     contains_source_command,
