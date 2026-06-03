@@ -29,6 +29,14 @@ from methods.runtime_source_observations import (
     fingerprint_file,
     write_observation,
 )
+from methods.runtime_source_commands import (
+    SourceCommandWords,
+    clean_shell_word,
+    is_source_like_command_text,
+    normalized_trace_wrapper_words,
+    shell_quote as quote_runtime_shell_word,
+    source_invocation_from_command as runtime_source_invocation_from_command,
+)
 from methods.source_resolver import (
     parse_shell_words_preserving_quotes,
     strip_shell_word_quotes,
@@ -105,12 +113,6 @@ class _SourceInvocationKey:
     pid: int
     file: str
     line: int
-    source_path: str
-    arguments: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class _XtraceSourceInvocation:
     source_path: str
     arguments: tuple[str, ...]
 
@@ -1087,7 +1089,7 @@ def _raw_event_source_key(event: _RawSourceEvent):
     )
 
 
-def _xtrace_source_key(command: _XtraceSourceCommand, invocation: _XtraceSourceInvocation):
+def _xtrace_source_key(command: _XtraceSourceCommand, invocation: SourceCommandWords):
     return _SourceInvocationKey(
         pid=command.pid,
         file=_normalized_xtrace_file(command, None),
@@ -1113,7 +1115,7 @@ def _dynamic_xtrace_match_key(key: _SourceInvocationKey | tuple):
     return key[0], key[1]
 
 
-def _is_dynamic_xtrace_invocation(invocation: _XtraceSourceInvocation):
+def _is_dynamic_xtrace_invocation(invocation: SourceCommandWords):
     return _xtrace_word_is_dynamic(invocation.source_path) or any(
         _xtrace_word_is_dynamic(argument)
         for argument in invocation.arguments
@@ -1125,34 +1127,7 @@ def _xtrace_word_is_dynamic(word: str):
 
 
 def _parse_xtrace_source_invocation(command: str):
-    try:
-        words = parse_shell_words_preserving_quotes(command)
-    except Exception:
-        return None
-    stripped_words = [_strip_shell_word_quotes(word) for word in words]
-    if not stripped_words:
-        return None
-
-    normalized_words = _normalized_modash_alias_xtrace_words(stripped_words)
-    if normalized_words is not None:
-        stripped_words = list(normalized_words)
-
-    return _xtrace_source_invocation_from_words(stripped_words)
-
-
-def _xtrace_source_invocation_from_words(words):
-    index = _xtrace_source_command_index(words)
-    if index is None:
-        return None
-    if index + 1 >= len(words):
-        return None
-    source_path = words[index + 1]
-    if not source_path:
-        return None
-    return _XtraceSourceInvocation(
-        source_path=source_path,
-        arguments=tuple(words[index + 2:]),
-    )
+    return runtime_source_invocation_from_command(command)
 
 
 def _observation_xtrace_command_text(command: str):
@@ -1160,87 +1135,14 @@ def _observation_xtrace_command_text(command: str):
         words = parse_shell_words_preserving_quotes(command)
     except Exception:
         return command
-    stripped_words = [_strip_shell_word_quotes(word) for word in words]
+    stripped_words = tuple(clean_shell_word(word) for word in words)
     if not stripped_words:
         return command
 
-    normalized_words = _normalized_modash_alias_xtrace_words(stripped_words)
+    normalized_words = normalized_trace_wrapper_words(stripped_words)
     if normalized_words is None:
         return command
-    return " ".join(_xtrace_shell_quote(word) for word in normalized_words)
-
-
-def _normalized_modash_alias_xtrace_words(words):
-    if words[0] == "__modash_trace_source_alias":
-        if len(words) < 5:
-            return None
-        command_name = "." if words[1] == "dot" or words[2] == "." else "source"
-        try:
-            separator = words.index("--", 4)
-        except ValueError:
-            return None
-        source_words = words[separator + 1:]
-        if not source_words:
-            return None
-        return (command_name, *source_words)
-
-    if words[0] not in {"__modash_trace_builtin", "__modash_trace_command"}:
-        return None
-    try:
-        separator = words.index("--", 1)
-    except ValueError:
-        return None
-    wrapped_words = words[separator + 1:]
-    if not wrapped_words:
-        return None
-    command_name = "builtin" if words[0] == "__modash_trace_builtin" else "command"
-    return (command_name, *wrapped_words)
-
-
-def _xtrace_shell_quote(value: str):
-    if value and all(character.isalnum() or character in "@%_+=:,./-" for character in value):
-        return value
-    return "'" + value.replace("'", "'\"'\"'") + "'"
-
-
-def _xtrace_source_command_index(words):
-    if words[0] in {"source", "."}:
-        return 0
-    if words[0] == "builtin":
-        index = 1
-        if index < len(words) and words[index] == "--":
-            index += 1
-        if index < len(words) and words[index] in {"source", "."}:
-            return index
-        return None
-    if words[0] == "command":
-        index = 1
-        while index < len(words) and words[index].startswith("-"):
-            option = words[index]
-            if option == "--":
-                index += 1
-                break
-            if "v" in option[1:] or "V" in option[1:]:
-                return None
-            if set(option[1:]) != {"p"}:
-                return None
-            index += 1
-        if index < len(words) and words[index] in {"source", "."}:
-            return index
-        return None
-    if words[0] == "__modash_trace_dot_source":
-        return 0
-    return None
-
-
-def _strip_shell_word_quotes(word: str):
-    return strip_shell_word_quotes(_strip_shell_punctuation(word))
-
-
-def _strip_shell_punctuation(word: str):
-    while word.endswith(";"):
-        word = word[:-1]
-    return word
+    return " ".join(quote_runtime_shell_word(word) for word in normalized_words)
 
 
 def _source_identity(key: _SourceInvocationKey, occurrence: int):
@@ -1405,37 +1307,7 @@ def _parse_xtrace_line(line: str):
 
 
 def _is_xtrace_source_like(command: str):
-    command = command.strip()
-    if not command:
-        return False
-    if _parse_xtrace_source_invocation(command) is not None:
-        return True
-    return (
-        command == "source"
-        or command.startswith("source ")
-        or command == "."
-        or command.startswith(". ")
-        or command == "builtin source"
-        or command.startswith("builtin source ")
-        or command == "builtin ."
-        or command.startswith("builtin . ")
-        or command == "command source"
-        or command.startswith("command source ")
-        or command == "command ."
-        or command.startswith("command . ")
-        or command == "__modash_trace_source_alias"
-        or command.startswith("__modash_trace_source_alias ")
-        or command == "__modash_trace_dot_source"
-        or command.startswith("__modash_trace_dot_source ")
-        or command == "__modash_trace_builtin source"
-        or command.startswith("__modash_trace_builtin source ")
-        or command == "__modash_trace_builtin ."
-        or command.startswith("__modash_trace_builtin . ")
-        or command == "__modash_trace_command source"
-        or command.startswith("__modash_trace_command source ")
-        or command == "__modash_trace_command ."
-        or command.startswith("__modash_trace_command . ")
-    )
+    return is_source_like_command_text(command)
 
 
 def _parse_int(value: str, label: str):

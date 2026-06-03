@@ -17,6 +17,7 @@ from methods.runtime_source_observations import (
     load_observation,
     validate_observation,
 )
+from methods.runtime_source_commands import is_trace_wrapper_source_command
 from methods.source_resolver import (
     parse_shell_words_preserving_quotes,
     source_command_invocation,
@@ -634,55 +635,7 @@ def _is_trusted_xtrace_source_command(command: str):
 
 
 def _is_trace_wrapper_source_command(command: str):
-    try:
-        words = parse_shell_words_preserving_quotes(command.strip())
-    except Exception:
-        return False
-    words = [strip_shell_word_quotes(word) for word in words]
-    if not words:
-        return False
-    if words[0] == "__modash_trace_source_alias":
-        try:
-            separator = words.index("--", 4)
-        except ValueError:
-            return False
-        return bool(words[separator + 1:])
-    if words[0] not in {"__modash_trace_builtin", "__modash_trace_command"}:
-        return False
-    try:
-        separator = words.index("--", 1)
-    except ValueError:
-        return False
-    return _source_command_index(words[separator + 1:]) is not None
-
-
-def _source_command_index(words):
-    if not words:
-        return None
-    if words[0] in {"source", "."}:
-        return 0
-    if words[0] == "builtin":
-        index = 1
-        if index < len(words) and words[index] == "--":
-            index += 1
-        if index < len(words) and words[index] in {"source", "."}:
-            return index
-        return None
-    if words[0] == "command":
-        index = 1
-        while index < len(words) and words[index].startswith("-"):
-            option = words[index]
-            if option == "--":
-                index += 1
-                break
-            if "v" in option[1:] or "V" in option[1:]:
-                return None
-            if set(option[1:]) != {"p"}:
-                return None
-            index += 1
-        if index < len(words) and words[index] in {"source", "."}:
-            return index
-    return None
+    return is_trace_wrapper_source_command(command)
 
 
 def _coerce_observation(observation):

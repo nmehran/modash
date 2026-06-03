@@ -157,6 +157,55 @@ class SourceRegressionTestCase(unittest.TestCase):
         self.assertEqual(invocation.source_site, 'builtin -- source ./dep.sh arg')
         self.assertTrue(invocation.wrapped)
 
+    def test_source_command_parser_matrix_stays_consistent(self):
+        from methods.runtime_source_commands import source_command_index
+        from methods.source_resolver import (
+            parse_shell_words_preserving_quotes,
+            source_command_invocation,
+            strip_shell_word_quotes,
+        )
+
+        positive_commands = (
+            "source ./dep.sh",
+            ". ./dep.sh",
+            "builtin source ./dep.sh",
+            "builtin -- source ./dep.sh",
+            "builtin -- . ./dep.sh",
+            "command source ./dep.sh",
+            "command -- source ./dep.sh",
+            "command -p source ./dep.sh",
+            "command -p -- source ./dep.sh",
+            "command -pp source ./dep.sh",
+            "command -p -p source ./dep.sh",
+        )
+        negative_commands = (
+            "echo source ./dep.sh",
+            "builtin echo source ./dep.sh",
+            "command echo source ./dep.sh",
+            "command -v source",
+            "command -V source",
+            "command -pv source ./dep.sh",
+            "command -x source ./dep.sh",
+        )
+
+        for command in positive_commands:
+            with self.subTest(command=command):
+                words = [
+                    strip_shell_word_quotes(word)
+                    for word in parse_shell_words_preserving_quotes(command)
+                ]
+                self.assertIsNotNone(source_command_invocation(command))
+                self.assertIsNotNone(source_command_index(words))
+
+        for command in negative_commands:
+            with self.subTest(command=command):
+                words = [
+                    strip_shell_word_quotes(word)
+                    for word in parse_shell_words_preserving_quotes(command)
+                ]
+                self.assertIsNone(source_command_invocation(command))
+                self.assertIsNone(source_command_index(words))
+
     def test_heredoc_detection_ignores_quotes_and_arithmetic(self):
         from methods.source_resolver import extract_heredoc_delimiters
 

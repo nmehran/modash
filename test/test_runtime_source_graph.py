@@ -10,6 +10,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from methods.runtime_source_graph import (  # noqa: E402
     RuntimeSourceGraphError,
+    _is_trace_wrapper_source_command,
     build_observed_source_graph,
     ensure_graph_fingerprints_current,
     load_observed_source_graph,
@@ -308,6 +309,36 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
             validate_observed_source_graph(graph)
 
         self.assertIn("xtrace.command must be a source-like command", str(context.exception))
+
+    def test_trace_wrapper_source_command_parser_matrix(self):
+        positive_commands = (
+            "__modash_trace_source_alias source source 0 -- ./dep.sh",
+            "__modash_trace_source_alias dot . 0 -- ./dep.sh",
+            "__modash_trace_builtin -- builtin source ./dep.sh",
+            "__modash_trace_builtin -- builtin -- source ./dep.sh",
+            "__modash_trace_builtin -- builtin -- . ./dep.sh",
+            "__modash_trace_command -- command source ./dep.sh",
+            "__modash_trace_command -- command -- source ./dep.sh",
+            "__modash_trace_command -- command -p source ./dep.sh",
+            "__modash_trace_command -- command -p -- source ./dep.sh",
+        )
+        negative_commands = (
+            "__modash_trace_command -- echo source ./dep.sh",
+            "__modash_trace_command -- command echo source ./dep.sh",
+            "__modash_trace_command -- command -v source",
+            "__modash_trace_command -- command -V source",
+            "__modash_trace_command -- command -pv source ./dep.sh",
+            "__modash_trace_builtin -- builtin echo source ./dep.sh",
+            "__modash_trace_command command source ./dep.sh",
+        )
+
+        for command in positive_commands:
+            with self.subTest(command=command):
+                self.assertTrue(_is_trace_wrapper_source_command(command))
+
+        for command in negative_commands:
+            with self.subTest(command=command):
+                self.assertFalse(_is_trace_wrapper_source_command(command))
 
     def test_validate_graph_rejects_duplicate_source_identity_tampering(self):
         graph = self._two_source_graph()

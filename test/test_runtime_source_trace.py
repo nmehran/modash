@@ -59,6 +59,19 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(fingerprints["dep.sh"].roles, ("source",))
         self.assertTrue(all(len(file.sha256) == 64 for file in result.observation.files))
 
+    def test_trace_records_target_status_for_nonzero_run(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "source ./dep.sh\nexit 7\n")
+            dependency = project.write("dep.sh", 'printf "dep\\n"\n')
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(result.observation.run.target_status, 7)
+        self.assertEqual(result.observation.sources[0].resolved_path, str(dependency.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[0].call_site.file, str(entrypoint.resolve(strict=False)))
+
     def test_trace_records_command_option_source_forms(self):
         cases = {
             "command delimiter source": ("command -- source ./dep.sh command-delimiter\n", "source"),

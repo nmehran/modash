@@ -12,8 +12,9 @@ from methods.runtime_source_observations import (
     load_observation,
     validate_observation,
 )
+from methods.runtime_source_commands import clean_shell_word, source_invocation_from_command
 from methods.source_frontend import LineParserFrontend
-from methods.source_resolver import parse_shell_words_preserving_quotes, strip_shell_word_quotes
+from methods.source_resolver import parse_shell_words_preserving_quotes
 
 REPORT_VERSION = 1
 UNOBSERVED_SOURCE_SITE = "runtime.coverage.unobserved_source_site"
@@ -245,39 +246,14 @@ def _source_expression_words(source_expression: str):
         words = parse_shell_words_preserving_quotes(source_expression)
     except Exception:
         return None
-    return tuple(_clean_shell_word(word) for word in words)
+    return tuple(clean_shell_word(word) for word in words)
 
 
 def _source_invocation_words(command: str):
-    try:
-        words = parse_shell_words_preserving_quotes(command)
-    except Exception:
+    invocation = source_invocation_from_command(command)
+    if invocation is None:
         return None
-    stripped = [_clean_shell_word(word) for word in words]
-    if not stripped:
-        return None
-    index = _source_command_index(stripped)
-    if index is None or index + 1 >= len(stripped):
-        return None
-    return tuple(stripped[index + 1:])
-
-
-def _source_command_index(words):
-    if words[0] in {"source", "."}:
-        return 0
-    if len(words) > 1 and words[0] in {"builtin", "command"} and words[1] in {"source", "."}:
-        return 1
-    if words[0] == "__modash_trace_dot_source":
-        return 0
-    if len(words) > 1 and words[0] in {"__modash_trace_builtin", "__modash_trace_command"} and words[1] in {"source", "."}:
-        return 1
-    return None
-
-
-def _clean_shell_word(word):
-    while word.endswith(";"):
-        word = word[:-1]
-    return strip_shell_word_quotes(word)
+    return (invocation.source_path, *invocation.arguments)
 
 
 def _unobserved_warning(site):

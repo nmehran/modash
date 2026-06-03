@@ -69,6 +69,20 @@ class RuntimeObservationReportTestCase(unittest.TestCase):
         )
         self.assertTrue(all(site["source_identity"].startswith("src:") for site in report["observed_source_sites"]))
 
+    def test_does_not_warn_for_observed_command_option_source_forms(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "command -- source ./dep.sh observed\n")
+            project.write("dep.sh", "echo dep:$1\n")
+
+            observation = project.trace("main.sh").observation
+            report = build_observation_report(entrypoint, observation)
+
+        self.assertEqual(report["summary"]["observed_sources"], 1)
+        self.assertEqual(report["summary"]["file_backed_source_sites"], 1)
+        self.assertEqual(report["summary"]["warnings"], 0)
+        self.assertEqual(report["observed_source_sites"][0]["source_expression"], "./dep.sh observed")
+        self.assertEqual(report["observed_source_sites"][0]["xtrace_command"], "command -- source ./dep.sh observed")
+
     def test_warns_for_unobserved_source_on_partially_covered_same_line(self):
         with ScriptProject() as project:
             entrypoint = project.write(
