@@ -673,6 +673,156 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(result.observation.sources[2].call_site.file, str(first_library.resolve(strict=False)))
         self.assertEqual(result.observation.sources[3].call_site.file, str(second_library.resolve(strict=False)))
 
+    def test_trace_updates_identical_redefined_function_provenance(self):
+        with ScriptProject() as project:
+            first_library = project.write("dir1/lib.sh", 'load() { source "$1"; }\n')
+            second_library = project.write("dir2/lib.sh", 'load() { source "$1"; }\n')
+            project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write(
+                "main.sh",
+                "\n".join([
+                    "cd dir1",
+                    "source ./lib.sh",
+                    "cd ../dir2",
+                    "source ./lib.sh",
+                    "cd ..",
+                    "load ./dep.sh",
+                    "",
+                ]),
+            )
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(result.observation.sources[0].resolved_path, str(first_library.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[1].resolved_path, str(second_library.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[2].call_site.file, str(second_library.resolve(strict=False)))
+
+    def test_trace_ignores_heredoc_function_text_for_provenance(self):
+        with ScriptProject() as project:
+            first_library = project.write("dir1/lib.sh", 'load() { source "$1"; }\n')
+            second_library = project.write(
+                "dir2/lib.sh",
+                "\n".join([
+                    "cat >/dev/null <<'EOF'",
+                    'load() { source "$1"; }',
+                    "EOF",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write(
+                "main.sh",
+                "\n".join([
+                    "cd dir1",
+                    "source ./lib.sh",
+                    "cd ../dir2",
+                    "source ./lib.sh",
+                    "cd ..",
+                    "load ./dep.sh",
+                    "",
+                ]),
+            )
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(result.observation.sources[0].resolved_path, str(first_library.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[1].resolved_path, str(second_library.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[2].call_site.file, str(first_library.resolve(strict=False)))
+
+    def test_trace_ignores_unreached_branch_function_text_for_provenance(self):
+        with ScriptProject() as project:
+            first_library = project.write("dir1/lib.sh", 'load() { source "$1"; }\n')
+            second_library = project.write(
+                "dir2/lib.sh",
+                "\n".join([
+                    "if false; then",
+                    '  load() { source "$1"; }',
+                    "fi",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write(
+                "main.sh",
+                "\n".join([
+                    "cd dir1",
+                    "source ./lib.sh",
+                    "cd ../dir2",
+                    "source ./lib.sh",
+                    "cd ..",
+                    "load ./dep.sh",
+                    "",
+                ]),
+            )
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(result.observation.sources[0].resolved_path, str(first_library.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[1].resolved_path, str(second_library.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[2].call_site.file, str(first_library.resolve(strict=False)))
+
+    def test_trace_updates_reached_branch_function_provenance(self):
+        with ScriptProject() as project:
+            first_library = project.write("dir1/lib.sh", 'load() { source "$1"; }\n')
+            second_library = project.write(
+                "dir2/lib.sh",
+                "\n".join([
+                    "if true; then",
+                    '  load() { source "$1"; }',
+                    "fi",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write(
+                "main.sh",
+                "\n".join([
+                    "cd dir1",
+                    "source ./lib.sh",
+                    "cd ../dir2",
+                    "source ./lib.sh",
+                    "cd ..",
+                    "load ./dep.sh",
+                    "",
+                ]),
+            )
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(result.observation.sources[0].resolved_path, str(first_library.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[1].resolved_path, str(second_library.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[2].call_site.file, str(second_library.resolve(strict=False)))
+
+    def test_trace_tracks_function_provenance_when_extdebug_is_enabled(self):
+        with ScriptProject() as project:
+            library = project.write("lib.sh", 'load() { source "$1"; }\n')
+            dependency = project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write(
+                "main.sh",
+                "\n".join([
+                    "shopt -s extdebug",
+                    "source ./lib.sh",
+                    "load ./dep.sh",
+                    "",
+                ]),
+            )
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertEqual(result.observation.sources[0].resolved_path, str(library.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[1].resolved_path, str(dependency.resolve(strict=False)))
+        self.assertEqual(result.observation.sources[1].call_site.file, str(library.resolve(strict=False)))
+
     def test_trace_records_child_bash_script_sources(self):
         with ScriptProject() as project:
             parent = project.write("main.sh", 'bash ./child.sh\n')

@@ -148,9 +148,11 @@ def trace_sources(
         xtrace_path = tmpdir_path / "xtrace.log"
         failure_path = tmpdir_path / "trace-failure.txt"
         scanner_path = tmpdir_path / "positionals-scanner.py"
+        function_scanner_path = tmpdir_path / "function-scanner.py"
         prelude_path = tmpdir_path / "prelude.sh"
         prelude_path.write_text(_trace_prelude(), encoding="utf-8")
         scanner_path.write_text(_positionals_scanner_script(), encoding="utf-8")
+        function_scanner_path.write_text(_function_definition_scanner_script(), encoding="utf-8")
         trace_path.write_bytes(b"")
         counter_path.write_text("0\n", encoding="utf-8")
         xtrace_path.write_bytes(b"")
@@ -165,6 +167,7 @@ def trace_sources(
             "MODASH_TRACE_XTRACE_FILE": str(xtrace_path),
             "MODASH_TRACE_FAILURE_FILE": str(failure_path),
             "MODASH_TRACE_POSITIONAL_SCANNER": str(scanner_path),
+            "MODASH_TRACE_FUNCTION_SCANNER": str(function_scanner_path),
             "MODASH_TRACE_PYTHON": sys.executable,
         })
 
@@ -346,6 +349,51 @@ def main(argv):
         print(f"modash positional scanner failed for {{path}}: {{exc}}", file=sys.stderr)
         return 2
     return 0 if has_top_level_positional_mutation else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
+'''
+
+
+def _function_definition_scanner_script():
+    repo_root = str(Path(__file__).resolve().parents[1])
+    return f'''\
+import sys
+
+REPO_ROOT = {repo_root!r}
+if REPO_ROOT and REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+try:
+    from methods.source_effects import FunctionDef
+    from methods.source_frontend import LineParserFrontend
+except Exception as exc:
+    print(f"modash function scanner import failed: {{exc}}", file=sys.stderr)
+    sys.exit(2)
+
+
+def main(argv):
+    if len(argv) != 2:
+        print("modash function scanner expected exactly one path", file=sys.stderr)
+        return 2
+    path = argv[1]
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            content = handle.read()
+    except OSError:
+        return 1
+    try:
+        ir = LineParserFrontend().parse(path, content)
+    except Exception as exc:
+        print(f"modash function scanner failed for {{path}}: {{exc}}", file=sys.stderr)
+        return 2
+    seen = set()
+    for node in ir.nodes:
+        if isinstance(node, FunctionDef) and node.name not in seen:
+            seen.add(node.name)
+            print(node.name)
+    return 0
 
 
 if __name__ == "__main__":
@@ -1386,22 +1434,55 @@ __modash_current_source_file() {
   fi
 }
 
-__modash_record_sourced_functions() {
-  local resolved_path=$1 name current_definition
-  local -n definitions_before_ref=$2
-  local -n function_files_before_ref=$3
+__modash_function_definition_metadata() {
+  local name=$1 definition line file
+  definition=$(shopt -s extdebug; declare -F "$name") || return 1
+  read -r _ line file <<< "$definition"
+  [[ -n $line && -n $file ]] || return 1
+  printf '%s\t%s' "$line" "$file"
+}
 
-  while read -r _ _ name; do
+__modash_record_sourced_functions() {
+  local resolved_path=$1 name declared_name current_definition current_metadata definition_file definition_path
+  local scanner_status top_level_function_names top_level_functions_loaded=0
+  local -n definitions_before_ref=$2
+  local -n metadata_before_ref=$3
+  local -A top_level_function_map=()
+
+  while IFS= read -r name; do
     [[ -n $name ]] || continue
     current_definition=$(declare -f "$name")
-    if [[ -n ${definitions_before_ref[$name]+set} ]]; then
-      [[ ${definitions_before_ref[$name]} != "$current_definition" ]] || continue
-      [[ ${__modash_function_file_map[$name]-} == "${function_files_before_ref[$name]-}" ]] || continue
-    elif [[ -n ${__modash_function_file_map[$name]+set} ]]; then
-      continue
+    current_metadata=$(__modash_function_definition_metadata "$name") || continue
+    if [[ -n ${definitions_before_ref[$name]+set} \
+      && ${definitions_before_ref[$name]} == "$current_definition" \
+      && ${metadata_before_ref[$name]-} == "$current_metadata" ]]; then
+      if ((top_level_functions_loaded == 0)); then
+        top_level_functions_loaded=1
+        top_level_function_names=$("$MODASH_TRACE_PYTHON" "$MODASH_TRACE_FUNCTION_SCANNER" "$resolved_path")
+        scanner_status=$?
+        case "$scanner_status" in
+          0)
+            while IFS= read -r declared_name; do
+              [[ -n $declared_name ]] || continue
+              top_level_function_map["$declared_name"]=1
+            done <<< "$top_level_function_names"
+            ;;
+          1)
+            ;;
+          *)
+            __modash_trace_abort \
+              "runtime.trace.function-scanner" \
+              "modash: runtime trace could not scan sourced function definitions: ${resolved_path}"
+            ;;
+        esac
+      fi
+      [[ -n ${top_level_function_map[$name]+set} ]] || continue
     fi
+    definition_file=${current_metadata#*$'\t'}
+    definition_path=$(__modash_current_source_file "$definition_file" "")
+    [[ $definition_path == "$resolved_path" ]] || continue
     __modash_function_file_map["$name"]=$resolved_path
-  done < <(declare -F)
+  done < <(compgen -A function)
 }
 
 __modash_process_entrypoint() {
@@ -1476,9 +1557,9 @@ __modash_trace_source_common() {
   event_index=$(__modash_next_source_index)
 
   local caller_file caller_line cwd source_path resolved_path status source_arg_count track_functions
-  local function_name function_definition
+  local function_name function_definition function_metadata
   local -a source_args explicit_source_args
-  local -A function_definitions_before function_files_before
+  local -A function_definitions_before function_metadata_before
   source_args=("$@")
   source_arg_count=${#source_args[@]}
   caller_file=$(__modash_current_source_file "${BASH_SOURCE[2]:-}" "${FUNCNAME[2]:-}")
@@ -1503,12 +1584,13 @@ __modash_trace_source_common() {
 
   if [[ -n $source_path && -r $resolved_path ]]; then
     track_functions=1
-    while read -r _ _ function_name; do
+    while IFS= read -r function_name; do
       [[ -n $function_name ]] || continue
       function_definition=$(declare -f "$function_name")
+      function_metadata=$(__modash_function_definition_metadata "$function_name" || true)
       function_definitions_before["$function_name"]=$function_definition
-      function_files_before["$function_name"]=${__modash_function_file_map[$function_name]-}
-    done < <(declare -F)
+      function_metadata_before["$function_name"]=$function_metadata
+    done < <(compgen -A function)
   fi
 
   if [[ -n $source_path ]]; then
@@ -1530,7 +1612,7 @@ __modash_trace_source_common() {
   status=$?
 
   if ((track_functions)); then
-    __modash_record_sourced_functions "$resolved_path" function_definitions_before function_files_before
+    __modash_record_sourced_functions "$resolved_path" function_definitions_before function_metadata_before
   fi
 
   if [[ -n $source_path ]]; then
