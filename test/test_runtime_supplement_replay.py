@@ -758,6 +758,68 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         self.assertIn("./missing.sh: No such file or directory\n", result.stdout)
         self.assertTrue(result.stdout.endswith("fallback:B\nok:B\n"), result.stdout)
 
+    def test_dynamic_helper_name_graph_uses_next_observed_helper_edge(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'load_a() { source "$1"; }',
+                    'load_b() { source "$1"; }',
+                    "load_b ./b.sh",
+                    '"$MODASH_TEST_HELPER" ./a.sh',
+                    'printf "done:%s\\n" "$VALUE"',
+                    "",
+                ]),
+            )
+            project.write("a.sh", 'VALUE=A\nprintf "a\\n"\n')
+            project.write("b.sh", 'VALUE=B\nprintf "b\\n"\n')
+            trace = project.trace("main.sh", env={"MODASH_TEST_HELPER": "load_a"})
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            self.assertEqual(
+                [(edge["xtrace"]["function"], Path(edge["resolved_path"]).name) for edge in graph["edges"]],
+                [("load_b", "b.sh"), ("load_a", "a.sh")],
+            )
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled, env={"MODASH_TEST_HELPER": "load_a"})
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "b\na\ndone:A\n")
+
+    def test_dynamic_helper_name_graph_uses_next_observed_condition_helper_edge(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'load_a() { if source "$1"; then printf "in:a:%s\\n" "$VALUE"; fi; }',
+                    'load_b() { if source "$1"; then printf "in:b:%s\\n" "$VALUE"; fi; }',
+                    "load_b ./b.sh",
+                    '"$MODASH_TEST_HELPER" ./a.sh',
+                    'printf "done:%s\\n" "$VALUE"',
+                    "",
+                ]),
+            )
+            project.write("a.sh", 'VALUE=A\nprintf "a\\n"\n')
+            project.write("b.sh", 'VALUE=B\nprintf "b\\n"\n')
+            trace = project.trace("main.sh", env={"MODASH_TEST_HELPER": "load_a"})
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            self.assertEqual(
+                [(edge["xtrace"]["function"], Path(edge["resolved_path"]).name) for edge in graph["edges"]],
+                [("load_b", "b.sh"), ("load_a", "a.sh")],
+            )
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled, env={"MODASH_TEST_HELPER": "load_a"})
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "b\nin:b:B\na\nin:a:A\ndone:A\n")
+
     def test_dynamic_helper_name_static_compile_remains_fail_closed_without_graph(self):
         with ScriptProject() as project:
             project.write("dep.sh", 'printf "dep\\n"\n')

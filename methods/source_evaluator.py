@@ -466,6 +466,7 @@ class SourceOverride:
     arguments: tuple[str, ...] = ()
     replacement_kind: str = "source"
     source_value: str | None = None
+    graph_index: int = -1
 
 
 @dataclass(frozen=True)
@@ -6063,6 +6064,16 @@ class SourceEvaluator:
             )
             candidates.append((function_name, function_def, variants, matching_signatures))
 
+        next_override = self._next_unconsumed_source_override()
+        if next_override is not None:
+            matched_candidates = tuple(
+                candidate
+                for candidate in candidates
+                if self._function_variants_contain_source_override(candidate[2], next_override)
+            )
+            if matched_candidates:
+                candidates = list(matched_candidates)
+
         if len(candidates) > 1:
             raise unsupported_source_error(
                 str(node.location.path),
@@ -6083,6 +6094,87 @@ class SourceEvaluator:
                     return None
             return function_name, function_def, variants, arguments
         return None
+
+    def _next_unconsumed_source_override(self):
+        next_item = None
+        for key, overrides in self.source_overrides.items():
+            consumed = self._source_override_indexes[key]
+            if consumed >= len(overrides):
+                continue
+            override = overrides[consumed]
+            graph_index = override.graph_index
+            if graph_index < 0:
+                graph_index = 1_000_000_000
+            item = (graph_index, override)
+            if next_item is None or item[0] < next_item[0]:
+                next_item = item
+        return None if next_item is None else next_item[1]
+
+    def _function_variants_contain_source_override(self, variants: tuple[FunctionDef, ...], override: SourceOverride):
+        return any(self._node_list_contains_source_override(variant.body, override) for variant in variants)
+
+    def _node_list_contains_source_override(self, nodes, override: SourceOverride):
+        for node in nodes:
+            if isinstance(node, SourceSite) and self._source_site_matches_override(node, override):
+                return True
+            if isinstance(node, IfBlock):
+                for branch in node.branches:
+                    if self._condition_matches_source_override(
+                        branch.condition,
+                        branch.condition_location or node.location,
+                        override,
+                    ):
+                        return True
+                    if self._node_list_contains_source_override(branch.body, override):
+                        return True
+                continue
+            if isinstance(node, WhileLoop):
+                if self._condition_matches_source_override(node.condition, node.location, override):
+                    return True
+                if self._node_list_contains_source_override(node.body, override):
+                    return True
+                continue
+            if isinstance(node, ForLoop):
+                if self._node_list_contains_source_override(node.body, override):
+                    return True
+                continue
+            if isinstance(node, CStyleForLoop):
+                if self._node_list_contains_source_override(node.body, override):
+                    return True
+                continue
+            if isinstance(node, CaseBlock):
+                if any(self._node_list_contains_source_override(arm.body, override) for arm in node.arms):
+                    return True
+                continue
+            if isinstance(node, FunctionDef):
+                if self._node_list_contains_source_override(node.body, override):
+                    return True
+        return False
+
+    def _source_site_matches_override(self, site: SourceSite, override: SourceOverride):
+        return (
+            site.location.path.resolve(strict=False) == Path(override.path).resolve(strict=False)
+            and site.location.line == override.line
+            and self._source_override_command_key(site.text) == self._source_override_command_key(override.command)
+        )
+
+    def _condition_matches_source_override(self, condition: str | None, location: SourceLocation, override: SourceOverride):
+        if not condition:
+            return False
+        if location.path.resolve(strict=False) != Path(override.path).resolve(strict=False):
+            return False
+        if location.line != override.line:
+            return False
+        try:
+            atoms = self._source_logical_condition_atoms_from_text(condition)
+        except UnsupportedSourceError:
+            return False
+        override_key = self._source_override_command_key(override.command)
+        return any(
+            atom.source_command is not None
+            and self._source_override_command_key(f"{atom.source_command} {atom.source_expression}") == override_key
+            for atom in atoms
+        )
 
     def _graph_backed_dynamic_function_arguments(self, function_name: str, signatures: tuple[tuple[str, ...], ...]):
         key = function_name

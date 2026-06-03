@@ -189,6 +189,7 @@ def _source_overrides_from_graph_payload(graph_payload):
             arguments=tuple(edge["arguments"]),
             replacement_kind=_source_override_replacement_kind(edge),
             source_value=_source_override_source_value(edge),
+            graph_index=edge["index"],
         )
         for edge in file_edges
     ]
@@ -469,6 +470,7 @@ def _child_process_command_overrides_from_graph_payload(graph_payload):
                 command=source_site,
                 resolved_path=edge["resolved_path"],
                 arguments=tuple(edge["arguments"]),
+                graph_index=edge["index"],
             ))
     return tuple(overrides)
 
