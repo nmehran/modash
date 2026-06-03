@@ -47,7 +47,8 @@ The separation matters:
 
 1. `trace` runs the original program and records what happened.
 2. `graph` validates observed source events against sanitized xtrace provenance
-   and writes a trusted graph artifact plus a compact text review report.
+   and replayable file call sites, then writes a trusted graph artifact plus a
+   compact text review report.
 3. `supplement` turns reviewed observations or graphs into explicit compiler
    input.
 4. normal executable compile consumes only deterministic supplement data.
@@ -226,6 +227,12 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - Generated graphs and supplements should be reviewed before use.
 - `observe-compile` is explicit and artifact-writing; normal compile never
   traces or auto-supplements silently.
+- `observe-compile` refuses to build graph or executable output when the traced
+  target exits nonzero.
+- Graph replay is limited to observed source edges whose file-backed call site
+  can be replayed by the compiler. Runtime-observed source effects hidden
+  behind `eval` remain trace data, but they are not promoted into trusted graph
+  replay.
 - No-argument `source file` tracing preserves inherited positional parameters
   through the trace alias. If that alias is removed before the source call, or
   if the sourced file may mutate caller positionals at top level with `shift`

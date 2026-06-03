@@ -56,6 +56,75 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
         self.assertIn("trusted: yes", report)
         self.assertIn("source ./dep.sh arg", report)
 
+    def test_graph_cli_accepts_option_wrapped_source_forms(self):
+        cases = {
+            "command delimiter source": "command -- source ./dep.sh\n",
+            "command path source": "command -p source ./dep.sh\n",
+            "builtin delimiter source": "builtin -- source ./dep.sh\n",
+        }
+
+        for name, main_content in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                entrypoint = project.write("main.sh", main_content)
+                project.write("dep.sh", "printf 'dep\\n'\n")
+                observation = trace_sources(entrypoint)
+                observation_path = project.path("observation.json")
+                graph_path = project.path("runtime-graph.json")
+                write_trace_observation(observation, observation_path)
+
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(REPO_ROOT / "modash.py"),
+                        "graph",
+                        str(entrypoint),
+                        "--from-observation",
+                        str(observation_path),
+                        "--output",
+                        str(graph_path),
+                    ],
+                    cwd=str(project.root),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                graph = json.loads(graph_path.read_text())
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(len(graph["edges"]), 1)
+            self.assertEqual(graph["edges"][0]["call_site"]["command"], main_content.strip())
+
+    def test_graph_cli_rejects_eval_source_edge_as_unreplayable(self):
+        with ScriptProject() as project:
+            entrypoint = project.write("main.sh", "eval 'source ./dep.sh'\n")
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            observation = trace_sources(entrypoint)
+            observation_path = project.path("observation.json")
+            graph_path = project.path("runtime-graph.json")
+            write_trace_observation(observation, observation_path)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "graph",
+                    str(entrypoint),
+                    "--from-observation",
+                    str(observation_path),
+                    "--output",
+                    str(graph_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            graph_exists = graph_path.exists()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("replayable source command", result.stderr)
+        self.assertFalse(graph_exists)
+
     def test_graph_cli_writes_explicit_report_path(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", "source ./dep.sh\n")
@@ -513,6 +582,102 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
         self.assertIn("modash: compiled from newly observed trusted runtime graph:", result.stderr)
         self.assertEqual(run_result.returncode, 0, run_result.stderr)
         self.assertEqual(run_result.stdout, "dep:exact\nmain\n")
+
+    def test_observe_compile_cli_stops_after_nonzero_trace(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    "source ./dep.sh",
+                    "exit 7",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            graph_path = project.path("artifacts/runtime-graph.json")
+            observation_path = project.path("artifacts/observation.json")
+            report_path = project.path("artifacts/runtime-graph.txt")
+            output_path = project.path("dist/compiled.sh")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "observe-compile",
+                    str(entrypoint),
+                    str(output_path),
+                    "--reviewed-graph-out",
+                    str(graph_path),
+                    "--observation-out",
+                    str(observation_path),
+                    "--report",
+                    str(report_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            observation_exists = observation_path.is_file()
+            graph_exists = graph_path.exists()
+            report_exists = report_path.exists()
+            output_exists = output_path.exists()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("refusing to compile", result.stderr)
+        self.assertEqual(result.stdout, "dep\n")
+        self.assertTrue(observation_exists)
+        self.assertFalse(graph_exists)
+        self.assertFalse(report_exists)
+        self.assertFalse(output_exists)
+
+    def test_observe_compile_cli_stops_after_alias_perturbed_trace(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'source() { printf "custom-source:%s\\n" "$1"; }',
+                    "source ./dep.sh",
+                    "printf 'after\\n'",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            graph_path = project.path("artifacts/runtime-graph.json")
+            observation_path = project.path("artifacts/observation.json")
+            report_path = project.path("artifacts/runtime-graph.txt")
+            output_path = project.path("dist/compiled.sh")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "modash.py"),
+                    "observe-compile",
+                    str(entrypoint),
+                    str(output_path),
+                    "--reviewed-graph-out",
+                    str(graph_path),
+                    "--observation-out",
+                    str(observation_path),
+                    "--report",
+                    str(report_path),
+                ],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            observation_exists = observation_path.is_file()
+            graph_exists = graph_path.exists()
+            report_exists = report_path.exists()
+            output_exists = output_path.exists()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("refusing to compile", result.stderr)
+        self.assertTrue(observation_exists)
+        self.assertFalse(graph_exists)
+        self.assertFalse(report_exists)
+        self.assertFalse(output_exists)
 
     def test_supplement_cli_writes_explicit_report_path(self):
         with ScriptProject() as project:

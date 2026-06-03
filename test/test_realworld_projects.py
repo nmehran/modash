@@ -1476,6 +1476,9 @@ def run_runtime_observe_compile_probe(
             },
         }
 
+    trace_stdout = stdout.getvalue()
+    trace_stderr = stderr.getvalue()
+    trace_target_stderr = observe_compile_target_stderr(trace_stderr)
     original = run_runtime_command(entrypoint_path, cwd, trace_environment, timeout_seconds)
     compiled = run_runtime_command(compiled_path, cwd, trace_environment, timeout_seconds)
     if original["status"] == "timeout":
@@ -1485,7 +1488,8 @@ def run_runtime_observe_compile_probe(
     else:
         matched = (
             trace_returncode == original["returncode"]
-            and stdout.getvalue() == original["stdout"]
+            and trace_stdout == original["stdout"]
+            and trace_target_stderr == original["stderr"]
             and original["returncode"] == compiled["returncode"]
             and original["stdout"] == compiled["stdout"]
             and original["stderr"] == compiled["stderr"]
@@ -1506,8 +1510,9 @@ def run_runtime_observe_compile_probe(
         "graph_edges": graph_edges,
         "source_paths": source_paths,
         "trace_returncode": trace_returncode,
-        "trace_stdout": stdout.getvalue(),
-        "trace_stderr": stderr.getvalue(),
+        "trace_stdout": trace_stdout,
+        "trace_stderr": trace_stderr,
+        "trace_target_stderr": trace_target_stderr,
         "original": original,
         "compiled": compiled,
         "observation_path": str(observation_path),
@@ -1515,6 +1520,20 @@ def run_runtime_observe_compile_probe(
         "graph_review_report": str(graph_report_path),
         "output_path": str(compiled_path),
     }
+
+
+def observe_compile_target_stderr(stderr: str):
+    status_prefixes = (
+        "modash: trace observation:",
+        "modash: runtime source graph:",
+        "modash: runtime graph review report:",
+        "modash: compiled from newly observed trusted runtime graph:",
+    )
+    return "".join(
+        line
+        for line in stderr.splitlines(keepends=True)
+        if not line.startswith(status_prefixes)
+    )
 
 
 def runtime_failure_message(record):
@@ -1637,6 +1656,53 @@ class RealWorldHarnessHelperTestCase(unittest.TestCase):
         self.assertIn("expected match, got compile-unsupported", message)
         self.assertIn("diagnostic=modash.unresolved_source", message)
         self.assertIn("fragment='source \"$target\"'", message)
+
+    def test_observe_compile_target_stderr_removes_only_status_lines(self):
+        stderr = (
+            "target-before\n"
+            "modash: trace observation: /tmp/observation.json\n"
+            "modash: runtime source graph: /tmp/graph.json\n"
+            "modash: runtime graph review report: /tmp/graph.txt\n"
+            "modash: compiled from newly observed trusted runtime graph: /tmp/out.sh\n"
+            "target-after\n"
+        )
+
+        self.assertEqual(
+            observe_compile_target_stderr(stderr),
+            "target-before\ntarget-after\n",
+        )
+
+    def test_runtime_observe_compile_probe_detects_trace_stderr_mismatch(self):
+        with tempfile.TemporaryDirectory(prefix="modash-realworld-helper-") as tmpdir:
+            root = Path(tmpdir)
+            entrypoint = root / "main.sh"
+            dependency = root / "dep.sh"
+            entrypoint.write_text(
+                "\n".join([
+                    "source ./dep.sh",
+                    '[[ -n ${MODASH_TRACE_FILE:-} ]] && printf "trace-only\\n" >&2',
+                    "printf 'main\\n'",
+                    "",
+                ]),
+                encoding="utf-8",
+            )
+            dependency.write_text("printf 'dep\\n'\n", encoding="utf-8")
+
+            record = run_runtime_observe_compile_probe(
+                entrypoint,
+                root,
+                {},
+                5,
+                root / "observation.json",
+                root / "runtime-graph.json",
+                root / "runtime-graph.txt",
+                root / "compiled.sh",
+            )
+
+        self.assertEqual(record["status"], "mismatch", record)
+        self.assertEqual(record["original"]["stderr"], "")
+        self.assertEqual(record["compiled"]["stderr"], "")
+        self.assertEqual(record["trace_target_stderr"], "trace-only\n")
 
     def test_runtime_failure_message_includes_timeout_side_and_output_diff(self):
         message = runtime_failure_message({

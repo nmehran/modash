@@ -837,8 +837,12 @@ def _source_command_position(words: list[str]):
 
         first_word = words[command_start] if command_start < len(words) else ''
         previous_word = words[index - 1]
-        if first_word == 'builtin' and index == command_start + 1:
-            return command_start, index
+        if first_word == 'builtin':
+            command_index = command_start + 1
+            if command_index < len(words) and words[command_index] == '--':
+                command_index += 1
+            if index == command_index:
+                return command_start, index
         if first_word == 'command':
             command_index = command_start + 1
             while command_index < len(words) and words[command_index].startswith('-'):

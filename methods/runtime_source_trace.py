@@ -739,7 +739,7 @@ def _observed_function_call_for_stack(function_stack, pid: int, before_sequence:
             if not Path(call_file).is_file():
                 continue
             if not _xtrace_function_call_needs_observed_replay(command, function_name):
-                continue
+                break
             return RuntimeFunctionCall(
                 file=call_file,
                 line=command.line,
@@ -1132,21 +1132,25 @@ def _parse_xtrace_source_invocation(command: str):
     if not stripped_words:
         return None
 
-    alias_invocation = _parse_modash_alias_xtrace_invocation(stripped_words)
-    if alias_invocation is not None:
-        return alias_invocation
+    normalized_words = _normalized_modash_alias_xtrace_words(stripped_words)
+    if normalized_words is not None:
+        stripped_words = list(normalized_words)
 
-    index = _xtrace_source_command_index(stripped_words)
+    return _xtrace_source_invocation_from_words(stripped_words)
+
+
+def _xtrace_source_invocation_from_words(words):
+    index = _xtrace_source_command_index(words)
     if index is None:
         return None
-    if index + 1 >= len(stripped_words):
+    if index + 1 >= len(words):
         return None
-    source_path = stripped_words[index + 1]
+    source_path = words[index + 1]
     if not source_path:
         return None
     return _XtraceSourceInvocation(
         source_path=source_path,
-        arguments=tuple(stripped_words[index + 2:]),
+        arguments=tuple(words[index + 2:]),
     )
 
 
@@ -1186,7 +1190,7 @@ def _normalized_modash_alias_xtrace_words(words):
     except ValueError:
         return None
     wrapped_words = words[separator + 1:]
-    if len(wrapped_words) < 2 or wrapped_words[0] not in {"source", "."}:
+    if not wrapped_words:
         return None
     command_name = "builtin" if words[0] == "__modash_trace_builtin" else "command"
     return (command_name, *wrapped_words)
@@ -1198,44 +1202,33 @@ def _xtrace_shell_quote(value: str):
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
-def _parse_modash_alias_xtrace_invocation(words):
-    if words[0] == "__modash_trace_source_alias":
-        try:
-            separator = words.index("--", 4)
-        except ValueError:
-            return None
-        source_words = words[separator + 1:]
-        if not source_words or not source_words[0]:
-            return None
-        return _XtraceSourceInvocation(
-            source_path=source_words[0],
-            arguments=tuple(source_words[1:]),
-        )
-
-    if words[0] not in {"__modash_trace_builtin", "__modash_trace_command"}:
-        return None
-    try:
-        separator = words.index("--", 1)
-    except ValueError:
-        return None
-    wrapped_words = words[separator + 1:]
-    if len(wrapped_words) < 2 or wrapped_words[0] not in {"source", "."}:
-        return None
-    return _XtraceSourceInvocation(
-        source_path=wrapped_words[1],
-        arguments=tuple(wrapped_words[2:]),
-    )
-
-
 def _xtrace_source_command_index(words):
     if words[0] in {"source", "."}:
         return 0
-    if len(words) > 1 and words[0] in {"builtin", "command"} and words[1] in {"source", "."}:
-        return 1
+    if words[0] == "builtin":
+        index = 1
+        if index < len(words) and words[index] == "--":
+            index += 1
+        if index < len(words) and words[index] in {"source", "."}:
+            return index
+        return None
+    if words[0] == "command":
+        index = 1
+        while index < len(words) and words[index].startswith("-"):
+            option = words[index]
+            if option == "--":
+                index += 1
+                break
+            if "v" in option[1:] or "V" in option[1:]:
+                return None
+            if set(option[1:]) != {"p"}:
+                return None
+            index += 1
+        if index < len(words) and words[index] in {"source", "."}:
+            return index
+        return None
     if words[0] == "__modash_trace_dot_source":
         return 0
-    if len(words) > 1 and words[0] in {"__modash_trace_builtin", "__modash_trace_command"} and words[1] in {"source", "."}:
-        return 1
     return None
 
 
@@ -1362,7 +1355,10 @@ def _source_like_xtrace_commands(commands):
     for command in commands:
         record_file = _normalized_xtrace_file(command, None)
         source_line = _source_line(record_file, command.line)
-        if _is_xtrace_source_like(command.command) or _is_xtrace_source_like(source_line):
+        if _is_xtrace_source_like(command.command) or (
+            _xtrace_source_line_fallback_allowed(command.command)
+            and _is_xtrace_source_like(source_line)
+        ):
             source_commands.append(command)
     return tuple(
         _XtraceSourceCommand(
@@ -1377,6 +1373,11 @@ def _source_like_xtrace_commands(commands):
         )
         for index, command in enumerate(source_commands)
     )
+
+
+def _xtrace_source_line_fallback_allowed(command: str):
+    stripped = command.strip()
+    return stripped.startswith("__modash_trace_")
 
 
 def _parse_xtrace_line(line: str):
@@ -1772,6 +1773,62 @@ __modash_source_may_mutate_positionals() {
   return 0
 }
 
+__modash_source_builtin_enabled() {
+  case "$1" in
+    source)
+      enable -p | grep -q '^enable source$'
+      ;;
+    .)
+      enable -p | grep -q '^enable \.$'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+__modash_builtin_source_command_index() {
+  __modash_source_command_index=-1
+  local index=0
+  if [[ ${__modash_source_call_args[0]-} == -- ]]; then
+    index=1
+  fi
+  case "${__modash_source_call_args[$index]-}" in
+    source|.)
+      __modash_source_command_index=$index
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+__modash_command_source_command_index() {
+  __modash_source_command_index=-1
+  local index=0 option letters
+  while ((index < ${#__modash_source_call_args[@]})); do
+    option=${__modash_source_call_args[$index]}
+    if [[ $option == -- ]]; then
+      ((index++))
+      break
+    fi
+    if [[ $option != -* ]]; then
+      break
+    fi
+    letters=${option#-}
+    if [[ -z $letters || $letters == *v* || $letters == *V* || ${letters//p/} != "" ]]; then
+      return 1
+    fi
+    ((index++))
+  done
+  case "${__modash_source_call_args[$index]-}" in
+    source|.)
+      __modash_source_command_index=$index
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 __modash_trace_source_common() {
   local kind=$1 builtin_name=$2
   shift 2
@@ -1791,6 +1848,12 @@ __modash_trace_source_common() {
   source_path=${source_args[0]-}
   resolved_path=$(__modash_resolve_source_path "$source_path")
   track_functions=0
+
+  if ! __modash_source_builtin_enabled "$builtin_name"; then
+    __modash_trace_abort \
+      "runtime.trace.disabled-source-builtin" \
+      "modash: runtime trace cannot observe disabled ${builtin_name} builtin"
+  fi
 
   if ! [[ $caller_line =~ ^[0-9]+$ ]] || ((caller_line < 1)); then
     __modash_trace_abort \
@@ -1879,7 +1942,20 @@ __modash_trace_builtin() {
   local caller_count=$1
   shift
   __modash_capture_source_call "$caller_count" "$@"
-  local builtin_name=${__modash_source_call_args[0]-}
+  local builtin_name
+  if __modash_builtin_source_command_index; then
+    builtin_name=${__modash_source_call_args[$__modash_source_command_index]}
+    case "$builtin_name" in
+      source)
+        __modash_trace_source_common source source "${__modash_source_call_args[@]:$((__modash_source_command_index + 1))}"
+        ;;
+      .)
+        __modash_trace_source_common dot . "${__modash_source_call_args[@]:$((__modash_source_command_index + 1))}"
+        ;;
+    esac
+    return
+  fi
+  builtin_name=${__modash_source_call_args[0]-}
   case "$builtin_name" in
     source)
       __modash_trace_source_common source source "${__modash_source_call_args[@]:1}"
@@ -1897,7 +1973,20 @@ __modash_trace_command() {
   local caller_count=$1
   shift
   __modash_capture_source_call "$caller_count" "$@"
-  local command_name=${__modash_source_call_args[0]-}
+  local command_name
+  if __modash_command_source_command_index; then
+    command_name=${__modash_source_call_args[$__modash_source_command_index]}
+    case "$command_name" in
+      source)
+        __modash_trace_source_common source source "${__modash_source_call_args[@]:$((__modash_source_command_index + 1))}"
+        ;;
+      .)
+        __modash_trace_source_common dot . "${__modash_source_call_args[@]:$((__modash_source_command_index + 1))}"
+        ;;
+    esac
+    return
+  fi
+  command_name=${__modash_source_call_args[0]-}
   case "$command_name" in
     source)
       __modash_trace_source_common source source "${__modash_source_call_args[@]:1}"

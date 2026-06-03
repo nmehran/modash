@@ -67,6 +67,8 @@ class CompileRegressionTestCase(unittest.TestCase):
         cases = {
             "builtin source": 'builtin source ./dep.sh builtin-source "two words"\n',
             "builtin dot": 'builtin . ./dep.sh builtin-dot\n',
+            "builtin delimiter source": 'builtin -- source ./dep.sh builtin-delimiter-source\n',
+            "builtin delimiter dot": 'builtin -- . ./dep.sh builtin-delimiter-dot\n',
             "command source": 'command source ./dep.sh command-source\n',
             "command dot": 'command . ./dep.sh command-dot\n',
             "command path source": 'command -p source ./dep.sh command-path\n',
@@ -85,6 +87,8 @@ class CompileRegressionTestCase(unittest.TestCase):
                 compiled = project.path("compiled.sh").read_text()
                 self.assertNotIn("builtin source ./dep.sh", compiled)
                 self.assertNotIn("builtin . ./dep.sh", compiled)
+                self.assertNotIn("builtin -- source ./dep.sh", compiled)
+                self.assertNotIn("builtin -- . ./dep.sh", compiled)
                 self.assertNotIn("command source ./dep.sh", compiled)
                 self.assertNotIn("command . ./dep.sh", compiled)
                 self.assertNotIn("command -p source ./dep.sh", compiled)

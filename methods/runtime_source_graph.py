@@ -17,7 +17,11 @@ from methods.runtime_source_observations import (
     load_observation,
     validate_observation,
 )
-from methods.source_resolver import parse_shell_words_preserving_quotes, strip_shell_word_quotes
+from methods.source_resolver import (
+    parse_shell_words_preserving_quotes,
+    source_command_invocation,
+    strip_shell_word_quotes,
+)
 
 GRAPH_VERSION = 2
 GRAPH_TOP_LEVEL_KEYS = frozenset({
@@ -567,7 +571,9 @@ def _validate_edge_xtrace(edge, xtrace, process_index, call_site, source_identit
         raise RuntimeSourceGraphError("edges[].xtrace.process_index must match edge process_index")
     if xtrace["file"] != call_site["file"] or xtrace["line"] != call_site["line"]:
         raise RuntimeSourceGraphError("edges[].xtrace must match edge call_site")
-    if not _is_trusted_xtrace_source_command(xtrace["command"], call_site["command"]):
+    if not _is_replayable_source_call_site(call_site["command"]):
+        raise RuntimeSourceGraphError("edges[].call_site.command must be a replayable source command")
+    if not _is_trusted_xtrace_source_command(xtrace["command"]):
         raise RuntimeSourceGraphError("edges[].xtrace.command must be a source-like command")
 
 
@@ -614,31 +620,15 @@ def _file_roles(value, label: str):
 
 
 def _is_source_like_command(command: str):
-    command = command.strip()
-    return (
-        command == "source"
-        or command.startswith("source ")
-        or command == "."
-        or command.startswith(". ")
-        or command == "builtin source"
-        or command.startswith("builtin source ")
-        or command == "builtin ."
-        or command.startswith("builtin . ")
-        or command == "command source"
-        or command.startswith("command source ")
-        or command == "command ."
-        or command.startswith("command . ")
-    )
+    return source_command_invocation(command.strip()) is not None
 
 
-def _is_trusted_xtrace_source_command(command: str, call_site_command: str):
-    return (
-        _is_source_like_command(command)
-        or (
-            _is_trace_wrapper_source_command(command)
-            and _is_source_like_command(call_site_command)
-        )
-    )
+def _is_replayable_source_call_site(command: str):
+    return source_command_invocation(command.strip()) is not None
+
+
+def _is_trusted_xtrace_source_command(command: str):
+    return _is_source_like_command(command) or _is_trace_wrapper_source_command(command)
 
 
 def _is_trace_wrapper_source_command(command: str):

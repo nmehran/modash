@@ -58,6 +58,89 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(fingerprints["dep.sh"].roles, ("source",))
         self.assertTrue(all(len(file.sha256) == 64 for file in result.observation.files))
 
+    def test_trace_records_command_option_source_forms(self):
+        cases = {
+            "command delimiter source": ("command -- source ./dep.sh command-delimiter\n", "source"),
+            "command path source": ("command -p source ./dep.sh command-path\n", "source"),
+            "command path delimiter source": ("command -p -- source ./dep.sh command-path-delimiter\n", "source"),
+            "command delimiter dot": ("command -- . ./dep.sh command-delimiter-dot\n", "."),
+            "command path dot": ("command -p . ./dep.sh command-path-dot\n", "."),
+        }
+
+        for name, (main_content, command_name) in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                dependency = project.write("dep.sh", 'printf "dep:%s\\n" "$1"\n')
+                entrypoint = project.write("main.sh", main_content + 'printf "main\\n"\n')
+
+                result = project.trace("main.sh")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("main\n", result.stdout)
+            self.assertEqual(len(result.observation.sources), 1)
+            event = result.observation.sources[0]
+            self.assertEqual(event.call_site.file, str(entrypoint.resolve(strict=False)))
+            self.assertEqual(event.call_site.line, 1)
+            self.assertEqual(event.resolved_path, str(dependency.resolve(strict=False)))
+            self.assertEqual(event.status, 0)
+            self.assertEqual(result.observation.xtrace[event.xtrace_index].command, main_content.strip())
+            self.assertEqual(event.call_site.command, main_content.strip())
+            self.assertIn(command_name, {event.call_site.command.split()[0], event.call_site.command.split()[-3]})
+
+    def test_trace_records_builtin_double_dash_source_forms(self):
+        cases = {
+            "builtin delimiter source": "builtin -- source ./dep.sh builtin-source\n",
+            "builtin delimiter dot": "builtin -- . ./dep.sh builtin-dot\n",
+        }
+
+        for name, main_content in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                dependency = project.write("dep.sh", 'printf "dep:%s\\n" "$1"\n')
+                entrypoint = project.write("main.sh", main_content + 'printf "main\\n"\n')
+
+                result = project.trace("main.sh")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("main\n", result.stdout)
+            self.assertEqual(len(result.observation.sources), 1)
+            event = result.observation.sources[0]
+            self.assertEqual(event.call_site.file, str(entrypoint.resolve(strict=False)))
+            self.assertEqual(event.resolved_path, str(dependency.resolve(strict=False)))
+            self.assertEqual(result.observation.xtrace[event.xtrace_index].command, main_content.strip())
+
+    def test_trace_does_not_treat_command_query_forms_as_source(self):
+        for command in ("command -v source", "command -V source"):
+            with self.subTest(command=command), ScriptProject() as project:
+                project.write("main.sh", f"{command}\nprintf done\\n\n")
+
+                result = project.trace("main.sh")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(len(result.observation.sources), 0)
+
+    def test_trace_fails_closed_when_source_builtin_disabled(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write("main.sh", "enable -n source\nsource ./dep.sh\n")
+            project.write("dep.sh", f"touch {str(sentinel)!r}\n")
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh")
+
+        self.assertEqual(context.exception.code, "runtime.trace.disabled-source-builtin")
+        self.assertFalse(sentinel.exists())
+
+    def test_trace_fails_closed_when_dot_builtin_disabled(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write("main.sh", "enable -n .\n. ./dep.sh\n")
+            project.write("dep.sh", f"touch {str(sentinel)!r}\n")
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh")
+
+        self.assertEqual(context.exception.code, "runtime.trace.disabled-source-builtin")
+        self.assertFalse(sentinel.exists())
+
     def test_trace_preserves_inherited_source_positionals(self):
         with ScriptProject() as project:
             entrypoint = project.write(
@@ -135,6 +218,55 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
 
             with self.assertRaises(RuntimeSourceTraceError) as context:
                 project.trace("main.sh", argv=("A",), env={"DEP": str(dependency)})
+
+        self.assertEqual(context.exception.code, "runtime.trace.nontransparent-source-positionals")
+        self.assertFalse(sentinel.exists())
+
+    def test_trace_fails_closed_for_inherited_source_eval_shift(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write("main.sh", 'source "$DEP"\nprintf "main:%s\\n" "${1-unset}"\n')
+            dependency = project.write(
+                "dep.sh",
+                f'touch {str(sentinel)!r}\neval "shift"\n',
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh", argv=("A", "B"), env={"DEP": str(dependency)})
+
+        self.assertEqual(context.exception.code, "runtime.trace.nontransparent-source-positionals")
+        self.assertFalse(sentinel.exists())
+
+    def test_trace_fails_closed_for_inherited_source_eval_set_positionals(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write("main.sh", 'source "$DEP"\nprintf "main:%s\\n" "${1-unset}"\n')
+            dependency = project.write(
+                "dep.sh",
+                f'touch {str(sentinel)!r}\neval "set -- X Y"\n',
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh", argv=("A",), env={"DEP": str(dependency)})
+
+        self.assertEqual(context.exception.code, "runtime.trace.nontransparent-source-positionals")
+        self.assertFalse(sentinel.exists())
+
+    def test_trace_fails_closed_for_inherited_source_dynamic_eval_positionals(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write("main.sh", 'source "$DEP"\nprintf "main:%s\\n" "${1-unset}"\n')
+            dependency = project.write(
+                "dep.sh",
+                f'touch {str(sentinel)!r}\neval "$MODASH_TEST_COMMAND"\n',
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace(
+                    "main.sh",
+                    argv=("A", "B"),
+                    env={"DEP": str(dependency), "MODASH_TEST_COMMAND": "shift"},
+                )
 
         self.assertEqual(context.exception.code, "runtime.trace.nontransparent-source-positionals")
         self.assertFalse(sentinel.exists())
@@ -416,6 +548,30 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
             result.observation.sources[1].source_identity,
         )
 
+    def test_trace_handles_source_semicolon_tail_command(self):
+        with ScriptProject() as project:
+            dependency = project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write("main.sh", "source ./dep.sh; printf 'after\\n'\n")
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\nafter\n")
+        self.assertEqual(len(result.observation.sources), 1)
+        self.assertEqual(result.observation.sources[0].resolved_path, str(dependency.resolve(strict=False)))
+
+    def test_trace_handles_source_and_and_tail_command(self):
+        with ScriptProject() as project:
+            dependency = project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write("main.sh", "source ./dep.sh && printf 'after\\n'\n")
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\nafter\n")
+        self.assertEqual(len(result.observation.sources), 1)
+        self.assertEqual(result.observation.sources[0].resolved_path, str(dependency.resolve(strict=False)))
+
     def test_trace_preserves_non_source_builtin_and_command_invocations(self):
         with ScriptProject() as project:
             project.write(
@@ -654,6 +810,31 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(helper_event.call_site.command, 'load() { command source "$1"; }')
         self.assertEqual(result.observation.xtrace[helper_event.xtrace_index].command, "command source ./dep.sh")
 
+    def test_trace_does_not_reuse_prior_dynamic_helper_call_for_later_static_call(self):
+        with ScriptProject() as project:
+            dynamic_dependency = project.write("dyn.sh", 'printf "dyn\\n"\n')
+            static_dependency = project.write("static.sh", 'printf "static\\n"\n')
+            project.write(
+                "main.sh",
+                "\n".join([
+                    'load() { source "$1"; }',
+                    '"$MODASH_TEST_HELPER" ./dyn.sh',
+                    "load ./static.sh",
+                    "",
+                ]),
+            )
+
+            result = project.trace("main.sh", env={"MODASH_TEST_HELPER": "load"})
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dyn\nstatic\n")
+        dynamic_event, static_event = result.observation.sources
+        self.assertEqual(dynamic_event.resolved_path, str(dynamic_dependency.resolve(strict=False)))
+        self.assertEqual(static_event.resolved_path, str(static_dependency.resolve(strict=False)))
+        self.assertIsNotNone(dynamic_event.function_call)
+        self.assertEqual(dynamic_event.function_call.command, "load ./dyn.sh")
+        self.assertIsNone(static_event.function_call)
+
     def test_trace_uses_sourced_function_definition_file_during_parent_source(self):
         with ScriptProject() as project:
             library = project.write("lib.sh", 'load() { source "$1"; }\n')
@@ -720,9 +901,9 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
                 "main.sh",
                 "\n".join([
                     "cd dir1",
-                    "source ./lib.sh",
+                    "source ./lib.sh explicit",
                     "cd ../dir2",
-                    "source ./lib.sh",
+                    "source ./lib.sh explicit",
                     "cd ..",
                     "load ./dep.sh",
                     "",
@@ -853,9 +1034,9 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
                 "main.sh",
                 "\n".join([
                     "cd dir1",
-                    "source ./lib.sh",
+                    "source ./lib.sh explicit",
                     "cd ../dir2",
-                    "source ./lib.sh",
+                    "source ./lib.sh explicit",
                     "cd ..",
                     "load ./dep.sh",
                     "",
@@ -1127,9 +1308,9 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
                 "main.sh",
                 "\n".join([
                     "cd dir1",
-                    "source ./lib.sh",
+                    "source ./lib.sh explicit",
                     "cd ../dir2",
-                    "source ./lib.sh",
+                    "source ./lib.sh explicit",
                     "cd ..",
                     "load ./dep.sh",
                     "",
@@ -1147,7 +1328,7 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
             sentinel = project.path("executed")
             project.write("lib.sh", 'eval \'load() { source "$1"; }\'\n')
             project.write("dep.sh", f"touch {str(sentinel)!r}\n")
-            project.write("main.sh", "source ./lib.sh\nload ./dep.sh\n")
+            project.write("main.sh", "source ./lib.sh explicit\nload ./dep.sh\n")
 
             with self.assertRaises(RuntimeSourceTraceError) as context:
                 project.trace("main.sh")
@@ -1168,9 +1349,9 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
                 "main.sh",
                 "\n".join([
                     "cd dir1",
-                    "source ./lib.sh",
+                    "source ./lib.sh explicit",
                     "cd ../dir2",
-                    "source ./lib.sh",
+                    "source ./lib.sh explicit",
                     "cd ..",
                     "load ./dep.sh",
                     "",
@@ -1198,7 +1379,7 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
                 ]),
             )
             project.write("dep.sh", f"touch {str(sentinel)!r}\n")
-            project.write("main.sh", "source ./lib.sh\nload ./dep.sh\n")
+            project.write("main.sh", "source ./lib.sh explicit\nload ./dep.sh\n")
 
             with self.assertRaises(RuntimeSourceTraceError) as context:
                 project.trace("main.sh")

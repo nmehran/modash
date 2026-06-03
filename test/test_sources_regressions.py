@@ -110,6 +110,8 @@ class SourceRegressionTestCase(unittest.TestCase):
         self.assertTrue(contains_source_command('command -p source ./dep.sh'))
         self.assertTrue(contains_source_command('command -- source ./dep.sh'))
         self.assertTrue(contains_source_command('builtin source ./dep.sh'))
+        self.assertTrue(contains_source_command('builtin -- source ./dep.sh'))
+        self.assertTrue(contains_source_command('builtin -- . ./dep.sh'))
         self.assertTrue(contains_source_command('FOO=bar source ./dep.sh'))
         self.assertTrue(contains_source_command('FOO=bar command source ./dep.sh'))
         self.assertTrue(contains_source_command('! source ./dep.sh'))
@@ -147,6 +149,13 @@ class SourceRegressionTestCase(unittest.TestCase):
         self.assertEqual(invocation.command_name, '.')
         self.assertEqual(invocation.source_expression, './dep.sh')
         self.assertEqual(invocation.source_site, 'builtin . ./dep.sh')
+
+        invocation = source_command_invocation('builtin -- source ./dep.sh arg')
+        self.assertIsNotNone(invocation)
+        self.assertEqual(invocation.command_name, 'source')
+        self.assertEqual(invocation.source_expression, './dep.sh arg')
+        self.assertEqual(invocation.source_site, 'builtin -- source ./dep.sh arg')
+        self.assertTrue(invocation.wrapped)
 
     def test_heredoc_detection_ignores_quotes_and_arithmetic(self):
         from methods.source_resolver import extract_heredoc_delimiters

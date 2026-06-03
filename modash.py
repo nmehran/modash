@@ -131,6 +131,16 @@ def observe_compile_main(
 ):
     result = trace_sources(entrypoint, argv=script_args or (), cwd=cwd, env=env, timeout=timeout)
     _forward_trace_output(result)
+    if result.returncode != 0:
+        observation_path = write_trace_observation(
+            result,
+            observation_output or f"{graph_output}.observation.json",
+        )
+        print(f"modash: trace observation: {observation_path.resolve(strict=False)}", file=sys.stderr)
+        raise RuntimeSourceTraceError(
+            f"observe-compile trace returned nonzero status {result.returncode}; refusing to compile",
+            code="runtime.trace.nonzero",
+        )
     graph = build_observed_source_graph(entrypoint, result.observation)
     graph_path = write_observed_source_graph(graph, graph_output)
     report_path = write_observed_source_graph_review(graph, report or f"{graph_path}.report.txt")
