@@ -464,6 +464,8 @@ class SourceOverride:
     command: str
     resolved_path: str
     arguments: tuple[str, ...] = ()
+    replacement_kind: str = "source"
+    source_value: str | None = None
 
 
 @dataclass(frozen=True)
@@ -4393,12 +4395,18 @@ class SourceEvaluator:
             source_override = None
 
         if source_override is not None:
+            source_value = (
+                source_override.source_value
+                if source_override.source_value is not None
+                else node.source_expression.strip()
+            )
             invocation = SourceInvocation(
                 ResolvedSource(
                     path=source_override.resolved_path,
                     source_expression=node.source_expression.strip(),
                     source_site=source_site,
-                    source_value=node.source_expression.strip(),
+                    replacement_kind=source_override.replacement_kind,
+                    source_value=source_value,
                 ),
                 source_arguments=source_override.arguments or None,
             )

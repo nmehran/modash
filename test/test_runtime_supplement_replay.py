@@ -327,6 +327,90 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "a\nb\nmain:alpha:beta\n")
 
+    def test_compile_observed_replays_oneline_function_condition_edges(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'load() { if source "$1" && source "$2"; then printf "loaded:%s:%s\\n" "$A" "$B"; fi; }',
+                    "load ./a.sh ./b.sh",
+                    "",
+                ]),
+            )
+            project.write("a.sh", 'A=alpha\nprintf "a\\n"\n')
+            project.write("b.sh", 'B=beta\nprintf "b\\n"\n')
+            trace = project.trace("main.sh")
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            self.assertEqual(
+                [edge["xtrace"]["command"] for edge in graph["edges"]],
+                ["source ./a.sh", "source ./b.sh"],
+            )
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "a\nb\nloaded:alpha:beta\n")
+
+    def test_compile_observed_replays_oneline_function_short_circuit_edges(self):
+        cases = {
+            "or first source succeeds": (
+                'load() { if source "$1" || source "$2"; then '
+                'printf "loaded:%s:%s\\n" "$A" "${B-unset}"; fi; }\n'
+                "load ./a.sh ./b.sh\n",
+                "a\nloaded:alpha:unset\n",
+            ),
+            "false and falls through to second source": (
+                'load() { if false && source "$1" || source "$2"; then '
+                'printf "loaded:%s:%s\\n" "${A-unset}" "$B"; fi; }\n'
+                "load ./a.sh ./b.sh\n",
+                "b\nloaded:unset:beta\n",
+            ),
+        }
+        for name, (main_script, expected_stdout) in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                entrypoint = project.write("main.sh", main_script)
+                project.write("a.sh", 'A=alpha\nprintf "a\\n"\n')
+                project.write("b.sh", 'B=beta\nprintf "b\\n"\n')
+                trace = project.trace("main.sh")
+                graph = build_observed_source_graph(entrypoint, trace.observation)
+                graph_path = project.path("graph/runtime-source-graph.json")
+                compiled = project.path("compiled.sh")
+                write_observed_source_graph(graph, graph_path)
+
+                compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+                result = project.run(compiled)
+
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertEqual(result.stdout, expected_stdout)
+
+    def test_compile_observed_replays_missing_source_condition_status(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                'if source ./missing.sh || source ./b.sh; then printf "ok:%s\\n" "$B"; fi\n',
+            )
+            project.write("b.sh", 'B=beta\nprintf "b\\n"\n')
+            trace = project.trace("main.sh")
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            self.assertEqual(
+                [(edge["to"].split(":", 1)[0], edge["status"]) for edge in graph["edges"]],
+                [("missing-source", 1), ("file", 0)],
+            )
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("./missing.sh: No such file or directory\n", result.stdout)
+        self.assertTrue(result.stdout.endswith("b\nok:beta\n"), result.stdout)
+
     def test_compile_observed_replays_while_source_condition_edge(self):
         with ScriptProject() as project:
             entrypoint = project.write(

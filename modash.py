@@ -3,6 +3,7 @@ import json
 import math
 import re
 import sys
+from functools import lru_cache
 from pathlib import Path
 from methods.compile import compile_sources
 from methods.runtime_source_trace import (
@@ -37,6 +38,8 @@ from methods.source_effects import SourceSite
 from methods.source_evaluator import SourceEvaluator, SourceOverride
 from methods.source_frontend import LineParserFrontend
 from methods.source_resolver import (
+    MISSING_SOURCE,
+    MISSING_SOURCE_NO_FILENAME,
     UnsupportedSourceError,
     parse_shell_words_preserving_quotes,
     source_command_invocation,
@@ -168,16 +171,26 @@ def _compile_from_graph_payload(entrypoint, output, graph_payload):
 
 
 def _source_overrides_from_graph_payload(graph_payload):
+    file_edges = [
+        edge
+        for edge in graph_payload["edges"]
+        if edge["from"].startswith("file:") and (
+            edge["to"].startswith("file:")
+            or edge["to"].startswith("missing-source:")
+        )
+    ]
+    commands = _source_override_commands_for_edges(file_edges)
     direct_overrides = [
         SourceOverride(
             path=edge["call_site"]["file"],
             line=edge["call_site"]["line"],
-            command=_source_override_command(edge),
+            command=commands[edge["index"]],
             resolved_path=edge["resolved_path"],
             arguments=tuple(edge["arguments"]),
+            replacement_kind=_source_override_replacement_kind(edge),
+            source_value=_source_override_source_value(edge),
         )
-        for edge in graph_payload["edges"]
-        if edge["from"].startswith("file:") and edge["to"].startswith("file:")
+        for edge in file_edges
     ]
     return tuple([
         *direct_overrides,
@@ -185,16 +198,127 @@ def _source_overrides_from_graph_payload(graph_payload):
     ])
 
 
-def _source_override_command(edge):
+def _source_override_commands_for_edges(edges):
+    grouped_edges = {}
+    for edge in edges:
+        grouped_edges.setdefault(_source_override_group_key(edge), []).append(edge)
+
+    commands = {}
+    for group in grouped_edges.values():
+        simulated_commands = _source_override_commands_from_condition_sequences(group)
+        if simulated_commands is not None:
+            commands.update(simulated_commands)
+            continue
+
+        candidate_sites = _source_candidate_sites_on_line(
+            group[0]["call_site"]["file"],
+            group[0]["call_site"]["line"],
+        )
+        map_by_occurrence = (
+            len(candidate_sites) > 1
+            and len(group) % len(candidate_sites) == 0
+        )
+        for occurrence, edge in enumerate(group):
+            commands[edge["index"]] = _source_override_command(
+                edge,
+                candidate_sites=candidate_sites,
+                occurrence=occurrence if map_by_occurrence else None,
+            )
+    return commands
+
+
+def _source_override_commands_from_condition_sequences(edges):
+    sequences = _source_condition_atom_sequences_for_edge(edges[0])
+    if len(sequences) != 1:
+        return None
+    return _source_override_commands_from_condition_atoms(edges, sequences[0])
+
+
+def _source_override_commands_from_condition_atoms(edges, atoms):
+    commands = {}
+    edge_index = 0
+    status = "true"
+    for atom in atoms:
+        if atom.separator == "&&" and status == "false":
+            continue
+        if atom.separator == "||" and status == "true":
+            continue
+
+        if atom.source_command is not None:
+            if edge_index >= len(edges):
+                return None
+            edge = edges[edge_index]
+            commands[edge["index"]] = f"{atom.source_command} {atom.source_expression}"
+            edge_index += 1
+            status = "true" if edge["status"] == 0 else "false"
+            if atom.negated:
+                status = _negate_condition_status(status)
+            continue
+
+        status = _static_condition_atom_status(atom.text)
+        if status is None:
+            return None
+        if atom.negated:
+            status = _negate_condition_status(status)
+
+    if edge_index != len(edges):
+        return None
+    return commands
+
+
+def _source_condition_atom_sequences_for_edge(edge):
+    condition = _control_source_condition(edge["call_site"]["command"])
+    if condition is not None:
+        atoms = _source_condition_atoms_from_text(condition)
+        return (atoms,) if atoms else ()
+    return _source_condition_atom_sequences_on_line(
+        edge["call_site"]["file"],
+        edge["call_site"]["line"],
+    )
+
+
+def _source_condition_atoms_from_text(condition: str):
+    try:
+        return SourceEvaluator._source_logical_condition_atoms_from_text(condition)
+    except UnsupportedSourceError:
+        return ()
+
+
+def _static_condition_atom_status(text: str):
+    stripped = text.strip()
+    if stripped in {":", "true"}:
+        return "true"
+    if stripped == "false":
+        return "false"
+    return None
+
+
+def _negate_condition_status(status: str):
+    return "false" if status == "true" else "true"
+
+
+def _source_override_group_key(edge):
+    call_site = edge["call_site"]
+    return call_site["file"], call_site["line"], call_site["command"]
+
+
+def _source_override_command(edge, *, candidate_sites=(), occurrence=None):
     condition_sites = _source_condition_sites(edge["call_site"]["command"])
+    xtrace_site = _first_direct_source_site(edge.get("xtrace", {}).get("command", ""))
     if len(condition_sites) == 1:
         return condition_sites[0]
     if len(condition_sites) > 1:
-        xtrace_site = _first_direct_source_site(edge.get("xtrace", {}).get("command", ""))
         if xtrace_site in condition_sites:
             return xtrace_site
 
-    parsed_sites = _source_sites_on_line(edge["call_site"]["file"], edge["call_site"]["line"])
+    if xtrace_site in candidate_sites:
+        return xtrace_site
+    if len(candidate_sites) == 1:
+        return candidate_sites[0]
+    if occurrence is not None and candidate_sites:
+        return candidate_sites[occurrence % len(candidate_sites)]
+
+    parsed_sites = _source_candidate_sites_on_line(edge["call_site"]["file"], edge["call_site"]["line"])
     if len(parsed_sites) == 1:
         return parsed_sites[0]
     source_site = _first_direct_source_site(edge["call_site"]["command"])
@@ -205,15 +329,7 @@ def _source_condition_sites(command: str):
     condition = _control_source_condition(command)
     if condition is None:
         return ()
-    try:
-        atoms = SourceEvaluator._source_logical_condition_atoms_from_text(condition)
-    except UnsupportedSourceError:
-        return ()
-    return tuple(
-        f"{atom.source_command} {atom.source_expression}"
-        for atom in atoms
-        if atom.source_command is not None
-    )
+    return _source_condition_sites_from_atoms(_source_condition_atoms_from_text(condition))
 
 
 def _control_source_condition(command: str):
@@ -224,34 +340,90 @@ def _control_source_condition(command: str):
     return match.group(1).strip()
 
 
-def _source_sites_on_line(path: str, line: int):
+def _source_candidate_sites_on_line(path: str, line: int):
+    return _source_line_context(path, line)[0]
+
+
+def _source_condition_atom_sequences_on_line(path: str, line: int):
+    return _source_line_context(path, line)[1]
+
+
+@lru_cache(maxsize=512)
+def _source_line_context(path: str, line: int):
     candidate = Path(path)
     try:
         content = candidate.read_text(encoding="utf-8")
     except OSError:
-        return ()
+        return (), ()
 
     try:
         ir = LineParserFrontend().parse(candidate, content)
     except Exception:
-        return ()
+        return (), ()
 
     sites = []
+    sequences = []
 
     def collect(nodes):
         for node in nodes:
             if isinstance(node, SourceSite) and node.location.line == line:
                 sites.append(node.text)
+            if getattr(node, "condition", None) and node.location.line == line:
+                atoms = _source_condition_atoms_from_text(node.condition)
+                if atoms:
+                    sequences.append(atoms)
+                    sites.extend(_source_condition_sites_from_atoms(atoms))
             body = getattr(node, "body", None)
             if body:
                 collect(body)
             for branch in getattr(node, "branches", ()):
+                condition_location = getattr(branch, "condition_location", None)
+                if branch.condition and condition_location is not None and condition_location.line == line:
+                    atoms = _source_condition_atoms_from_text(branch.condition)
+                    if atoms:
+                        sequences.append(atoms)
+                        sites.extend(_source_condition_sites_from_atoms(atoms))
                 collect(getattr(branch, "body", ()))
             for arm in getattr(node, "arms", ()):
                 collect(getattr(arm, "body", ()))
 
     collect(ir.nodes)
-    return tuple(sites)
+    return tuple(sites), tuple(sequences)
+
+
+def _source_condition_sites_from_text(condition: str):
+    return _source_condition_sites_from_atoms(_source_condition_atoms_from_text(condition))
+
+
+def _source_condition_sites_from_atoms(atoms):
+    return tuple(
+        f"{atom.source_command} {atom.source_expression}"
+        for atom in atoms
+        if atom.source_command is not None
+    )
+
+
+def _source_override_replacement_kind(edge):
+    if not edge["to"].startswith("missing-source:"):
+        return "source"
+    source_value = _source_override_source_value(edge)
+    if edge["status"] == 2 and not source_value:
+        return MISSING_SOURCE_NO_FILENAME
+    return MISSING_SOURCE
+
+
+def _source_override_source_value(edge):
+    source_site = _first_direct_source_site(edge.get("xtrace", {}).get("command", ""))
+    invocation = source_command_invocation(source_site or "")
+    if invocation is None:
+        return None
+    try:
+        words = parse_shell_words_preserving_quotes(invocation.source_expression)
+    except UnsupportedSourceError:
+        return None
+    if not words:
+        return ""
+    return strip_shell_word_quotes(words[0])
 
 
 def _child_process_command_overrides_from_graph_payload(graph_payload):
