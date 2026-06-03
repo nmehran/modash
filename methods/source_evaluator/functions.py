@@ -635,7 +635,7 @@ class SourceEvaluatorFunctionMixin:
             state.last_status = 1
             return
 
-        self._set_positionals(state.positional_arguments[count:], state)
+        state.set_positionals(state.positional_arguments[count:])
         state.last_status = 0
 
     def _resolve_function_control_word(self, word: str, node: RawCommand, state: EvaluationState, command: str):

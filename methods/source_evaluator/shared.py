@@ -264,6 +264,90 @@ class EvaluationState:
     source_depth: int = 0
     function_body_depth: int = 0
 
+    def set_positionals(
+        self,
+        arguments: tuple[str, ...],
+        *,
+        source_argument_escape: bool = False,
+        mark_source_argument_frame: bool = True,
+    ):
+        previous_names = self._positive_positional_variable_names()
+        current_names = {str(index) for index in range(1, len(arguments) + 1)}
+        for index, argument in enumerate(arguments, start=1):
+            name = str(index)
+            self.variables[name] = argument
+            self.runtime_variables[name] = argument
+            self.ambiguous_variables.discard(name)
+        for name in previous_names - current_names:
+            self.variables.pop(name, None)
+            self.runtime_variables.pop(name, None)
+            self.ambiguous_variables.discard(name)
+        self.positional_arguments = tuple(arguments)
+        self.ambiguous_positionals = False
+        self._record_source_argument_escape(
+            source_argument_escape=source_argument_escape,
+            mark_source_argument_frame=mark_source_argument_frame,
+        )
+
+    def mark_positionals_ambiguous(
+        self,
+        *,
+        source_argument_escape: bool = False,
+        mark_source_argument_frame: bool = True,
+    ):
+        for name in self._positive_positional_variable_names():
+            self.variables.pop(name, None)
+            self.runtime_variables.pop(name, None)
+            self.ambiguous_variables.discard(name)
+        self.positional_arguments = ()
+        self.ambiguous_positionals = True
+        self._record_source_argument_escape(
+            source_argument_escape=source_argument_escape,
+            mark_source_argument_frame=mark_source_argument_frame,
+        )
+
+    def push_source_argument_frame(self):
+        self.source_argument_frame_dirty_stack = (*self.source_argument_frame_dirty_stack, False)
+
+    def pop_source_argument_frame(self):
+        dirty = self.source_argument_frame_dirty_stack[-1]
+        self.source_argument_frame_dirty_stack = self.source_argument_frame_dirty_stack[:-1]
+        return dirty
+
+    def mark_current_source_argument_frame_dirty(self):
+        if not self.source_argument_frame_dirty_stack:
+            return
+        stack = list(self.source_argument_frame_dirty_stack)
+        stack[-1] = True
+        self.source_argument_frame_dirty_stack = tuple(stack)
+
+    def clear_current_source_argument_frame_dirty(self):
+        if not self.source_argument_frame_dirty_stack:
+            return
+        stack = list(self.source_argument_frame_dirty_stack)
+        stack[-1] = False
+        self.source_argument_frame_dirty_stack = tuple(stack)
+
+    def _record_source_argument_escape(
+        self,
+        *,
+        source_argument_escape: bool,
+        mark_source_argument_frame: bool,
+    ):
+        if not source_argument_escape:
+            return
+        self.positional_assignment_generation += 1
+        if mark_source_argument_frame:
+            self.mark_current_source_argument_frame_dirty()
+
+    def _positive_positional_variable_names(self):
+        return {
+            name
+            for mapping in (self.variables, self.runtime_variables)
+            for name in mapping
+            if name.isdigit() and int(name) > 0
+        }
+
     def resolver_context(self):
         return {
             'vars': self.variables,

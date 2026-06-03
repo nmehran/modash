@@ -78,14 +78,14 @@ class SourceEvaluatorSupportMixin:
         sync_positionals = False
         source_argument_frame_active = bool(state.source_argument_frame_dirty_stack)
         if source_argument_frame_active:
-            self._clear_current_source_argument_frame_dirty(state)
+            state.clear_current_source_argument_frame_dirty()
         if source_arguments is not None:
             previous_positional_arguments = state.positional_arguments
             previous_ambiguous_positionals = state.ambiguous_positionals
             previous_positionals = self._push_function_positionals(source_arguments, state)
             state.positional_arguments = source_arguments
             state.ambiguous_positionals = False
-            self._push_source_argument_frame(state)
+            state.push_source_argument_frame()
         try:
             try:
                 had_nodes = self._evaluate_file(source_path, state, stack, as_source=True)
@@ -106,7 +106,7 @@ class SourceEvaluatorSupportMixin:
             if source_arguments is not None:
                 final_positional_arguments = state.positional_arguments
                 final_ambiguous_positionals = state.ambiguous_positionals
-                frame_dirty = self._pop_source_argument_frame(state)
+                frame_dirty = state.pop_source_argument_frame()
                 sync_positionals = frame_dirty
                 self._restore_function_positionals(previous_positionals, len(source_arguments), state)
                 state.positional_arguments = previous_positional_arguments
@@ -114,15 +114,13 @@ class SourceEvaluatorSupportMixin:
                 if frame_dirty:
                     mark_parent_frame = not state.source_argument_frame_dirty_stack
                     if final_ambiguous_positionals:
-                        self._mark_positionals_ambiguous(
-                            state,
+                        state.mark_positionals_ambiguous(
                             source_argument_escape=True,
                             mark_source_argument_frame=mark_parent_frame,
                         )
                     else:
-                        self._set_positionals(
+                        state.set_positionals(
                             final_positional_arguments,
-                            state,
                             source_argument_escape=True,
                             mark_source_argument_frame=mark_parent_frame,
                         )

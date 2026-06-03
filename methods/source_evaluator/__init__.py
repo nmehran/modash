@@ -736,10 +736,10 @@ class SourceEvaluator(
             try:
                 positional_arguments = self._set_command_positional_arguments(node, state)
             except UnsupportedSourceError:
-                self._mark_positionals_ambiguous(state, source_argument_escape=True)
+                state.mark_positionals_ambiguous(source_argument_escape=True)
             else:
                 if positional_arguments is not None:
-                    self._set_positionals(positional_arguments, state, source_argument_escape=True)
+                    state.set_positionals(positional_arguments, source_argument_escape=True)
         state.last_status = status
 
     def _set_command_positional_arguments(self, node: SetCommand, state: EvaluationState):
@@ -801,87 +801,6 @@ class SourceEvaluator(
                 "Positional assignments must resolve exactly for source-aware lowering.",
             ))
         return tuple(arguments)
-
-    @staticmethod
-    def _set_positionals(
-        arguments: tuple[str, ...],
-        state: EvaluationState,
-        *,
-        source_argument_escape: bool = False,
-        mark_source_argument_frame: bool = True,
-    ):
-        previous_names = {
-            name
-            for mapping in (state.variables, state.runtime_variables)
-            for name in mapping
-            if name.isdigit() and int(name) > 0
-        }
-        current_names = {str(index) for index in range(1, len(arguments) + 1)}
-        for index, argument in enumerate(arguments, start=1):
-            name = str(index)
-            state.variables[name] = argument
-            state.runtime_variables[name] = argument
-            state.ambiguous_variables.discard(name)
-        for name in previous_names - current_names:
-            state.variables.pop(name, None)
-            state.runtime_variables.pop(name, None)
-            state.ambiguous_variables.discard(name)
-        state.positional_arguments = tuple(arguments)
-        state.ambiguous_positionals = False
-        if source_argument_escape:
-            state.positional_assignment_generation += 1
-            if mark_source_argument_frame:
-                SourceEvaluator._mark_current_source_argument_frame_dirty(state)
-
-    @staticmethod
-    def _mark_positionals_ambiguous(
-        state: EvaluationState,
-        *,
-        source_argument_escape: bool = False,
-        mark_source_argument_frame: bool = True,
-    ):
-        positional_names = {
-            name
-            for mapping in (state.variables, state.runtime_variables)
-            for name in mapping
-            if name.isdigit() and int(name) > 0
-        }
-        for name in positional_names:
-            state.variables.pop(name, None)
-            state.runtime_variables.pop(name, None)
-            state.ambiguous_variables.discard(name)
-        state.positional_arguments = ()
-        state.ambiguous_positionals = True
-        if source_argument_escape:
-            state.positional_assignment_generation += 1
-            if mark_source_argument_frame:
-                SourceEvaluator._mark_current_source_argument_frame_dirty(state)
-
-    @staticmethod
-    def _push_source_argument_frame(state: EvaluationState):
-        state.source_argument_frame_dirty_stack = (*state.source_argument_frame_dirty_stack, False)
-
-    @staticmethod
-    def _pop_source_argument_frame(state: EvaluationState):
-        dirty = state.source_argument_frame_dirty_stack[-1]
-        state.source_argument_frame_dirty_stack = state.source_argument_frame_dirty_stack[:-1]
-        return dirty
-
-    @staticmethod
-    def _mark_current_source_argument_frame_dirty(state: EvaluationState):
-        if not state.source_argument_frame_dirty_stack:
-            return
-        stack = list(state.source_argument_frame_dirty_stack)
-        stack[-1] = True
-        state.source_argument_frame_dirty_stack = tuple(stack)
-
-    @staticmethod
-    def _clear_current_source_argument_frame_dirty(state: EvaluationState):
-        if not state.source_argument_frame_dirty_stack:
-            return
-        stack = list(state.source_argument_frame_dirty_stack)
-        stack[-1] = False
-        state.source_argument_frame_dirty_stack = tuple(stack)
 
     @staticmethod
     def _unsupported_positional_mutation(node, message: str):
