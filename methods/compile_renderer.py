@@ -37,6 +37,13 @@ from methods.source_resolver import (
     parse_shell_words_preserving_quotes,
     strip_shell_word_quotes,
 )
+from methods.source_traits import (
+    file_top_level_source_traits,
+    raw_command_is_shift,
+    raw_command_is_simple_shift,
+    set_command_assigns_positionals,
+    set_command_is_simple_positional_assignment,
+)
 
 SET_SHEBANG = "#!/bin/bash"
 
@@ -260,98 +267,6 @@ def write_output(filename, content):
 def generated_source_function_name(filepath: str):
     digest = hashlib.sha1(os.path.abspath(filepath).encode("utf-8")).hexdigest()[:12]
     return f"__modash_source_{digest}"
-
-
-def raw_command_is_return(node: RawCommand):
-    return bool(re.match(r'^return(?:\s|$)', node.text.strip()))
-
-
-def raw_command_is_shift(node: RawCommand):
-    return bool(re.match(r'^shift(?:\s|$)', node.text.strip()))
-
-
-def raw_command_is_eval(node: RawCommand):
-    return bool(re.match(r'^eval(?:\s|$)', node.text.strip()))
-
-
-def raw_command_is_simple_shift(node: RawCommand):
-    return bool(re.fullmatch(r'shift(?:\s+\d+)?', node.text.strip()))
-
-
-def set_command_assigns_positionals(node: SetCommand):
-    arguments = node.arguments
-    index = 0
-    while index < len(arguments):
-        argument = arguments[index]
-        if argument == "--":
-            return True
-        if not argument.startswith(("-", "+")):
-            return True
-        if argument in {'-o', '+o'}:
-            if index + 1 >= len(arguments):
-                return False
-            index += 2
-            continue
-        if argument in {'-', '+'}:
-            return False
-        index += 1
-    return False
-
-
-def set_command_is_simple_positional_assignment(node: SetCommand):
-    return bool(node.arguments) and node.arguments[0] == "--"
-
-
-def nodes_have_top_level_return(nodes):
-    for node in nodes:
-        if isinstance(node, RawCommand) and raw_command_is_return(node):
-            return True
-        if isinstance(node, FunctionDef):
-            continue
-        if isinstance(node, (ForLoop, CStyleForLoop, WhileLoop)):
-            if nodes_have_top_level_return(node.body):
-                return True
-        elif isinstance(node, IfBlock):
-            if any(nodes_have_top_level_return(branch.body) for branch in node.branches):
-                return True
-        elif isinstance(node, CaseBlock):
-            if any(nodes_have_top_level_return(arm.body) for arm in node.arms):
-                return True
-    return False
-
-
-def nodes_have_top_level_positional_mutation(nodes):
-    for node in nodes:
-        if isinstance(node, RawCommand) and raw_command_is_shift(node):
-            return True
-        if isinstance(node, RawCommand) and raw_command_is_eval(node):
-            return True
-        if isinstance(node, SetCommand) and set_command_assigns_positionals(node):
-            return True
-        if isinstance(node, FunctionDef):
-            continue
-        if isinstance(node, (ForLoop, CStyleForLoop, WhileLoop)):
-            if nodes_have_top_level_positional_mutation(node.body):
-                return True
-        elif isinstance(node, IfBlock):
-            if any(nodes_have_top_level_positional_mutation(branch.body) for branch in node.branches):
-                return True
-        elif isinstance(node, CaseBlock):
-            if any(nodes_have_top_level_positional_mutation(arm.body) for arm in node.arms):
-                return True
-    return False
-
-
-def file_top_level_source_traits(filepath: str, content: str):
-    has_return_text = "return" in content
-    has_positional_mutation_text = bool(re.search(r'\b(?:eval|set|shift)\b', content))
-    if not has_return_text and not has_positional_mutation_text:
-        return False, False
-    ir = LineParserFrontend().parse(os.path.abspath(filepath), content)
-    return (
-        nodes_have_top_level_return(ir.nodes) if has_return_text else False,
-        nodes_have_top_level_positional_mutation(ir.nodes) if has_positional_mutation_text else False,
-    )
 
 
 def source_positional_capture_names(filepath: str):

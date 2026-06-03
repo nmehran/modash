@@ -10,12 +10,11 @@ from methods.source_effects import (
     ForLoop,
     FunctionDef,
     IfBlock,
-    RawCommand,
-    SetCommand,
     WhileLoop,
 )
 from methods.source_frontend import LineParserFrontend
 from methods.source_resolver import extract_heredoc_delimiters, is_heredoc_end
+from methods.source_traits import file_top_level_source_traits
 
 FUNCTION_DECLARATION_PATTERN = re.compile(
     r"(?=(?:^|[;&|(){}]|\bthen\b|\bdo\b)\s*"
@@ -84,89 +83,6 @@ def functions_main(argv):
     for status, name, line_number in sorted(records):
         print(f"{status}\t{name}\t{line_number}")
     return 0
-
-
-def raw_command_is_return(node: RawCommand):
-    return bool(re.match(r"^return(?:\s|$)", node.text.strip()))
-
-
-def raw_command_is_shift(node: RawCommand):
-    return bool(re.match(r"^shift(?:\s|$)", node.text.strip()))
-
-
-def raw_command_is_eval(node: RawCommand):
-    return bool(re.match(r"^eval(?:\s|$)", node.text.strip()))
-
-
-def set_command_assigns_positionals(node: SetCommand):
-    index = 0
-    while index < len(node.arguments):
-        argument = node.arguments[index]
-        if argument == "--":
-            return True
-        if not argument.startswith(("-", "+")):
-            return True
-        if argument in {"-o", "+o"}:
-            if index + 1 >= len(node.arguments):
-                return False
-            index += 2
-            continue
-        if argument in {"-", "+"}:
-            return False
-        index += 1
-    return False
-
-
-def nodes_have_top_level_return(nodes):
-    for node in nodes:
-        if isinstance(node, RawCommand) and raw_command_is_return(node):
-            return True
-        if isinstance(node, FunctionDef):
-            continue
-        if isinstance(node, (ForLoop, CStyleForLoop, WhileLoop)):
-            if nodes_have_top_level_return(node.body):
-                return True
-        elif isinstance(node, IfBlock):
-            if any(nodes_have_top_level_return(branch.body) for branch in node.branches):
-                return True
-        elif isinstance(node, CaseBlock):
-            if any(nodes_have_top_level_return(arm.body) for arm in node.arms):
-                return True
-    return False
-
-
-def nodes_have_top_level_positional_mutation(nodes):
-    for node in nodes:
-        if isinstance(node, RawCommand) and raw_command_is_shift(node):
-            return True
-        if isinstance(node, RawCommand) and raw_command_is_eval(node):
-            return True
-        if isinstance(node, SetCommand) and set_command_assigns_positionals(node):
-            return True
-        if isinstance(node, FunctionDef):
-            continue
-        if isinstance(node, (ForLoop, CStyleForLoop, WhileLoop)):
-            if nodes_have_top_level_positional_mutation(node.body):
-                return True
-        elif isinstance(node, IfBlock):
-            if any(nodes_have_top_level_positional_mutation(branch.body) for branch in node.branches):
-                return True
-        elif isinstance(node, CaseBlock):
-            if any(nodes_have_top_level_positional_mutation(arm.body) for arm in node.arms):
-                return True
-    return False
-
-
-def file_top_level_source_traits(filepath: str, content: str):
-    has_return_text = "return" in content
-    has_positional_mutation_text = bool(re.search(r"\b(?:eval|set|shift)\b", content))
-    if not has_return_text and not has_positional_mutation_text:
-        return False, False
-    ir = LineParserFrontend().parse(filepath, content)
-    return (
-        nodes_have_top_level_return(ir.nodes) if has_return_text else False,
-        nodes_have_top_level_positional_mutation(ir.nodes) if has_positional_mutation_text else False,
-    )
 
 
 def condition_truth(condition):
