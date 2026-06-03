@@ -6,8 +6,7 @@ from fnmatch import fnmatch
 
 from methods.regex.patterns import SOURCE_PATTERN, create_command_pattern
 from methods.regex.utilities import extract_bash_commands, strip_matching_quotes
-from methods.shell.line import get_commands
-from methods.shell.scan import is_array_assignment_paren, read_backtick_body, read_balanced_body
+from methods.shell.scan import read_backtick_body, read_balanced_body
 from methods.source_patterns import UnsupportedPatternError, shell_pattern_matches
 
 ASSIGNMENT_WORD_PATTERN = re.compile(r'^[a-zA-Z_]\w*(?:\+)?=.*$')
@@ -85,18 +84,6 @@ class ResolvedSource:
     sync_positionals: bool = False
     source_location_path: str | None = None
     source_location_line: int | None = None
-
-
-@dataclass(frozen=True)
-class SourceCommandInvocation:
-    command_name: str
-    source_expression: str
-    source_site: str
-    source_site_column_offset: int
-    source_column_offset: int
-    command_start_index: int
-    source_index: int
-    wrapped: bool = False
 
 
 @dataclass(frozen=True)
@@ -815,238 +802,33 @@ def expand_glob_word(
 
 
 def source_command_index(command: str):
-    try:
-        words = parse_shell_words(command)
-    except UnsupportedSourceError:
-        return 0 if SOURCE_PATTERN.findall(command) else None
+    from methods.source_commands import source_command_index as shared_source_command_index
 
-    position = _source_command_position(words)
-    return position[1] if position else None
-
-
-def _source_command_position(words: list[str]):
-    command_start = 0
-    while command_start < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[command_start]):
-        command_start += 1
-    while command_start < len(words) and words[command_start] == "!":
-        command_start += 1
-
-    for index, word in enumerate(words):
-        if word not in {'source', '.'}:
-            continue
-
-        if index == command_start:
-            return command_start, index
-
-        first_word = words[command_start] if command_start < len(words) else ''
-        previous_word = words[index - 1]
-        if first_word == 'builtin':
-            command_index = command_start + 1
-            if command_index < len(words) and words[command_index] == '--':
-                command_index += 1
-            if index == command_index:
-                return command_start, index
-        if first_word == 'command':
-            command_index = command_start + 1
-            while command_index < len(words) and words[command_index].startswith('-'):
-                option = words[command_index]
-                if option == '--':
-                    command_index += 1
-                    break
-                if 'v' in option[1:] or 'V' in option[1:]:
-                    return None
-                if set(option[1:]) != {'p'}:
-                    return None
-                command_index += 1
-            if index == command_index:
-                return command_start, index
-        if first_word in {'if', 'while', 'until', 'then', 'elif', 'else', 'do'}:
-            branch_index = command_start + 1
-            while branch_index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[branch_index]):
-                branch_index += 1
-            while branch_index < len(words) and words[branch_index] == "!":
-                branch_index += 1
-            if index == branch_index:
-                return command_start, index
-        if previous_word == '{' or previous_word.endswith('{'):
-            return command_start, index
-        if any(candidate.endswith(')') for candidate in words[command_start:index]):
-            return command_start, index
-
-    return None
+    return shared_source_command_index(command)
 
 
 def source_command_invocation(command: str):
-    try:
-        quoted_words = parse_shell_words_preserving_quotes(command)
-        words = [strip_shell_word_quotes(word) for word in quoted_words]
-    except UnsupportedSourceError:
-        return None
-    if not words:
-        return None
+    from methods.source_commands import source_command_invocation as shared_source_command_invocation
 
-    position = _source_command_position(words)
-    if position is None:
-        return None
-    command_start, source_index = position
-    if source_index >= len(quoted_words):
-        return None
-
-    wrapped = source_index != command_start
-    token_start = shell_word_start(command, quoted_words, source_index)
-    if token_start is None:
-        return None
-
-    command_name = words[source_index]
-    if command_name not in {"source", "."}:
-        return None
-    source_expression = command[token_start + len(quoted_words[source_index]):].strip()
-    source_site = command.strip() if wrapped else f"{command_name} {source_expression}".strip()
-
-    return SourceCommandInvocation(
-        command_name=command_name,
-        source_expression=source_expression,
-        source_site=source_site,
-        source_site_column_offset=0 if wrapped else token_start,
-        source_column_offset=token_start,
-        command_start_index=command_start,
-        source_index=source_index,
-        wrapped=wrapped,
-    )
+    return shared_source_command_invocation(command)
 
 
 def shell_word_start(command: str, words: list[str], word_index: int):
-    search_start = 0
-    for index, word in enumerate(words[:word_index + 1]):
-        token_start = command.find(word, search_start)
-        if token_start < 0:
-            return None
-        search_start = token_start + len(word)
-        if index == word_index:
-            return token_start
-    return None
+    from methods.source_commands import shell_word_start as shared_shell_word_start
+
+    return shared_shell_word_start(command, words, word_index)
 
 
 def contains_source_command(command: str):
-    return source_command_index(command) is not None
+    from methods.source_commands import contains_source_command as shared_contains_source_command
+
+    return shared_contains_source_command(command)
 
 
 def contains_nested_source_command(command: str):
-    """Detect live source commands inside shell constructs we do not lower.
+    from methods.source_commands import contains_nested_source_command as shared_contains_nested_source_command
 
-    This intentionally does not treat quoted text as shell code, but it does
-    inspect command substitutions, process substitutions, and parenthesized
-    subshells because those run nested shell code at runtime.
-    """
-    return _contains_nested_source_command(command, depth=0)
-
-
-def _contains_nested_source_command(text: str, depth: int):
-    if depth > 8:
-        return True
-
-    in_single_quote = False
-    in_double_quote = False
-    escaped = False
-    index = 0
-
-    while index < len(text):
-        char = text[index]
-        if escaped:
-            escaped = False
-            index += 1
-            continue
-
-        if char == '\\' and not in_single_quote:
-            escaped = True
-            index += 1
-            continue
-
-        if char == "'" and not in_double_quote:
-            in_single_quote = not in_single_quote
-            index += 1
-            continue
-
-        if char == '"' and not in_single_quote:
-            in_double_quote = not in_double_quote
-            index += 1
-            continue
-
-        if in_single_quote:
-            index += 1
-            continue
-
-        if char == '`':
-            body, end_index = read_backtick_body(text, index + 1)
-            if body is None:
-                return True
-            if _shell_body_contains_source(body, depth + 1):
-                return True
-            index = end_index + 1
-            continue
-
-        if text.startswith('$((', index):
-            body, end_index = read_balanced_body(text, index + 3)
-            if end_index is None:
-                return True
-            if _contains_nested_source_command(body, depth + 1):
-                return True
-            index = end_index + 1
-            continue
-
-        if text.startswith('$(', index):
-            body, end_index = read_balanced_body(text, index + 2)
-            if end_index is None:
-                return True
-            if _shell_body_contains_source(body, depth + 1):
-                return True
-            index = end_index + 1
-            continue
-
-        if not in_double_quote and (text.startswith('<(', index) or text.startswith('>(', index)):
-            body, end_index = read_balanced_body(text, index + 2)
-            if end_index is None:
-                return True
-            if _shell_body_contains_source(body, depth + 1):
-                return True
-            index = end_index + 1
-            continue
-
-        if not in_double_quote and text.startswith('((', index):
-            body, end_index = read_balanced_body(text, index + 2)
-            if end_index is None:
-                return True
-            if _contains_nested_source_command(body, depth + 1):
-                return True
-            index = end_index + 1
-            continue
-
-        if not in_double_quote and char == '(' and is_array_assignment_paren(text, index):
-            body, end_index = read_balanced_body(text, index + 1)
-            if end_index is None:
-                return True
-            index = end_index + 1
-            continue
-
-        if not in_double_quote and char == '(':
-            body, end_index = read_balanced_body(text, index + 1)
-            if end_index is None:
-                return True
-            if _shell_body_contains_source(body, depth + 1):
-                return True
-            index = end_index + 1
-            continue
-
-        index += 1
-
-    return False
-
-
-def _shell_body_contains_source(body: str, depth: int):
-    for line in body.splitlines() or [body]:
-        if any(contains_source_command(command) for command in get_commands(line)):
-            return True
-    return _contains_nested_source_command(body, depth)
+    return shared_contains_nested_source_command(command)
 
 
 def starts_unsupported_control_block(command: str):

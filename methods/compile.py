@@ -18,21 +18,23 @@ from methods.source_effects import (
     WhileLoop,
 )
 from methods.source_frontend import LineParserFrontend
+from methods.source_commands import (
+    contains_nested_source_command,
+    contains_source_command,
+    source_command_invocation,
+)
 from methods.source_resolver import (
     ASSIGNMENT_WORD_PATTERN,
     MISSING_SOURCE_NO_FILENAME,
     SOURCE_EXPANSION_FAILURE_RETURN,
     ResolvedSource,
     UnsupportedSourceError,
-    contains_source_command,
-    contains_nested_source_command,
     extract_heredoc_delimiters,
     is_heredoc_end,
     is_missing_source_replacement_kind,
     is_source_expansion_failure_replacement_kind,
     missing_source_status,
     parse_shell_words_preserving_quotes,
-    source_command_invocation,
     strip_shell_word_quotes,
 )
 from methods.source_supplements import load_source_supplement

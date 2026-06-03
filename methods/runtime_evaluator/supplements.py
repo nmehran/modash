@@ -7,12 +7,16 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from methods.source_commands import (
+    SOURCE_COMMAND_NAMES,
+    clean_shell_word,
+    source_command_invocation,
+)
 from methods.source_conditions import source_logical_condition_atoms_from_text
 from methods.source_frontend import LineParserFrontend
 from methods.source_resolver import (
     UnsupportedSourceError,
     parse_shell_words_preserving_quotes,
-    strip_shell_word_quotes,
 )
 from methods.runtime_evaluator.observations import (
     RuntimeSourceObservation,
@@ -29,7 +33,6 @@ from methods.runtime_evaluator.graph import (
 )
 from methods.source_supplements import SUPPLEMENT_VERSION, source_supplement_from_payload
 
-SOURCE_COMMANDS = frozenset({"source", "."})
 VARIABLE_REFERENCE_PATTERN = re.compile(r'\$(?:{([a-zA-Z_]\w*)(?::?-[^}]*)?}|([a-zA-Z_]\w*))')
 POSITIONAL_SOURCE_WORDS = frozenset({"$@", "${@}", "$*", "${*}", "$1", "${1}"})
 FUNCTION_DEFINITION_PATTERN = re.compile(
@@ -424,7 +427,7 @@ def _source_condition_atom_sequences_on_line(path: str, line: int):
 
 def _source_expression_words(source_expression: str):
     try:
-        return tuple(_clean_source_word(word) for word in parse_shell_words_preserving_quotes(source_expression))
+        return tuple(clean_shell_word(word) for word in parse_shell_words_preserving_quotes(source_expression))
     except Exception:
         return ()
 
@@ -543,39 +546,14 @@ def _source_word_from_command(command: str):
 
 
 def _source_invocation_from_command(command: str):
-    try:
-        words = parse_shell_words_preserving_quotes(command)
-    except Exception:
+    invocation = source_command_invocation(
+        command,
+        normalize_trace_wrappers=True,
+        stop_at_shell_control=True,
+    )
+    if invocation is None:
         return None
-
-    for index, word in enumerate(words[:-1]):
-        command_name = strip_shell_word_quotes(_strip_shell_punctuation(word))
-        if command_name not in SOURCE_COMMANDS:
-            continue
-        source_word = _clean_source_word(words[index + 1])
-        source_arguments = []
-        for argument in words[index + 2:]:
-            cleaned = _clean_source_word(argument)
-            if not cleaned:
-                break
-            if cleaned in {"then", "do", "else", "fi", "done", "}"}:
-                break
-            if cleaned in {"&&", "||", "|"}:
-                break
-            source_arguments.append(cleaned)
-        return source_word, tuple(source_arguments)
-    return None
-
-
-def _clean_source_word(word: str):
-    word = _strip_shell_punctuation(word)
-    return strip_shell_word_quotes(word)
-
-
-def _strip_shell_punctuation(word: str):
-    while word.endswith(";"):
-        word = word[:-1]
-    return word
+    return invocation.source_path, invocation.arguments
 
 
 def _variable_candidate(source_word: str, resolved_path: str, entrypoint_directory: Path):
@@ -795,8 +773,8 @@ def _function_words_before_source(function_lines, source_word: str):
         except Exception:
             continue
         for word in parsed:
-            cleaned = _clean_source_word(word)
-            if cleaned in SOURCE_COMMANDS:
+            cleaned = clean_shell_word(word)
+            if cleaned in SOURCE_COMMAND_NAMES:
                 return words
             if cleaned == source_word:
                 return words

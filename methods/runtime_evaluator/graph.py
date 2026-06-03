@@ -17,10 +17,9 @@ from methods.runtime_evaluator.observations import (
     load_observation,
     validate_observation,
 )
-from methods.runtime_evaluator.commands import is_trace_wrapper_source_command
+from methods.source_commands import is_trace_wrapper_source_command, source_command_invocation
 from methods.source_resolver import (
     parse_shell_words_preserving_quotes,
-    source_command_invocation,
     strip_shell_word_quotes,
 )
 

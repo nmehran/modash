@@ -14,15 +14,14 @@ from methods.runtime_evaluator.graph import (
     validate_observed_source_graph,
 )
 from methods.shell.line import get_commands
+from methods.source_commands import contains_source_command, source_command_invocation
 from methods.source_conditions import source_logical_condition_atoms_from_text
 from methods.source_effects import CaseBlock, CStyleForLoop, ForLoop, FunctionDef, IfBlock, SourceSite, WhileLoop
 from methods.source_frontend import LineParserFrontend
 from methods.source_resolver import (
     ASSIGNMENT_WORD_PATTERN,
     UnsupportedSourceError,
-    contains_source_command,
     parse_shell_words_preserving_quotes,
-    source_command_invocation,
     strip_shell_word_quotes,
 )
 

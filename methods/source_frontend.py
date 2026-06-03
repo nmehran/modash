@@ -25,19 +25,21 @@ from methods.source_effects import (
     WhileLoop,
 )
 from methods.source_patterns import extglob_operator_at
-from methods.source_resolver import (
-    contains_source_command,
+from methods.source_commands import (
     contains_nested_source_command,
+    contains_source_command,
+    source_command_index,
+    source_command_invocation,
+)
+from methods.source_resolver import (
     ends_unsupported_control_block,
     extract_heredoc_delimiters,
     is_unsupported_control_flow_source,
     is_heredoc_end,
     parse_shell_words,
     parse_shell_words_preserving_quotes,
-    source_command_invocation,
     strip_shell_word_quotes,
     starts_unsupported_control_block,
-    source_command_index,
     UnsupportedSourceError,
 )
 from methods.shell.line import first_top_level_pipeline_index, get_commands

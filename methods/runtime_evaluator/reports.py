@@ -12,7 +12,7 @@ from methods.runtime_evaluator.observations import (
     load_observation,
     validate_observation,
 )
-from methods.runtime_evaluator.commands import clean_shell_word, source_invocation_from_command
+from methods.source_commands import clean_shell_word, source_invocation_from_command
 from methods.source_frontend import LineParserFrontend
 from methods.source_resolver import parse_shell_words_preserving_quotes
 

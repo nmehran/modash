@@ -30,8 +30,8 @@ from methods.runtime_evaluator.observations import (
     fingerprint_file,
     write_observation,
 )
-from methods.runtime_evaluator.commands import (
-    SourceCommandWords,
+from methods.source_commands import (
+    SourceCommandInvocation,
     clean_shell_word,
     is_source_like_command_text,
     normalized_trace_wrapper_words,
@@ -866,7 +866,7 @@ def _raw_event_source_key(event: _RawSourceEvent):
     )
 
 
-def _xtrace_source_key(command: _XtraceSourceCommand, invocation: SourceCommandWords):
+def _xtrace_source_key(command: _XtraceSourceCommand, invocation: SourceCommandInvocation):
     return _SourceInvocationKey(
         pid=command.pid,
         file=_normalized_xtrace_file(command, None),
@@ -892,7 +892,7 @@ def _dynamic_xtrace_match_key(key: _SourceInvocationKey | tuple):
     return key[0], key[1]
 
 
-def _is_dynamic_xtrace_invocation(invocation: SourceCommandWords):
+def _is_dynamic_xtrace_invocation(invocation: SourceCommandInvocation):
     return _xtrace_word_is_dynamic(invocation.source_path) or any(
         _xtrace_word_is_dynamic(argument)
         for argument in invocation.arguments

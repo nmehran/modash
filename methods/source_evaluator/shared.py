@@ -20,6 +20,12 @@ from methods.shell.scan import (
 )
 from methods.source_diagnostics import unsupported_source_error, with_source_diagnostic
 from methods.source_conditions import ConditionAtom, source_logical_condition_atoms_from_text
+from methods.source_commands import (
+    contains_nested_source_command,
+    contains_source_command,
+    source_command_index,
+    source_command_invocation,
+)
 from methods.source_effects import (
     ArrayAssignment,
     Assignment,
@@ -58,8 +64,6 @@ from methods.source_resolver import (
     SOURCE_EXPANSION_FAILURE_RETURN,
     ResolvedSource,
     UnsupportedSourceError,
-    contains_source_command,
-    contains_nested_source_command,
     extract_exact_command_substitution,
     expand_glob_word,
     has_unsupported_shell_operator,
@@ -71,8 +75,6 @@ from methods.source_resolver import (
     missing_source_status,
     parse_shell_words_preserving_quotes,
     source_expansion_failure_result,
-    source_command_index,
-    source_command_invocation,
     strip_shell_word_quotes,
 )
 from methods.source_supplements import SourceSupplement, empty_source_supplement, supplement_skeleton

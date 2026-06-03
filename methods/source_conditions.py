@@ -3,12 +3,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from methods.source_resolver import (
-    UnsupportedSourceError,
-    contains_nested_source_command,
-    contains_source_command,
-    has_unsupported_shell_operator,
-)
+from methods.source_commands import contains_nested_source_command, contains_source_command
+from methods.source_resolver import UnsupportedSourceError, has_unsupported_shell_operator
 
 CONTROL_SOURCE_CONDITION_PATTERN = re.compile(
     r'^(?:if|elif|while|until)\s+(.+?)(?:\s*;\s*(?:then|do)\s*)?$',

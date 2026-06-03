@@ -158,7 +158,7 @@ class SourceRegressionTestCase(unittest.TestCase):
         self.assertTrue(invocation.wrapped)
 
     def test_source_command_parser_matrix_stays_consistent(self):
-        from methods.runtime_evaluator.commands import source_command_index
+        from methods.source_commands import source_command_index
         from methods.source_resolver import (
             parse_shell_words_preserving_quotes,
             source_command_invocation,
