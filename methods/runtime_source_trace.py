@@ -5,6 +5,7 @@ import importlib.metadata
 import math
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -18,6 +19,7 @@ from methods.runtime_source_observations import (
     EnvironmentInfo,
     RuntimeProcess,
     RuntimeRunInfo,
+    RuntimeFunctionCall,
     RuntimeSourceEvent,
     RuntimeSourceObservation,
     RuntimeSourceObservationError,
@@ -32,7 +34,7 @@ from methods.source_resolver import (
     strip_shell_word_quotes,
 )
 
-TRACE_VERSION = "runtime-wrapper-v8"
+TRACE_VERSION = "runtime-wrapper-v9"
 PROCESS_MARKER = "MODASH_PROCESS_EVENT"
 TRACE_MARKER = "MODASH_SOURCE_EVENT"
 XTRACE_MARKER = "MODASH_XTRACE"
@@ -66,6 +68,7 @@ class _RawSourceEvent:
     source_path: str
     resolved_path: str
     status: int
+    function_stack: tuple[str, ...]
     arguments: tuple[str, ...]
 
 
@@ -88,6 +91,7 @@ class _RawTrace:
 @dataclass(frozen=True)
 class _XtraceSourceCommand:
     index: int
+    sequence: int
     pid: int
     file: str
     line: int
@@ -189,10 +193,11 @@ def trace_sources(
         _raise_trace_prelude_failure(failure_path)
 
         raw_trace = _parse_raw_trace(trace_path.read_bytes())
-        xtrace_commands = _xtrace_source_commands(
+        all_xtrace_commands = _xtrace_commands(
             xtrace_path.read_bytes(),
             prelude_path=str(prelude_path),
         )
+        xtrace_commands = _source_like_xtrace_commands(all_xtrace_commands)
         (
             xtrace_indexes_by_source_index,
             raw_events_by_xtrace_index,
@@ -209,6 +214,12 @@ def trace_sources(
             processes,
             xtrace_indexes_by_source_index,
             source_identities_by_source_index,
+            _observed_function_calls(
+                raw_trace.sources,
+                xtrace_commands,
+                all_xtrace_commands,
+                xtrace_indexes_by_source_index,
+            ),
         )
         xtrace = _observation_xtrace_commands(
             xtrace_commands,
@@ -439,9 +450,11 @@ def _observation_events(
     processes,
     xtrace_indexes_by_source_index=None,
     source_identities_by_source_index=None,
+    function_calls_by_source_index=None,
 ):
     xtrace_indexes_by_source_index = xtrace_indexes_by_source_index or {}
     source_identities_by_source_index = source_identities_by_source_index or {}
+    function_calls_by_source_index = function_calls_by_source_index or {}
     process_index_by_pid = {process.pid: process.index for process in processes}
     process_by_pid = {process.pid: process for process in processes}
     events = []
@@ -466,11 +479,93 @@ def _observation_events(
                 line=event.caller_line,
                 command=command,
             ),
+            function_stack=event.function_stack,
+            function_call=function_calls_by_source_index.get(event.index),
             resolved_path=event.resolved_path,
             arguments=event.arguments,
             status=event.status,
         ))
     return tuple(events)
+
+
+def _observed_function_calls(raw_events, xtrace_commands, all_xtrace_commands, xtrace_indexes_by_source_index):
+    source_commands_by_index = {command.index: command for command in xtrace_commands}
+    calls = {}
+    for event in raw_events:
+        if not event.function_stack:
+            continue
+        xtrace_index = xtrace_indexes_by_source_index.get(event.index)
+        if xtrace_index is None:
+            continue
+        source_command = source_commands_by_index.get(xtrace_index)
+        if source_command is None:
+            continue
+        function_call = _observed_function_call_for_stack(
+            event.function_stack,
+            event.pid,
+            source_command.sequence,
+            all_xtrace_commands,
+        )
+        if function_call is not None:
+            calls[event.index] = function_call
+    return calls
+
+
+def _observed_function_call_for_stack(function_stack, pid: int, before_sequence: int, all_xtrace_commands):
+    if not function_stack:
+        return None
+    for function_name in reversed(function_stack):
+        for command in reversed(all_xtrace_commands[:before_sequence]):
+            if command.pid != pid:
+                continue
+            parsed = _xtrace_function_call(command.command)
+            if parsed is None:
+                continue
+            candidate_name, arguments = parsed
+            if candidate_name != function_name:
+                continue
+            call_file = _normalized_xtrace_file(command, None)
+            if not Path(call_file).is_file():
+                continue
+            if not _xtrace_function_call_needs_observed_replay(command, function_name):
+                continue
+            return RuntimeFunctionCall(
+                file=call_file,
+                line=command.line,
+                function=function_name,
+                command=command.command,
+                arguments=arguments,
+            )
+    return None
+
+
+def _xtrace_function_call_needs_observed_replay(command: _XtraceSourceCommand, function_name: str):
+    source_line = _source_line(_normalized_xtrace_file(command, None), command.line)
+    if source_line == "<unknown>":
+        return True
+    try:
+        words = parse_shell_words_preserving_quotes(source_line)
+    except Exception:
+        return True
+    if not words:
+        return True
+    name = strip_shell_word_quotes(words[0])
+    if name != function_name:
+        return True
+    return any(_xtrace_word_is_dynamic(word) for word in words[1:])
+
+
+def _xtrace_function_call(command: str):
+    try:
+        words = parse_shell_words_preserving_quotes(command)
+    except Exception:
+        return None
+    if not words:
+        return None
+    name = strip_shell_word_quotes(words[0])
+    if not re.fullmatch(r'[a-zA-Z_]\w*', name):
+        return None
+    return name, tuple(strip_shell_word_quotes(word) for word in words[1:])
 
 
 def _observation_xtrace_commands(
@@ -595,8 +690,20 @@ def _parse_raw_trace(raw_trace: bytes):
         source_path = fields[offset + 6]
         resolved_path = fields[offset + 7]
         status = _parse_int(fields[offset + 8], "source event status")
-        argument_count = _parse_int(fields[offset + 9], "source event argument count")
+        function_count = _parse_int(fields[offset + 9], "source event function stack count")
         offset += 10
+
+        if function_count < 0:
+            raise RuntimeSourceTraceError("source event function stack count must be non-negative")
+        if offset + function_count > len(fields):
+            raise RuntimeSourceTraceError("truncated runtime source trace function stack")
+        function_stack = tuple(fields[offset:offset + function_count])
+        offset += function_count
+
+        if offset >= len(fields):
+            raise RuntimeSourceTraceError("truncated runtime source trace event")
+        argument_count = _parse_int(fields[offset], "source event argument count")
+        offset += 1
 
         if argument_count < 0:
             raise RuntimeSourceTraceError("source event argument count must be non-negative")
@@ -619,6 +726,7 @@ def _parse_raw_trace(raw_trace: bytes):
             source_path=source_path,
             resolved_path=resolved_path,
             status=status,
+            function_stack=function_stack,
             arguments=arguments,
         ))
     return _RawTrace(processes=tuple(processes), sources=tuple(sources))
@@ -971,7 +1079,7 @@ def _normalized_xtrace_file(command: _XtraceSourceCommand, event: _RawSourceEven
     return str(candidate.resolve(strict=False))
 
 
-def _xtrace_source_commands(raw_xtrace: bytes, *, prelude_path: str):
+def _xtrace_commands(raw_xtrace: bytes, *, prelude_path: str):
     if not raw_xtrace:
         return ()
 
@@ -983,12 +1091,11 @@ def _xtrace_source_commands(raw_xtrace: bytes, *, prelude_path: str):
         record_file = _normalized_xtrace_file(record, None)
         if record_file == prelude_path:
             continue
-        source_line = _source_line(record_file, record.line)
-        if _is_xtrace_source_like(record.command) or _is_xtrace_source_like(source_line):
-            commands.append(record)
+        commands.append(record)
     return tuple(
         _XtraceSourceCommand(
             index=index,
+            sequence=index,
             pid=command.pid,
             file=command.file,
             line=command.line,
@@ -997,6 +1104,28 @@ def _xtrace_source_commands(raw_xtrace: bytes, *, prelude_path: str):
             command=command.command,
         )
         for index, command in enumerate(commands)
+    )
+
+
+def _source_like_xtrace_commands(commands):
+    source_commands = []
+    for command in commands:
+        record_file = _normalized_xtrace_file(command, None)
+        source_line = _source_line(record_file, command.line)
+        if _is_xtrace_source_like(command.command) or _is_xtrace_source_like(source_line):
+            source_commands.append(command)
+    return tuple(
+        _XtraceSourceCommand(
+            index=index,
+            sequence=command.sequence,
+            pid=command.pid,
+            file=command.file,
+            line=command.line,
+            function=command.function,
+            cwd=command.cwd,
+            command=command.command,
+        )
+        for index, command in enumerate(source_commands)
     )
 
 
@@ -1013,6 +1142,7 @@ def _parse_xtrace_line(line: str):
     pid, cwd, file, line_number, function, command = fields
     return _XtraceSourceCommand(
         index=0,
+        sequence=0,
         pid=_parse_int(pid, "xtrace source pid"),
         file=file,
         line=_parse_int(line_number, "xtrace source line"),
@@ -1109,9 +1239,24 @@ __modash_emit_process_event() {
     "$@" >&19
 }
 
-__modash_emit_source_event() {
+__modash_source_function_stack() {
+  local index name
+  __modash_function_stack=()
+  for ((index = 2; index < ${#FUNCNAME[@]}; index++)); do
+    name=${FUNCNAME[$index]}
+    case "$name" in
+      __modash_*|source|.)
+        continue
+        ;;
+    esac
+    __modash_function_stack+=("$name")
+  done
+}
+
+__modash_emit_source_event_with_stack() {
   local index=$1 pid=$2 kind=$3 caller_file=$4 caller_line=$5 cwd=$6 source_path=$7 resolved_path=$8 status=$9
   shift 9
+  __modash_source_function_stack
   printf '%s\0' \
     'MODASH_SOURCE_EVENT' \
     "$index" \
@@ -1123,6 +1268,8 @@ __modash_emit_source_event() {
     "$source_path" \
     "$resolved_path" \
     "$status" \
+    "${#__modash_function_stack[@]}" \
+    "${__modash_function_stack[@]}" \
     "$#" \
     "$@" >&19
 }
@@ -1316,11 +1463,11 @@ __modash_trace_source_common() {
   if [[ -n $source_path ]]; then
     if ((source_arg_count > 1)); then
       explicit_source_args=("${source_args[@]:1}")
-      __modash_emit_source_event \
+      __modash_emit_source_event_with_stack \
         "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$status" \
         "${explicit_source_args[@]}"
     else
-      __modash_emit_source_event \
+      __modash_emit_source_event_with_stack \
         "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$status"
     fi
   fi

@@ -41,7 +41,7 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(event.arguments, ())
         self.assertEqual(event.status, 0)
         fingerprints = {Path(file.path).name: file for file in result.observation.files}
-        self.assertEqual(result.observation.version, 6)
+        self.assertEqual(result.observation.version, 7)
         self.assertEqual(result.observation.environment.policy, "inherit")
         self.assertEqual(result.observation.run.timeout_seconds, 30.0)
         self.assertTrue(result.observation.run.shell)
@@ -545,6 +545,35 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(event.resolved_path, str(dependency.resolve(strict=False)))
         self.assertEqual(event.arguments, ("helper",))
         self.assertEqual(event.status, 0)
+
+    def test_trace_records_dynamic_parent_helper_call_for_nested_source(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'inner() { source "$2" "$1"; }',
+                    'wrap() { inner "$2" "$1"; }',
+                    'main() { "$MODASH_TEST_HELPER" ./dep.sh mode; }',
+                    "main",
+                    "",
+                ]),
+            )
+            dependency = project.write("dep.sh", 'printf "dep:%s\\n" "$1"\n')
+
+            result = project.trace("main.sh", env={"MODASH_TEST_HELPER": "wrap"})
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep:mode\n")
+        self.assertEqual(len(result.observation.sources), 1)
+        event = result.observation.sources[0]
+        self.assertEqual(event.resolved_path, str(dependency.resolve(strict=False)))
+        self.assertEqual(event.function_stack[:2], ("inner", "wrap"))
+        self.assertIsNotNone(event.function_call)
+        self.assertEqual(event.function_call.function, "wrap")
+        self.assertEqual(event.function_call.file, str(entrypoint.resolve(strict=False)))
+        self.assertEqual(event.function_call.line, 3)
+        self.assertEqual(event.function_call.command, "wrap ./dep.sh mode")
+        self.assertEqual(event.function_call.arguments, ("./dep.sh", "mode"))
 
     def test_trace_preserves_nested_source_execution_order(self):
         with ScriptProject() as project:

@@ -80,7 +80,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
 
         self.assertEqual(loaded, observation)
         self.assertTrue(text.endswith("\n"))
-        self.assertTrue(text.startswith('{\n  "version": 6,\n  "entrypoint": '))
+        self.assertTrue(text.startswith('{\n  "version": 7,\n  "entrypoint": '))
         self.assertEqual(data["environment"]["recorded_keys"], ["A_VAR", "Z_VAR"])
         self.assertEqual(data["run"]["shell"], "bash")
         self.assertIsNone(data["run"]["timeout_seconds"])
@@ -100,7 +100,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             dependency = project.write("dep.sh", "echo dep\n")
 
             observation = validate_observation({
-                "version": 6,
+                "version": 7,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
@@ -121,16 +121,18 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                     }
                 ],
                 "sources": [
-                        {
-                            "index": 0,
-                            "source_identity": "",
-                            "process_index": 0,
-                            "xtrace_index": None,
-                            "call_site": {
-                                "file": str(entrypoint),
-                                "line": 1,
+                    {
+                        "index": 0,
+                        "source_identity": "",
+                        "process_index": 0,
+                        "xtrace_index": None,
+                        "call_site": {
+                            "file": str(entrypoint),
+                            "line": 1,
                             "command": "source ./dep.sh",
                         },
+                        "function_stack": [],
+                        "function_call": None,
                         "resolved_path": str(dependency),
                         "arguments": [],
                         "status": 0,
@@ -180,7 +182,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             entrypoint = project.write("main.sh", "source ./dep.sh\n")
             dependency = project.write("dep.sh", "echo dep\n")
             valid = {
-                "version": 6,
+                "version": 7,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
@@ -201,16 +203,18 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                     }
                 ],
                 "sources": [
-                        {
-                            "index": 0,
-                            "source_identity": "",
-                            "process_index": 0,
-                            "xtrace_index": None,
-                            "call_site": {
-                                "file": str(entrypoint),
-                                "line": 1,
+                    {
+                        "index": 0,
+                        "source_identity": "",
+                        "process_index": 0,
+                        "xtrace_index": None,
+                        "call_site": {
+                            "file": str(entrypoint),
+                            "line": 1,
                             "command": "source ./dep.sh",
                         },
+                        "function_stack": [],
+                        "function_call": None,
                         "resolved_path": str(dependency),
                         "arguments": [],
                         "status": 0,
@@ -224,7 +228,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             }
 
             cases = [
-                ("wrong version", {**valid, "version": 1}, "version must be 6"),
+                ("wrong version", {**valid, "version": 1}, "version must be 7"),
                 ("unknown top-level key", {**valid, "extra": True}, "unknown keys"),
                 (
                     "missing argv",
@@ -306,7 +310,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
     def test_write_observation_validates_plain_json_before_writing(self):
         with ScriptProject() as project:
             with self.assertRaises(RuntimeSourceObservationError):
-                write_observation(project.observation_path(), {"version": 6})
+                write_observation(project.observation_path(), {"version": 7})
 
             self.assertFalse(project.observation_path().exists())
 
@@ -376,7 +380,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             entrypoint = project.write("main.sh", "source ./dep.sh\n")
             dependency = project.write("dep.sh", "echo dep\n")
             valid = {
-                "version": 6,
+                "version": 7,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
@@ -407,6 +411,8 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                             "line": 1,
                             "command": "source ./dep.sh",
                         },
+                        "function_stack": [],
+                        "function_call": None,
                         "resolved_path": str(dependency),
                         "arguments": [],
                         "status": 0,

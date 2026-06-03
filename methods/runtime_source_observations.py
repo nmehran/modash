@@ -7,7 +7,7 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
-OBSERVATION_VERSION = 6
+OBSERVATION_VERSION = 7
 TOP_LEVEL_KEYS = frozenset({
     "version",
     "entrypoint",
@@ -48,12 +48,15 @@ SOURCE_EVENT_KEYS = frozenset({
     "source_identity",
     "process_index",
     "call_site",
+    "function_stack",
+    "function_call",
     "xtrace_index",
     "resolved_path",
     "arguments",
     "status",
 })
 CALL_SITE_KEYS = frozenset({"file", "line", "command"})
+FUNCTION_CALL_KEYS = frozenset({"file", "line", "function", "command", "arguments"})
 XTRACE_SOURCE_KEYS = frozenset({
     "index",
     "source_identity",
@@ -321,6 +324,8 @@ class RuntimeSourceEvent:
     resolved_path: str
     source_identity: str = ""
     arguments: tuple[str, ...] = field(default_factory=tuple)
+    function_stack: tuple[str, ...] = field(default_factory=tuple)
+    function_call: RuntimeFunctionCall | None = None
     status: int = 0
     process_index: int = 0
     xtrace_index: int | None = None
@@ -354,6 +359,16 @@ class RuntimeSourceEvent:
                 for arg in _sequence(self.arguments, "sources[].arguments")
             ),
         )
+        object.__setattr__(
+            self,
+            "function_stack",
+            tuple(
+                _exact_string(name, "sources[].function_stack")
+                for name in _sequence(self.function_stack, "sources[].function_stack")
+            ),
+        )
+        if self.function_call is not None and not isinstance(self.function_call, RuntimeFunctionCall):
+            raise _schema_error("sources[].function_call must be null or a RuntimeFunctionCall")
         object.__setattr__(self, "status", _nonnegative_int(self.status, "sources[].status"))
 
     @classmethod
@@ -365,6 +380,12 @@ class RuntimeSourceEvent:
             process_index=data["process_index"],
             xtrace_index=data["xtrace_index"],
             call_site=SourceCallSite.from_dict(data["call_site"]),
+            function_stack=_string_list(data["function_stack"], "sources[].function_stack"),
+            function_call=(
+                RuntimeFunctionCall.from_dict(data["function_call"])
+                if data["function_call"] is not None
+                else None
+            ),
             resolved_path=data["resolved_path"],
             arguments=_string_list(data["arguments"], "sources[].arguments"),
             status=data["status"],
@@ -377,9 +398,54 @@ class RuntimeSourceEvent:
             "process_index": self.process_index,
             "xtrace_index": self.xtrace_index,
             "call_site": self.call_site.to_dict(),
+            "function_stack": list(self.function_stack),
+            "function_call": self.function_call.to_dict() if self.function_call is not None else None,
             "resolved_path": self.resolved_path,
             "arguments": list(self.arguments),
             "status": self.status,
+        }
+
+
+@dataclass(frozen=True)
+class RuntimeFunctionCall:
+    file: str
+    line: int
+    function: str
+    command: str
+    arguments: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self):
+        object.__setattr__(self, "file", _absolute_path(self.file, "sources[].function_call.file"))
+        object.__setattr__(self, "line", _positive_int(self.line, "sources[].function_call.line"))
+        object.__setattr__(self, "function", _nonempty_string(self.function, "sources[].function_call.function"))
+        object.__setattr__(self, "command", _nonempty_string(self.command, "sources[].function_call.command"))
+        object.__setattr__(
+            self,
+            "arguments",
+            tuple(
+                _exact_string(arg, "sources[].function_call.arguments")
+                for arg in _sequence(self.arguments, "sources[].function_call.arguments")
+            ),
+        )
+
+    @classmethod
+    def from_dict(cls, data):
+        _require_keys(data, FUNCTION_CALL_KEYS, "function call")
+        return cls(
+            file=data["file"],
+            line=data["line"],
+            function=data["function"],
+            command=data["command"],
+            arguments=_string_list(data["arguments"], "sources[].function_call.arguments"),
+        )
+
+    def to_dict(self):
+        return {
+            "file": self.file,
+            "line": self.line,
+            "function": self.function,
+            "command": self.command,
+            "arguments": list(self.arguments),
         }
 
 

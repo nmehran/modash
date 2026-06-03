@@ -18,7 +18,7 @@ from methods.runtime_source_observations import (
     validate_observation,
 )
 
-GRAPH_VERSION = 1
+GRAPH_VERSION = 2
 GRAPH_TOP_LEVEL_KEYS = frozenset({
     "version",
     "entrypoint",
@@ -41,8 +41,11 @@ GRAPH_EDGE_KEYS = frozenset({
     "status",
     "arguments",
     "call_site",
+    "function_stack",
+    "function_call",
     "xtrace",
 })
+FUNCTION_CALL_KEYS = frozenset({"file", "line", "function", "command", "arguments"})
 PROCESS_NODE_KEYS = frozenset({
     "id",
     "kind",
@@ -105,6 +108,8 @@ def build_observed_source_graph(entrypoint: str | os.PathLike, observation, *, v
             "status": event.status,
             "arguments": list(event.arguments),
             "call_site": event.call_site.to_dict(),
+            "function_stack": list(event.function_stack),
+            "function_call": event.function_call.to_dict() if event.function_call is not None else None,
             "xtrace": xtrace.to_dict(),
         })
 
@@ -310,6 +315,9 @@ def validate_observed_source_graph(data):
         status = _nonnegative_int(edge.get("status"), "edges[].status")
         _string_list(edge.get("arguments"), "edges[].arguments")
         call_site = _call_site(edge.get("call_site"))
+        _string_list(edge.get("function_stack"), "edges[].function_stack")
+        function_call = _function_call(edge.get("function_call"))
+        _validate_function_call(function_call, file_roles)
         xtrace = _xtrace(edge.get("xtrace"))
         xtrace_indexes.append(xtrace["index"])
         _validate_edge_from_node(edge, node_ids[edge["from"]], process_index, call_site, file_roles)
@@ -345,9 +353,10 @@ def ensure_graph_fingerprints_current(graph):
 
 def _review_edge_lines(edge):
     call_site = edge["call_site"]
+    function_call = edge["function_call"]
     xtrace = edge["xtrace"]
     arguments = " ".join(_shell_quote(argument) for argument in edge["arguments"]) or "-"
-    return [
+    lines = [
         (
             "- "
             f"edge[{edge['index']}] "
@@ -359,8 +368,15 @@ def _review_edge_lines(edge):
         f"  to: {edge['to']}",
         f"  resolved: {edge['resolved_path']}",
         f"  call_site: {call_site['file']}:{call_site['line']}: {call_site['command']}",
-        f"  xtrace: {xtrace['file']}:{xtrace['line']}: {xtrace['command']}",
     ]
+    if function_call is not None:
+        lines.append(
+            "  helper_call: "
+            f"{function_call['file']}:{function_call['line']}: "
+            f"{function_call['command']}"
+        )
+    lines.append(f"  xtrace: {xtrace['file']}:{xtrace['line']}: {xtrace['command']}")
+    return lines
 
 
 def _shell_quote(value: str):
@@ -773,8 +789,7 @@ def _object_list(value, label: str):
 def _string_list(value, label: str):
     if not isinstance(value, list):
         raise RuntimeSourceGraphError(f"{label} must be a list")
-    for item in value:
-        _exact_string(item, f"{label}[]")
+    return tuple(_exact_string(item, f"{label}[]") for item in value)
 
 
 def _call_site(value):
@@ -784,6 +799,28 @@ def _call_site(value):
         "line": _positive_int(value["line"], "edges[].call_site.line"),
         "command": _nonempty_string(value["command"], "edges[].call_site.command"),
     }
+
+
+def _function_call(value):
+    if value is None:
+        return None
+    _require_keys(value, FUNCTION_CALL_KEYS, "edges[].function_call")
+    return {
+        "file": _absolute_path(value["file"], "edges[].function_call.file"),
+        "line": _positive_int(value["line"], "edges[].function_call.line"),
+        "function": _nonempty_string(value["function"], "edges[].function_call.function"),
+        "command": _nonempty_string(value["command"], "edges[].function_call.command"),
+        "arguments": _string_list(value["arguments"], "edges[].function_call.arguments"),
+    }
+
+
+def _validate_function_call(function_call, file_roles):
+    if function_call is None:
+        return
+    if str(Path(function_call["file"]).resolve(strict=False)) not in file_roles:
+        raise RuntimeSourceGraphError(
+            "edges[].function_call.file must have a file fingerprint",
+        )
 
 
 def _xtrace(value):

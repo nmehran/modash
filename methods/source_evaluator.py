@@ -467,6 +467,7 @@ class SourceOverride:
     replacement_kind: str = "source"
     source_value: str | None = None
     graph_index: int = -1
+    function_call: tuple[str, str, int, tuple[str, ...]] | None = None
 
 
 @dataclass(frozen=True)
@@ -6051,6 +6052,10 @@ class SourceEvaluator:
         if not self.source_overrides:
             return None
 
+        observed_call = self._next_unconsumed_function_call_for_node(node, state)
+        if observed_call is not None:
+            return observed_call
+
         candidates = []
         for function_name, function_def in sorted(state.functions.items()):
             variants = state.function_variants.get(function_name, (function_def,))
@@ -6094,6 +6099,21 @@ class SourceEvaluator:
                     return None
             return function_name, function_def, variants, arguments
         return None
+
+    def _next_unconsumed_function_call_for_node(self, node: RawCommand, state: EvaluationState):
+        next_override = self._next_unconsumed_source_override()
+        if next_override is None or next_override.function_call is None:
+            return None
+        function_name, path, line, arguments = next_override.function_call
+        if node.location.path.resolve(strict=False) != Path(path).resolve(strict=False):
+            return None
+        if node.location.line != line:
+            return None
+        function_def = state.functions.get(function_name)
+        if function_def is None:
+            return None
+        variants = state.function_variants.get(function_name, (function_def,))
+        return function_name, function_def, variants, arguments
 
     def _next_unconsumed_source_override(self):
         next_item = None

@@ -190,6 +190,7 @@ def _source_overrides_from_graph_payload(graph_payload):
             replacement_kind=_source_override_replacement_kind(edge),
             source_value=_source_override_source_value(edge),
             graph_index=edge["index"],
+            function_call=_source_override_function_call(edge),
         )
         for edge in file_edges
     ]
@@ -446,6 +447,18 @@ def _source_override_source_value(edge):
     return strip_shell_word_quotes(words[0])
 
 
+def _source_override_function_call(edge):
+    function_call = edge.get("function_call")
+    if function_call is None:
+        return None
+    return (
+        function_call["function"],
+        function_call["file"],
+        function_call["line"],
+        tuple(function_call["arguments"]),
+    )
+
+
 def _child_process_command_overrides_from_graph_payload(graph_payload):
     process_commands = {
         node["id"]: node
@@ -471,6 +484,7 @@ def _child_process_command_overrides_from_graph_payload(graph_payload):
                 resolved_path=edge["resolved_path"],
                 arguments=tuple(edge["arguments"]),
                 graph_index=edge["index"],
+                function_call=_source_override_function_call(edge),
             ))
     return tuple(overrides)
 

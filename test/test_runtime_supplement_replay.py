@@ -730,6 +730,37 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "dep:one\ndep:two\n")
 
+    def test_dynamic_wrapper_helper_graph_replays_observed_parent_call(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'inner() { source "$2" "$1"; printf "inner:%s:%s\\n" "$1" "$2"; }',
+                    'wrap() { inner "$2" "$1"; }',
+                    'main() { "$MODASH_TEST_HELPER" ./dep.sh mode; }',
+                    "main",
+                    "",
+                ]),
+            )
+            project.write("dep.sh", 'printf "dep:%s\\n" "$1"\n')
+            expected = project.run("main.sh", env={"MODASH_TEST_HELPER": "wrap"})
+            trace = project.trace("main.sh", env={"MODASH_TEST_HELPER": "wrap"})
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            self.assertEqual(graph["edges"][0]["function_call"]["function"], "wrap")
+            self.assertEqual(graph["edges"][0]["function_call"]["line"], 3)
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled, env={"MODASH_TEST_HELPER": "wrap"})
+
+        self.assertEqual(expected.returncode, 0, expected.stdout)
+        self.assertEqual(trace.returncode, expected.returncode, trace.stderr)
+        self.assertEqual(trace.stdout, expected.stdout)
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
+
     def test_dynamic_helper_name_graph_replays_mixed_short_circuit_edges(self):
         with ScriptProject() as project:
             entrypoint = project.write(

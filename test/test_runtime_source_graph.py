@@ -39,8 +39,8 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
 
             graph = build_observed_source_graph(entrypoint, observation)
 
-        self.assertEqual(graph["version"], 1)
-        self.assertEqual(graph["observation_version"], 6)
+        self.assertEqual(graph["version"], 2)
+        self.assertEqual(graph["observation_version"], 7)
         self.assertEqual(graph["environment"]["policy"], "inherit")
         self.assertIn("shell", graph["run"])
         self.assertEqual(graph["summary"]["processes"], 1)
@@ -288,6 +288,28 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
 
         self.assertIn("source_identity values must be unique", str(context.exception))
 
+    def test_validate_graph_rejects_unfingerprinted_function_call_file(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'load() { source "$1"; }',
+                    '"$MODASH_TEST_HELPER" ./dep.sh',
+                    "",
+                ]),
+            )
+            project.write("dep.sh", "echo dep\n")
+            graph = build_observed_source_graph(
+                entrypoint,
+                project.trace("main.sh", env={"MODASH_TEST_HELPER": "load"}).observation,
+            )
+            graph["edges"][0]["function_call"]["file"] = str(project.path("unfingerprinted.sh"))
+
+            with self.assertRaises(RuntimeSourceGraphError) as context:
+                validate_observed_source_graph(graph)
+
+        self.assertIn("function_call.file must have a file fingerprint", str(context.exception))
+
     def test_validate_graph_rejects_missing_source_target_tampering(self):
         graph = self._missing_source_graph()
         graph["edges"][0]["status"] = 0
@@ -358,9 +380,9 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
             payload = json.loads(text)
             loaded = load_observed_source_graph(path)
 
-            self.assertEqual(payload["version"], 1)
-        self.assertEqual(loaded["version"], 1)
-        self.assertTrue(text.endswith("\n"))
+            self.assertEqual(payload["version"], 2)
+            self.assertEqual(loaded["version"], 2)
+            self.assertTrue(text.endswith("\n"))
 
     def test_writes_human_readable_graph_review_report(self):
         with ScriptProject() as project:
@@ -380,6 +402,27 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
         self.assertIn(str(dependency.resolve(strict=False)), text)
         self.assertIn("xtrace:", text)
         self.assertTrue(text.endswith("\n"))
+
+    def test_graph_review_report_includes_observed_helper_call(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    'load() { source "$1"; }',
+                    '"$MODASH_TEST_HELPER" ./dep.sh',
+                    "",
+                ]),
+            )
+            graph = build_observed_source_graph(
+                entrypoint,
+                project.trace("main.sh", env={"MODASH_TEST_HELPER": "load"}).observation,
+            )
+            report_path = project.path("reports/runtime-graph.txt")
+
+            text = write_observed_source_graph_review(graph, report_path).read_text()
+
+        self.assertIn("helper_call:", text)
+        self.assertIn("load ./dep.sh", text)
 
     def test_load_graph_rejects_missing_file_with_stable_code(self):
         with ScriptProject() as project:
