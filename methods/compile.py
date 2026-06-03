@@ -580,10 +580,11 @@ def render_source_dispatch(
     positional_frame_names: dict[str, str] | None = None,
 ):
     use_resolved_path = source_values_are_path_ambiguous(source_declarations)
+    source_path_expression = source_dispatch_path_expression(source_expression)
     dispatch_expression = (
-        f'"$(realpath -- {source_expression.strip()})"'
+        f'"$(realpath -- {source_path_expression})"'
         if use_resolved_path
-        else source_expression.strip()
+        else source_path_expression
     )
     output = [f"case {dispatch_expression} in"]
     seen_patterns = set()
@@ -640,6 +641,16 @@ def render_source_dispatch(
         f"{indent}esac",
     ])
     return '\n'.join(output)
+
+
+def source_dispatch_path_expression(source_expression: str):
+    try:
+        words = parse_shell_words_preserving_quotes(source_expression)
+    except UnsupportedSourceError:
+        words = []
+    if not words:
+        return source_expression.strip()
+    return words[0].strip()
 
 
 def render_retained_source_dispatch(

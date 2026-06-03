@@ -976,6 +976,37 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "b\nin:b:B\na\nin:a:A\ndone:A\n")
 
+    def test_graph_replay_dispatches_on_path_word_when_source_has_argv_expansion(self):
+        with ScriptProject() as project:
+            entrypoint = project.write(
+                "main.sh",
+                "\n".join([
+                    "load() {",
+                    "  local name=$1",
+                    "  shift",
+                    '  source "$ROOT/$name.sh" "$@"',
+                    "}",
+                    "load alpha alpha-arg",
+                    "load beta beta-arg",
+                    'printf "main\\n"',
+                    "",
+                ]),
+            )
+            project.mkdir("lib")
+            project.write("lib/alpha.sh", 'printf "alpha:%s\\n" "$1"\n')
+            project.write("lib/beta.sh", 'printf "beta:%s\\n" "$1"\n')
+            trace = project.trace("main.sh", env={"ROOT": str(project.path("lib"))})
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            compiled = project.path("compiled.sh")
+            write_observed_source_graph(graph, graph_path)
+
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled, env={"ROOT": str(project.path("lib"))})
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "alpha:alpha-arg\nbeta:beta-arg\nmain\n")
+
     def test_dynamic_helper_name_static_compile_remains_fail_closed_without_graph(self):
         with ScriptProject() as project:
             project.write("dep.sh", 'printf "dep\\n"\n')

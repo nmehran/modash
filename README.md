@@ -157,6 +157,7 @@ Optional packaging checks:
 ```sh
 python -m build --sdist --wheel --outdir dist
 python -m twine check dist/*
+MODASH_PACKAGING_SMOKE=1 pytest -q test/test_packaging_smoke.py
 ```
 
 Design notes live in [docs](docs/README.md).

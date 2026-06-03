@@ -24,6 +24,9 @@
 - Trusted runtime graph replay now partitions repeated source-condition helper
   edges by observed invocation, preserving mixed short-circuit fallback behavior
   and generated supplement arguments.
+- Executable source dispatch now switches on the source path word rather than
+  the entire source argument vector, preserving observed helper forms such as
+  `source "$ROOT/$name.sh" "$@"`.
 - Trusted runtime graph replay now records file-backed helper-call provenance
   for dynamic wrapper helpers and uses it to replay the observed parent helper
   call without guessing through transitive helper bodies.
@@ -46,11 +49,12 @@
 
 ### Validation
 
-- Full unit suite: `548` tests, `8` skipped.
+- Full unit suite: `592` tests, `9` skipped.
 - Opt-in real-world suite with runtime trace, supplement replay, runtime
-  parity, trusted graph replay, and observe-compile gates: `15` tests, `1`
-  skipped, covering `62` pinned compile expectations, `10` trusted graph replay
-  probes, and `11` observe-compile probes.
+  parity, trusted graph replay, and observe-compile gates: `17` tests passed.
+- Opt-in installed-wheel smoke built the local wheel, installed it into a fresh
+  virtual environment, ran `modash observe-compile`, and verified original vs
+  compiled executable status, stdout, and stderr parity.
 - Generated promoted graph and observe-compile executable artifacts were
   spot-checked for source-free executable output.
 - PyPI distribution build: sdist and wheel passed `twine check`.
