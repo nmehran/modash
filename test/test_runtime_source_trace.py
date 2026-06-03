@@ -883,6 +883,101 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
         self.assertIn("load", str(context.exception))
 
+    def test_trace_fails_closed_on_loop_function_provenance(self):
+        with ScriptProject() as project:
+            for directory in ("dir1", "dir2"):
+                project.write(
+                    f"{directory}/lib.sh",
+                    "\n".join([
+                        "for value in one; do",
+                        '  load() { source "$1"; }',
+                        "done",
+                        "",
+                    ]),
+                )
+            project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write(
+                "main.sh",
+                "\n".join([
+                    "cd dir1",
+                    "source ./lib.sh",
+                    "cd ../dir2",
+                    "source ./lib.sh",
+                    "cd ..",
+                    "load ./dep.sh",
+                    "",
+                ]),
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh")
+
+        self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
+        self.assertIn("load", str(context.exception))
+
+    def test_trace_fails_closed_on_case_arm_function_provenance(self):
+        with ScriptProject() as project:
+            for directory in ("dir1", "dir2"):
+                project.write(
+                    f"{directory}/lib.sh",
+                    "\n".join([
+                        "case yes in",
+                        '  yes) load() { source "$1"; } ;;',
+                        "esac",
+                        "",
+                    ]),
+                )
+            project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write(
+                "main.sh",
+                "\n".join([
+                    "cd dir1",
+                    "source ./lib.sh",
+                    "cd ../dir2",
+                    "source ./lib.sh",
+                    "cd ..",
+                    "load ./dep.sh",
+                    "",
+                ]),
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh")
+
+        self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
+        self.assertIn("load", str(context.exception))
+
+    def test_trace_fails_closed_on_nested_function_body_provenance(self):
+        with ScriptProject() as project:
+            for directory in ("dir1", "dir2"):
+                project.write(
+                    f"{directory}/lib.sh",
+                    "\n".join([
+                        'wrap() { load() { source "$1"; }; }',
+                        "wrap",
+                        "",
+                    ]),
+                )
+            project.write("dep.sh", 'printf "dep\\n"\n')
+            project.write(
+                "main.sh",
+                "\n".join([
+                    "cd dir1",
+                    "source ./lib.sh",
+                    "cd ../dir2",
+                    "source ./lib.sh",
+                    "cd ..",
+                    "load ./dep.sh",
+                    "",
+                ]),
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh")
+
+        self.assertEqual(context.exception.code, "runtime.trace.ambiguous-function-provenance")
+        self.assertIn("load", str(context.exception))
+
     def test_trace_tracks_function_provenance_when_extdebug_is_enabled(self):
         with ScriptProject() as project:
             library = project.write("lib.sh", 'load() { source "$1"; }\n')

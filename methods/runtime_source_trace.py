@@ -359,6 +359,7 @@ if __name__ == "__main__":
 def _function_definition_scanner_script():
     repo_root = str(Path(__file__).resolve().parents[1])
     return f'''\
+import re
 import sys
 
 REPO_ROOT = {repo_root!r}
@@ -366,11 +367,25 @@ if REPO_ROOT and REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 try:
-    from methods.source_effects import FunctionDef, IfBlock
+    from methods.regex.utilities import remove_comments
+    from methods.source_effects import (
+        CaseBlock,
+        CStyleForLoop,
+        ForLoop,
+        FunctionDef,
+        IfBlock,
+        WhileLoop,
+    )
     from methods.source_frontend import LineParserFrontend
+    from methods.source_resolver import extract_heredoc_delimiters, is_heredoc_end
 except Exception as exc:
     print(f"modash function scanner import failed: {{exc}}", file=sys.stderr)
     sys.exit(2)
+
+FUNCTION_DECLARATION_PATTERN = re.compile(
+    r"(?=(?:^|[;&|(){{}}]|\\bthen\\b|\\bdo\\b)\\s*"
+    r"(?:(?:function\\s+([a-zA-Z_]\\w*)(?:\\s*\\(\\s*\\))?)|([a-zA-Z_]\\w*)\\s*\\(\\s*\\))\\s*(?:\\{{|$))"
+)
 
 
 def condition_truth(condition):
@@ -386,8 +401,27 @@ def collect_definitions(nodes, status, records):
     for node in nodes:
         if isinstance(node, FunctionDef):
             records.add((status, node.name))
+            for child in node.body:
+                collect_unknown_definitions(child, records)
         elif isinstance(node, IfBlock):
             collect_if_block(node, status, records)
+        else:
+            collect_unknown_definitions(node, records)
+
+
+def collect_unknown_definitions(node, records):
+    if isinstance(node, FunctionDef):
+        records.add(("unknown", node.name))
+        for child in node.body:
+            collect_unknown_definitions(child, records)
+    elif isinstance(node, IfBlock):
+        for branch in node.branches:
+            collect_definitions(branch.body, "unknown", records)
+    elif isinstance(node, (ForLoop, CStyleForLoop, WhileLoop)):
+        collect_definitions(node.body, "unknown", records)
+    elif isinstance(node, CaseBlock):
+        for arm in node.arms:
+            collect_definitions(arm.body, "unknown", records)
 
 
 def collect_if_block(node, status, records):
@@ -408,6 +442,74 @@ def collect_if_block(node, status, records):
         collect_definitions(branch.body, "unknown", records)
 
 
+def collect_dead_function_lines(nodes, dead_lines):
+    for node in nodes:
+        if isinstance(node, FunctionDef):
+            dead_lines.add(node.location.line)
+            collect_dead_function_lines(node.body, dead_lines)
+        elif isinstance(node, IfBlock):
+            for branch in node.branches:
+                collect_dead_function_lines(branch.body, dead_lines)
+        elif isinstance(node, (ForLoop, CStyleForLoop, WhileLoop)):
+            collect_dead_function_lines(node.body, dead_lines)
+        elif isinstance(node, CaseBlock):
+            for arm in node.arms:
+                collect_dead_function_lines(arm.body, dead_lines)
+
+
+def collect_dead_if_block_lines(node, dead_lines):
+    for branch in node.branches:
+        if branch.condition is None:
+            return
+
+        truth = condition_truth(branch.condition)
+        if truth is True:
+            return
+        if truth is False:
+            collect_dead_function_lines(branch.body, dead_lines)
+            continue
+
+        return
+
+
+def collect_exact_dead_lines(nodes, dead_lines):
+    for node in nodes:
+        if isinstance(node, IfBlock):
+            collect_dead_if_block_lines(node, dead_lines)
+            for branch in node.branches:
+                collect_exact_dead_lines(branch.body, dead_lines)
+        elif isinstance(node, FunctionDef):
+            collect_exact_dead_lines(node.body, dead_lines)
+        elif isinstance(node, (ForLoop, CStyleForLoop, WhileLoop)):
+            collect_exact_dead_lines(node.body, dead_lines)
+        elif isinstance(node, CaseBlock):
+            for arm in node.arms:
+                collect_exact_dead_lines(arm.body, dead_lines)
+
+
+def possible_function_names_by_line(content):
+    active_heredocs = []
+    names_by_line = {{}}
+    for index, line in enumerate(content.splitlines(), start=1):
+        if active_heredocs:
+            if is_heredoc_end(line, active_heredocs[0]):
+                active_heredocs.pop(0)
+            continue
+
+        code_line = remove_comments(
+            line,
+            ["#"],
+            exclusion_patterns=[r"\\#\\!.*"],
+            escape_exclusions=False,
+        )
+        for match in FUNCTION_DECLARATION_PATTERN.finditer(code_line):
+            name = match.group(1) or match.group(2)
+            if name:
+                names_by_line.setdefault(index, set()).add(name)
+        active_heredocs.extend(extract_heredoc_delimiters(line))
+    return names_by_line
+
+
 def main(argv):
     if len(argv) != 2:
         print("modash function scanner expected exactly one path", file=sys.stderr)
@@ -425,6 +527,14 @@ def main(argv):
         return 2
     records = set()
     collect_definitions(ir.nodes, "live", records)
+    dead_lines = set()
+    collect_exact_dead_lines(ir.nodes, dead_lines)
+    for line_number, names in possible_function_names_by_line(content).items():
+        if line_number in dead_lines:
+            continue
+        for name in names:
+            if not any(record_name == name for _, record_name in records):
+                records.add(("unknown", name))
     for status, name in sorted(records):
         print(f"{{status}}\\t{{name}}")
     return 0
