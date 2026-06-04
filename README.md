@@ -74,11 +74,11 @@ current support matrix and fail-closed boundaries.
 Most `source` dependencies can be resolved without running the script. When a
 project chooses a source path at runtime, use runtime discovery explicitly. It
 runs the target once, records the source files that were actually loaded, writes
-review artifacts, and then compiles from that reviewed graph. In 0.7,
-`compile-observed` uses a graph-tape compiler that rewrites the observed source
-operations into trusted replay groups and bundles the observed files. The
-original script still decides whether each source site runs; modash replaces
-only the source operation that the trusted graph observed.
+review artifacts, and then compiles from that reviewed graph.
+`compile-observed` rewrites the observed source operations into trusted replay
+groups and bundles the observed files. The original script still decides
+whether each source site runs; modash replaces only the source operation that
+the trusted graph observed.
 
 Use this for patterns like hook dispatchers, plugin loaders, or helper
 functions where a normal executable compile correctly fails closed because the
@@ -100,7 +100,7 @@ covered.
 If you want to keep a declarative compiler input as a separate file for static
 executable compile, write an explicit supplement and pass it to executable
 compile. This remains useful for review and compatibility, while
-`compile-observed` is the preferred 0.7 runtime path:
+`compile-observed` is the preferred runtime path:
 
 ```sh
 modash supplement scripts/main.sh --from-graph runtime-graph.json --output source-supplement.json
@@ -115,9 +115,9 @@ modash observe-compile scripts/main.sh merged.sh --reviewed-graph-out runtime-gr
 ```
 
 Normal compile never traces. Runtime artifacts are data, not shell code. The
-0.7 runtime compiler consumes a trusted graph and fails closed if any observed
-edge cannot be mapped precisely, if an unobserved source site runs later, or if
-a trusted edge is left unused. See
+runtime compiler consumes a trusted graph and fails closed if any observed edge
+cannot be mapped precisely, if an unobserved source site runs later, or if a
+trusted edge is left unused. See
 [Runtime Source Discovery](docs/runtime-source-discovery.md) and
 [Runtime Graph Compiler](docs/runtime-graph-compiler.md) for the detailed
 artifact formats, trust checks, and safety model.
