@@ -21,6 +21,10 @@
   identical helper files, stable physical-path `$0` / `BASH_SOURCE` reference
   rewriting, top-level return propagation, and fail-closed unobserved graph-tape
   drift.
+- Added adversarial runtime graph compiler coverage for computed generated-state
+  mutation, `exec`, EXIT trap manipulation, trace-instrumentation-sensitive
+  probes, command/builtin `eval`, live unobserved source dispatch, child
+  `bash -c` wrapper drift, and unsupported runtime `$0` / `BASH_SOURCE` forms.
 
 ### Changed
 
@@ -35,8 +39,8 @@
 
 ### Validation
 
-- Full unit suite: `632` tests, `9` skipped.
-- Targeted runtime graph compiler suite: `32` tests passed.
+- Full unit suite: `646` tests, `9` skipped.
+- Targeted runtime graph compiler suite: `46` tests passed.
 - Opt-in real-world suite with runtime parity, trace, supplement replay,
   trusted graph replay, and observe-compile gates: `17` tests passed.
 - Python bytecode compilation passed for `modash.py`, all `methods` modules, and

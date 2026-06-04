@@ -212,7 +212,8 @@ def _condition_source_sites(condition: str) -> tuple[tuple[str, str, int | None]
     status: int | None = None
     for atom in atoms:
         if atom.source_command is not None:
-            text = f"{atom.separator} {atom.source_command} {atom.source_expression}".strip()
+            negation = "! " if atom.negated else ""
+            text = f"{atom.separator} {negation}{atom.source_command} {atom.source_expression}".strip()
             sites.append((text, atom.separator, status))
             status = None
             continue

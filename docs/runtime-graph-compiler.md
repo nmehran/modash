@@ -47,11 +47,18 @@ before executable output is promoted.
 The compiler also rejects shapes that can make a trusted graph lie about what
 will run: reserved `__modash_` names, trace-instrumentation-sensitive shell
 state, aliases, dynamic or source-capable `eval`, source redirections, dynamic
-or multiline child `bash -c` payloads, explicit `exit` combined with EXIT trap
-manipulation, runtime `$0` / `BASH_SOURCE` references inside heredocs, and
-runtime `$0` / `BASH_SOURCE` references on parent lines that also contain child
-`bash -c` payloads. A narrow source-free `eval "$shellopts"` restoration from
-`shopt -p` is allowed because it does not generate source operations.
+or multiline child `bash -c` payloads, unsupported child `bash -c` wrappers that
+hide source operations, `exec`, EXIT trap manipulation, computed mutation of
+generated replay state, runtime `$0` / `BASH_SOURCE` references inside heredocs
+or multiline strings, and runtime `$0` / `BASH_SOURCE` references on parent
+lines that also contain child `bash -c` payloads. A narrow source-free
+`eval "$shellopts"` restoration from `shopt -p` is allowed because it does not
+generate source operations.
+
+Generated scripts also install source/dot guard functions. Rewritten replay
+groups use `builtin source`, but a live unobserved `source` or `.` command that
+appears because runtime control flow drifted aborts instead of sourcing a file
+outside the trusted graph.
 
 Bundled files rewrite `$0` and `BASH_SOURCE` references to stable original
 physical paths. Exact relative-path spelling and symlink spelling are not part

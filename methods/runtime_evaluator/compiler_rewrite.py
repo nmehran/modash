@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,7 +104,7 @@ def _rewrite_content(
     quote_state: str | None = None
     for line_index, original_line in enumerate(lines, start=1):
         if active_heredocs:
-            if rewrite_runtime_references and _line_has_runtime_reference(original_line):
+            if rewrite_runtime_references and _line_has_runtime_reference(original_line, include_zero=rewrite_runtime_zero):
                 raise RuntimeObservedCompileError(
                     f"runtime graph compiler does not support runtime source references inside heredocs in {unit.physical_path or unit.logical_path}:{line_index}",
                     code="runtime.compile.runtime_reference_heredoc",
@@ -113,6 +114,11 @@ def _rewrite_content(
                 active_heredocs.pop(0)
             continue
         if quote_state is not None:
+            if rewrite_runtime_references and _line_has_runtime_reference(original_line, include_zero=rewrite_runtime_zero):
+                raise RuntimeObservedCompileError(
+                    f"runtime graph compiler does not support runtime source references inside multiline strings in {unit.physical_path or unit.logical_path}:{line_index}",
+                    code="runtime.compile.runtime_reference_multiline",
+                )
             output.append(original_line)
             quote_state = _update_multiline_quote_state(original_line, quote_state)
             continue
@@ -134,6 +140,11 @@ def _rewrite_content(
                     str(entrypoint),
                     include_zero=rewrite_runtime_zero,
                 )
+                if _line_has_runtime_reference(line, include_zero=rewrite_runtime_zero):
+                    raise RuntimeObservedCompileError(
+                        f"runtime graph compiler does not support this runtime source reference form in {unit.physical_path or unit.logical_path}:{line_index}",
+                        code="runtime.compile.runtime_reference",
+                    )
         line = _rewrite_bash_c_payloads(line, process_payloads, process_replacement_counts)
         _ensure_no_unrewritten_source(line, unit, line_index)
         output.append(line)
@@ -180,7 +191,7 @@ def _candidate_replacements_by_line(unit: _RewriteUnit) -> dict[int, list[tuple[
             )
         end = start + len(needle)
         search_start_by_line[candidate.line] = end
-        replacement = _render_replay_group(candidate.base_id, negated=needle.lstrip().startswith("!"))
+        replacement = _render_replay_group(candidate.base_id, negated=_source_site_is_negated(needle, candidate.separator))
         if candidate.separator and candidate.text.lstrip().startswith(candidate.separator):
             replacement = f"{candidate.separator} {replacement}"
         replacements_by_line.setdefault(candidate.line, []).append((start, end, replacement))
@@ -267,6 +278,18 @@ def _rewrite_bash_c_payloads(
         end = start + len(command)
         invocation = _bash_c_invocation(command)
         if invocation is None:
+            unsupported_invocation = _bash_c_invocation_anywhere(command)
+            if unsupported_invocation is not None:
+                if unsupported_invocation.dynamic_payload:
+                    raise RuntimeObservedCompileError(
+                        f"runtime graph compiler does not support dynamic child bash -c payloads in {command.strip()}",
+                        code="runtime.compile.unsupported_child_bash",
+                    )
+                if _payload_contains_source(unsupported_invocation.payload):
+                    raise RuntimeObservedCompileError(
+                        f"unobserved child bash -c source payload in {command.strip()}",
+                        code="runtime.compile.unobserved_child_source",
+                    )
             search_start = end
             continue
         if invocation.dynamic_payload:
@@ -304,7 +327,14 @@ def _rewrite_bash_c_payloads(
 
 
 def _wrap_child_process_command(process_index: int, command: str) -> str:
-    return f"{{ __modash_select_child_process {process_index}; {command}; }}"
+    return (
+        "{ "
+        f"__modash_select_child_process {process_index}; "
+        f"{command}; "
+        "__modash_child_status=$?; "
+        "( exit \"$__modash_child_status\" ); "
+        "}"
+    )
 
 def _rewrite_bash_c_command(command: str, payload: str) -> str:
     words = parse_shell_words_preserving_quotes(command.strip())
@@ -314,15 +344,44 @@ def _rewrite_bash_c_command(command: str, payload: str) -> str:
     payload_index = _bash_c_payload_index(words, index + 1)
     if payload_index is None:
         raise RuntimeObservedCompileError(f"unsupported bash -c command: {command}")
-    rewritten_words = [*words[:payload_index], shlex.quote(payload), *words[payload_index + 1:]]
+    bash_word = _trusted_bash_command_word(words[index])
+    rewritten_words = [
+        *words[:index],
+        bash_word,
+        *words[index + 1:payload_index],
+        shlex.quote(payload),
+        *words[payload_index + 1:],
+    ]
     return " ".join(rewritten_words)
+
+
+def _trusted_bash_command_word(raw_word: str) -> str:
+    word = strip_shell_word_quotes(raw_word)
+    if word in {"/bin/bash", "/usr/bin/bash"}:
+        return shlex.quote(word)
+    resolved = shutil.which("bash")
+    if resolved is None:
+        raise RuntimeObservedCompileError(
+            "runtime graph compiler cannot locate an absolute bash executable for child process replay",
+            code="runtime.compile.bash_unavailable",
+        )
+    return shlex.quote(resolved)
 
 def _line_has_bash_c_payload(line: str) -> bool:
     return any(_bash_c_invocation(command) is not None for command in get_commands(line))
 
 
-def _line_has_runtime_reference(line: str) -> bool:
-    return bool(re.search(r"\bBASH_SOURCE\b|\$\{?0(?:\}|(?![0-9]))", line))
+def _source_site_is_negated(source_site: str, separator: str) -> bool:
+    probe = source_site.lstrip()
+    if separator and probe.startswith(separator):
+        probe = probe[len(separator):].lstrip()
+    return probe.startswith("!")
+
+
+def _line_has_runtime_reference(line: str, *, include_zero: bool = True) -> bool:
+    if re.search(r"\bBASH_SOURCE\b", line):
+        return True
+    return include_zero and bool(re.search(r"\$\{?0(?:\}|(?![0-9]))", line))
 
 
 def _line_has_runtime_reference_outside_bash_c_payload(line: str) -> bool:
@@ -398,6 +457,24 @@ def _bash_c_invocation(command: str) -> _BashCInvocation | None:
     raw_payload = words[payload_index]
     payload = strip_shell_word_quotes(raw_payload)
     return _BashCInvocation(payload, raw_payload, _dynamic_bash_c_payload_word(raw_payload))
+
+
+def _bash_c_invocation_anywhere(command: str) -> _BashCInvocation | None:
+    try:
+        raw_words = parse_shell_words_preserving_quotes(command.strip())
+    except UnsupportedSourceError:
+        return None
+    words = [strip_shell_word_quotes(word) for word in raw_words]
+    for index, command_name in enumerate(words):
+        if command_name not in {"bash", "/bin/bash", "/usr/bin/bash"}:
+            continue
+        payload_index = _bash_c_payload_index(words, index + 1)
+        if payload_index is None:
+            continue
+        raw_payload = raw_words[payload_index]
+        payload = strip_shell_word_quotes(raw_payload)
+        return _BashCInvocation(payload, raw_payload, _dynamic_bash_c_payload_word(raw_payload))
+    return None
 
 
 def _command_word_index_after_wrappers(words: list[str]) -> int | None:
