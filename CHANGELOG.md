@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.7.0 - 2026-06-03
 
 ### Added
 
@@ -34,7 +34,7 @@
 
 ### Validation
 
-- Full unit suite: `604` tests, `9` skipped.
+- Full unit suite: `606` tests, `9` skipped.
 - Targeted runtime graph compiler suite: `7` tests passed.
 - Opt-in real-world suite with runtime parity, trace, supplement replay,
   trusted graph replay, and observe-compile gates: `17` tests passed.
