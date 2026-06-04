@@ -310,6 +310,15 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
 
         self.assertIn("xtrace.command must be a source-like command", str(context.exception))
 
+    def test_validate_graph_rejects_quoted_source_call_site_tampering(self):
+        graph = self._direct_source_graph()
+        graph["edges"][0]["call_site"]["command"] = "printf 'source ./dep.sh one\\n'"
+
+        with self.assertRaises(RuntimeSourceGraphError) as context:
+            validate_observed_source_graph(graph)
+
+        self.assertIn("call_site.command must be a replayable source command", str(context.exception))
+
     def test_trace_wrapper_source_command_parser_matrix(self):
         positive_commands = (
             "__modash_trace_source_alias source source 0 -- ./dep.sh",

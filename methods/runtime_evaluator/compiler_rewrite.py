@@ -20,6 +20,8 @@ from methods.source_commands import contains_source_command
 from methods.source_resolver import (
     ASSIGNMENT_WORD_PATTERN,
     UnsupportedSourceError,
+    extract_heredoc_delimiters,
+    is_heredoc_end,
     parse_shell_words_preserving_quotes,
     strip_shell_word_quotes,
 )
@@ -86,17 +88,31 @@ def _rewrite_content(
     replacements_by_line = _candidate_replacements_by_line(unit)
     lines = unit.content.splitlines()
     output: list[str] = []
+    active_heredocs = []
+    quote_state: str | None = None
     for line_index, original_line in enumerate(lines, start=1):
+        if active_heredocs:
+            output.append(original_line)
+            if is_heredoc_end(original_line, active_heredocs[0]):
+                active_heredocs.pop(0)
+            continue
+        if quote_state is not None:
+            output.append(original_line)
+            quote_state = _update_multiline_quote_state(original_line, quote_state)
+            continue
         line = original_line
         replacements = replacements_by_line.get(line_index, [])
         if replacements:
             line = _apply_replacements(line, replacements)
         if rewrite_runtime_references and unit.physical_path is not None and not _line_has_bash_c_payload(line):
             line = replace_runtime_source_references(line, unit.physical_path, str(entrypoint))
-        if process_payloads:
-            line = _rewrite_bash_c_payloads(line, process_payloads, process_replacement_counts)
+        line = _rewrite_bash_c_payloads(line, process_payloads, process_replacement_counts)
         _ensure_no_unrewritten_source(line, unit, line_index)
         output.append(line)
+        next_quote_state = _update_multiline_quote_state(original_line, quote_state)
+        if next_quote_state is None:
+            active_heredocs.extend(extract_heredoc_delimiters(original_line))
+        quote_state = next_quote_state
     rendered = "\n".join(output)
     if unit.content.endswith("\n"):
         rendered += "\n"
@@ -188,6 +204,11 @@ def _rewrite_bash_c_payloads(
                 replacement = _rewrite_bash_c_command(command, transformed_payload)
                 replacement_process = process_index
         if replacement is None:
+            if _payload_contains_source(payload):
+                raise RuntimeObservedCompileError(
+                    f"unobserved child bash -c source payload in {command.strip()}",
+                    code="runtime.compile.unobserved_child_source",
+                )
             search_start = end
             continue
         rewritten = rewritten[:start] + replacement + rewritten[end:]
@@ -198,10 +219,8 @@ def _rewrite_bash_c_payloads(
 
 def _rewrite_bash_c_command(command: str, payload: str) -> str:
     words = parse_shell_words_preserving_quotes(command.strip())
-    index = 0
-    while index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[index]):
-        index += 1
-    if index + 2 >= len(words):
+    index = _command_word_index_after_env(words)
+    if index is None or index + 2 >= len(words):
         raise RuntimeObservedCompileError(f"unsupported bash -c command: {command}")
     command_name = strip_shell_word_quotes(words[index])
     rewritten_words = [*words[:index], command_name, "-c", shlex.quote(payload), *words[index + 3:]]
@@ -247,10 +266,8 @@ def _bash_c_payload(command: str) -> str | None:
         words = parse_shell_words_preserving_quotes(command.strip())
     except UnsupportedSourceError:
         return None
-    index = 0
-    while index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[index]):
-        index += 1
-    if index + 2 >= len(words):
+    index = _command_word_index_after_env(words)
+    if index is None or index + 2 >= len(words):
         return None
     command_name = strip_shell_word_quotes(words[index])
     if command_name not in {"bash", "/bin/bash", "/usr/bin/bash"} or words[index + 1] != "-c":
@@ -258,10 +275,83 @@ def _bash_c_payload(command: str) -> str | None:
     return strip_shell_word_quotes(words[index + 2])
 
 
+def _command_word_index_after_env(words: list[str]) -> int | None:
+    index = 0
+    while index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[index]):
+        index += 1
+    if index >= len(words):
+        return None
+    command_name = strip_shell_word_quotes(words[index])
+    if command_name != "env":
+        return index
+    index += 1
+    while index < len(words):
+        word = strip_shell_word_quotes(words[index])
+        if word == "--":
+            return index + 1 if index + 1 < len(words) else None
+        if word in {"-i", "--ignore-environment"}:
+            index += 1
+            continue
+        if word == "-u":
+            index += 2
+            continue
+        if word.startswith("--unset="):
+            index += 1
+            continue
+        if ASSIGNMENT_WORD_PATTERN.match(words[index]):
+            index += 1
+            continue
+        if word.startswith("-"):
+            return None
+        return index
+    return None
+
+
+def _payload_contains_source(payload: str) -> bool:
+    active_heredocs = []
+    for line in payload.splitlines() or [payload]:
+        if active_heredocs:
+            if is_heredoc_end(line, active_heredocs[0]):
+                active_heredocs.pop(0)
+            continue
+        for command in get_commands(line):
+            if contains_source_command(command):
+                return True
+            try:
+                words = parse_shell_words_preserving_quotes(command.strip())
+            except UnsupportedSourceError:
+                words = []
+            name = strip_shell_word_quotes(words[0]) if words else ""
+            if name == "eval" and ("source" in command or re.search(r"(^|[\s;&|({])\.\s+", command)):
+                return True
+        active_heredocs.extend(extract_heredoc_delimiters(line))
+    return False
+
+
+def _update_multiline_quote_state(line: str, state: str | None) -> str | None:
+    escaped = False
+    for char in line:
+        if escaped:
+            escaped = False
+            continue
+        if state == "'":
+            if char == "'":
+                state = None
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if state == '"':
+            if char == '"':
+                state = None
+            continue
+        if char in {"'", '"'}:
+            state = char
+    return state
+
+
 __all__ = [
-    "RUNTIME_COMPILER_VERSION",
-    "RuntimeObservedCompileError",
-    "compile_runtime_graph",
-    "render_runtime_graph_script",
-    "supports_runtime_graph",
+    "_rewrite_bash_c_payloads",
+    "_rewrite_file_units",
+    "_rewrite_process_payloads",
 ]

@@ -52,8 +52,8 @@ __modash_source_function_stack() {
 }
 
 __modash_emit_source_event_with_stack() {
-  local index=$1 pid=$2 kind=$3 caller_file=$4 caller_line=$5 cwd=$6 source_path=$7 resolved_path=$8 status=$9
-  shift 9
+  local index=$1 pid=$2 kind=$3 caller_file=$4 caller_line=$5 cwd=$6 source_path=$7 resolved_path=$8 source_size=$9 source_mtime_ns=${10} source_sha256=${11} status=${12}
+  shift 12
   __modash_source_function_stack
   printf '%s\0' \
     'MODASH_SOURCE_EVENT' \
@@ -65,6 +65,9 @@ __modash_emit_source_event_with_stack() {
     "$cwd" \
     "$source_path" \
     "$resolved_path" \
+    "$source_size" \
+    "$source_mtime_ns" \
+    "$source_sha256" \
     "$status" \
     "${#__modash_function_stack[@]}" \
     "${__modash_function_stack[@]}" \
@@ -86,6 +89,18 @@ __modash_next_source_index() {
   printf '%s\n' "$((index + 1))" > "$MODASH_TRACE_COUNTER_FILE"
   rmdir "$lock_path"
   printf '%s' "$index"
+}
+
+__modash_source_fingerprint=()
+
+__modash_fingerprint_file() {
+  local path=${1-}
+  __modash_source_fingerprint=("" "" "")
+  if [[ -z $path || ! -f $path ]]; then
+    return 1
+  fi
+  mapfile -t __modash_source_fingerprint < <("$MODASH_TRACE_PYTHON" -S "$MODASH_TRACE_FINGERPRINT_SCANNER" "$path") || return 1
+  ((${#__modash_source_fingerprint[@]} == 3))
 }
 
 __modash_resolve_source_path() {
@@ -380,6 +395,8 @@ __modash_trace_source_common() {
   event_index=$(__modash_next_source_index)
 
   local caller_file caller_line cwd source_path resolved_path status source_arg_count track_functions
+  local source_size="" source_mtime_ns="" source_sha256=""
+  local after_source_size="" after_source_mtime_ns="" after_source_sha256=""
   local function_name function_definition
   local -a source_args explicit_source_args
   local -A function_definitions_before
@@ -419,6 +436,16 @@ __modash_trace_source_common() {
 
   if [[ -n $source_path && -r $resolved_path ]]; then
     track_functions=1
+    if [[ -f $resolved_path ]]; then
+      if ! __modash_fingerprint_file "$resolved_path"; then
+        __modash_trace_abort \
+          "runtime.trace.fingerprint-source" \
+          "modash: runtime trace could not fingerprint sourced file: ${resolved_path}"
+      fi
+      source_size=${__modash_source_fingerprint[0]}
+      source_mtime_ns=${__modash_source_fingerprint[1]}
+      source_sha256=${__modash_source_fingerprint[2]}
+    fi
     while IFS= read -r function_name; do
       [[ -n $function_name ]] || continue
       function_definition=$(declare -f "$function_name")
@@ -444,6 +471,22 @@ __modash_trace_source_common() {
   fi
   status=$?
 
+  if [[ -n $source_sha256 ]]; then
+    if ! __modash_fingerprint_file "$resolved_path"; then
+      __modash_trace_abort \
+        "runtime.trace.mutated-source" \
+        "modash: runtime trace source changed or disappeared while being sourced: ${resolved_path}"
+    fi
+    after_source_size=${__modash_source_fingerprint[0]}
+    after_source_mtime_ns=${__modash_source_fingerprint[1]}
+    after_source_sha256=${__modash_source_fingerprint[2]}
+    if [[ $source_size != "$after_source_size" || $source_mtime_ns != "$after_source_mtime_ns" || $source_sha256 != "$after_source_sha256" ]]; then
+      __modash_trace_abort \
+        "runtime.trace.mutated-source" \
+        "modash: runtime trace source changed while being sourced: ${resolved_path}"
+    fi
+  fi
+
   if ((track_functions)); then
     __modash_forget_deleted_sourced_functions function_definitions_before
     __modash_record_sourced_functions "$resolved_path"
@@ -457,11 +500,11 @@ __modash_trace_source_common() {
     if ((source_arg_count > 1)); then
       explicit_source_args=("${source_args[@]:1}")
       __modash_emit_source_event_with_stack \
-        "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$status" \
+        "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$source_size" "$source_mtime_ns" "$source_sha256" "$status" \
         "${explicit_source_args[@]}"
     else
       __modash_emit_source_event_with_stack \
-        "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$status"
+        "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$source_size" "$source_mtime_ns" "$source_sha256" "$status"
     fi
   fi
 

@@ -11,15 +11,16 @@
 - Runtime graph compilation now fails closed on unmapped, over-consumed,
   unconsumed, stale, or unbundled graph edges before or during generated script
   execution.
-- Runtime graph compilation preserves Bash's own source semantics for trusted
+- Runtime graph compilation preserves Bash's own source mechanics for trusted
   graph edges by executing `builtin source` at the rewritten source site,
   including caller locals, inherited no-argument source positionals, explicit
   source arguments, top-level `return`, nested observed sources, child
-  `bash -c` payload arguments, and original `BASH_SOURCE` / `$0` references in
-  bundled files.
+  `bash -c` payload arguments, and stable original physical-path `$0` /
+  `BASH_SOURCE` references in bundled files.
 - Added synthetic coverage for runtime-selected helpers, same-relative-path
-  identical helper files, `BASH_SOURCE` reference rewriting, top-level return
-  propagation, and fail-closed unobserved graph-tape drift.
+  identical helper files, stable physical-path `$0` / `BASH_SOURCE` reference
+  rewriting, top-level return propagation, and fail-closed unobserved graph-tape
+  drift.
 
 ### Changed
 
@@ -34,8 +35,8 @@
 
 ### Validation
 
-- Full unit suite: `606` tests, `9` skipped.
-- Targeted runtime graph compiler suite: `7` tests passed.
+- Full unit suite: `617` tests, `9` skipped.
+- Targeted runtime graph compiler suite: `17` tests passed.
 - Opt-in real-world suite with runtime parity, trace, supplement replay,
   trusted graph replay, and observe-compile gates: `17` tests passed.
 - Python bytecode compilation passed for `modash.py`, all `methods` modules, and

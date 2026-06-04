@@ -28,6 +28,7 @@ from methods.runtime_evaluator.observations import (
     format_fingerprint_mismatch,
     validate_observation,
 )
+from methods.compile_renderer import find_unquoted_substring
 from methods.source_commands import is_trace_wrapper_source_command, source_command_invocation
 from methods.source_resolver import parse_shell_words_preserving_quotes, strip_shell_word_quotes
 def load_observed_source_graph(path: str | os.PathLike):
@@ -333,7 +334,7 @@ def _validate_edge_xtrace(edge, xtrace, process_index, call_site, source_identit
         raise RuntimeSourceGraphError("edges[].xtrace.process_index must match edge process_index")
     if xtrace["file"] != call_site["file"] or xtrace["line"] != call_site["line"]:
         raise RuntimeSourceGraphError("edges[].xtrace must match edge call_site")
-    if not _is_replayable_source_call_site(call_site["command"]):
+    if not _is_replayable_source_call_site(call_site["command"], xtrace["command"]):
         raise RuntimeSourceGraphError("edges[].call_site.command must be a replayable source command")
     if not _is_trusted_xtrace_source_command(xtrace["command"]):
         raise RuntimeSourceGraphError("edges[].xtrace.command must be a source-like command")
@@ -380,8 +381,12 @@ def _file_roles(value, label: str):
 def _is_source_like_command(command: str):
     return source_command_invocation(command.strip()) is not None
 
-def _is_replayable_source_call_site(command: str):
-    return source_command_invocation(command.strip()) is not None
+def _is_replayable_source_call_site(command: str, xtrace_command: str):
+    stripped = command.strip()
+    return (
+        source_command_invocation(stripped) is not None
+        or find_unquoted_substring(stripped, xtrace_command.strip()) >= 0
+    )
 
 def _is_trusted_xtrace_source_command(command: str):
     return _is_source_like_command(command) or _is_trace_wrapper_source_command(command)

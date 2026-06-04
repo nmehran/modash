@@ -12,6 +12,7 @@ from methods.runtime_evaluator.compiler_model import (
     _EmbeddedFile,
     _ReplayEdge,
     _RewriteUnit,
+    _first_source_segment,
     _validate_logical_path,
 )
 from methods.source_commands import source_command_invocation
@@ -107,7 +108,7 @@ __modash_select_source_edge() {{
 }}
 
 __modash_verify_replay_consumed() {{
-  local status=$? key
+  local status=${{1:-$?}} key
   if ((__modash_aborting)); then
     rm -rf -- "$__modash_tmp"
     exit "$status"
@@ -116,10 +117,12 @@ __modash_verify_replay_consumed() {{
     if [[ -z ${{__modash_edge_consumed[$key]+set}} ]]; then
       printf 'modash runtime replay error: unconsumed observed source edge: %s\\n' "$key" >&2
       rm -rf -- "$__modash_tmp"
+      __modash_aborting=1
       exit {REPLAY_FAILURE_STATUS}
     fi
   done
   rm -rf -- "$__modash_tmp"
+  __modash_aborting=1
   exit "$status"
 }}
 

@@ -43,3 +43,12 @@ unobserved source-bearing branch fails closed instead of falling back to a live
 Edges whose call sites cannot be mapped precisely, stale file fingerprints,
 unsupported hidden source operations, and nonzero traced targets are rejected
 before executable output is promoted.
+
+Bundled files rewrite `$0` and `BASH_SOURCE` references to stable original
+physical paths. Exact relative-path spelling and symlink spelling are not part
+of the 0.7 runtime graph compiler contract.
+
+Graph construction also rejects sourced files with top-level
+function-context-sensitive Bash such as `local`, `caller`, `FUNCNAME`, or
+`BASH_LINENO`, because the trace wrapper necessarily observes source calls
+through a function boundary.

@@ -18,6 +18,7 @@ from methods.runtime_evaluator.errors import RuntimeSourceTraceError
 from methods.runtime_evaluator.observations import (
     BashInfo,
     EnvironmentInfo,
+    RuntimeFileFingerprint,
     RuntimeProcess,
     RuntimeRunInfo,
     RuntimeFunctionCall,
@@ -46,7 +47,7 @@ from methods.source_resolver import (
     strip_shell_word_quotes,
 )
 
-TRACE_VERSION = "runtime-wrapper-v9"
+TRACE_VERSION = "runtime-wrapper-v10"
 PROCESS_MARKER = "MODASH_PROCESS_EVENT"
 TRACE_MARKER = "MODASH_SOURCE_EVENT"
 DEFAULT_TRACE_TIMEOUT_SECONDS = 30
@@ -71,6 +72,9 @@ class _RawSourceEvent:
     cwd: str
     source_path: str
     resolved_path: str
+    source_size: int | None
+    source_mtime_ns: int | None
+    source_sha256: str | None
     status: int
     function_stack: tuple[str, ...]
     arguments: tuple[str, ...]
@@ -126,14 +130,17 @@ def trace_sources(
         failure_path = tmpdir_path / "trace-failure.txt"
         scanner_path = tmpdir_path / "positionals-scanner.py"
         function_scanner_path = tmpdir_path / "function-scanner.py"
+        fingerprint_scanner_path = tmpdir_path / "fingerprint-scanner.py"
         prelude_path = tmpdir_path / "prelude.sh"
         prelude_path.write_text(_trace_prelude(), encoding="utf-8")
         scanner_path.write_text(_positionals_scanner_script(), encoding="utf-8")
         function_scanner_path.write_text(_function_definition_scanner_script(), encoding="utf-8")
+        fingerprint_scanner_path.write_text(_fingerprint_scanner_script(), encoding="utf-8")
         trace_path.write_bytes(b"")
         counter_path.write_text("0\n", encoding="utf-8")
         xtrace_path.write_bytes(b"")
         failure_path.write_text("", encoding="utf-8")
+        entrypoint_fingerprint = fingerprint_file(entrypoint_path, ("entrypoint",))
 
         run_env.update({
             "BASH_ENV": str(prelude_path),
@@ -145,6 +152,7 @@ def trace_sources(
             "MODASH_TRACE_FAILURE_FILE": str(failure_path),
             "MODASH_TRACE_POSITIONAL_SCANNER": str(scanner_path),
             "MODASH_TRACE_FUNCTION_SCANNER": str(function_scanner_path),
+            "MODASH_TRACE_FINGERPRINT_SCANNER": str(fingerprint_scanner_path),
             "MODASH_TRACE_PYTHON": sys.executable,
         })
 
@@ -224,7 +232,7 @@ def trace_sources(
             processes=processes,
             sources=source_events,
             xtrace=xtrace,
-            files=_observation_file_fingerprints(entrypoint_path, source_events),
+            files=_observation_file_fingerprints(entrypoint_path, entrypoint_fingerprint, raw_trace.sources, source_events),
         )
         return RuntimeTraceResult(
             observation=observation,
@@ -309,6 +317,24 @@ def _positionals_scanner_script():
 
 def _function_definition_scanner_script():
     return _scanner_entrypoint_script("functions")
+
+
+def _fingerprint_scanner_script():
+    return (
+        "import hashlib\n"
+        "import os\n"
+        "import sys\n\n"
+        "path = sys.argv[1]\n"
+        "stat_result = os.stat(path)\n"
+        "digest = hashlib.sha256()\n"
+        "with open(path, 'rb') as handle:\n"
+        "    for chunk in iter(lambda: handle.read(1024 * 1024), b''):\n"
+        "        digest.update(chunk)\n"
+        "print(stat_result.st_size)\n"
+        "print(stat_result.st_mtime_ns)\n"
+        "print(digest.hexdigest())\n"
+    )
+
 
 def _resolve_trace_paths(entrypoint, cwd):
     entrypoint_path = Path(entrypoint)
@@ -553,8 +579,20 @@ def _observation_xtrace_commands(
     return tuple(commands)
 
 
-def _observation_file_fingerprints(entrypoint_path, events):
+def _observation_file_fingerprints(entrypoint_path, entrypoint_fingerprint, raw_events, events):
     roles_by_path: dict[Path, set[str]] = {}
+    trace_source_fingerprints: dict[Path, RuntimeFileFingerprint] = {}
+    for raw_event in raw_events:
+        if raw_event.source_size is None or raw_event.source_mtime_ns is None or raw_event.source_sha256 is None:
+            continue
+        resolved_path = Path(raw_event.resolved_path).resolve(strict=False)
+        trace_source_fingerprints[resolved_path] = RuntimeFileFingerprint(
+            path=str(resolved_path),
+            size=raw_event.source_size,
+            mtime_ns=raw_event.source_mtime_ns,
+            sha256=raw_event.source_sha256,
+            roles=("source",),
+        )
 
     def add_role(path, role):
         resolved = Path(path).resolve(strict=False)
@@ -572,6 +610,27 @@ def _observation_file_fingerprints(entrypoint_path, events):
 
     fingerprints = []
     for path in sorted(roles_by_path, key=lambda item: item.as_posix()):
+        trace_fingerprint = trace_source_fingerprints.get(path)
+        if trace_fingerprint is not None:
+            roles = tuple(role for role in ("entrypoint", "call-site", "source") if role in roles_by_path[path])
+            fingerprints.append(RuntimeFileFingerprint(
+                path=trace_fingerprint.path,
+                size=trace_fingerprint.size,
+                mtime_ns=trace_fingerprint.mtime_ns,
+                sha256=trace_fingerprint.sha256,
+                roles=roles,
+            ))
+            continue
+        if path == Path(entrypoint_path).resolve(strict=False):
+            roles = tuple(role for role in ("entrypoint", "call-site", "source") if role in roles_by_path[path])
+            fingerprints.append(RuntimeFileFingerprint(
+                path=entrypoint_fingerprint.path,
+                size=entrypoint_fingerprint.size,
+                mtime_ns=entrypoint_fingerprint.mtime_ns,
+                sha256=entrypoint_fingerprint.sha256,
+                roles=roles,
+            ))
+            continue
         fingerprints.append(fingerprint_file(path, roles_by_path[path]))
     return tuple(fingerprints)
 
@@ -637,7 +696,7 @@ def _parse_raw_trace(raw_trace: bytes):
 
         if marker != TRACE_MARKER:
             raise RuntimeSourceTraceError(f"invalid runtime trace marker: {marker!r}")
-        if offset + 10 > len(fields):
+        if offset + 13 > len(fields):
             raise RuntimeSourceTraceError("truncated runtime source trace event")
 
         index = _parse_int(fields[offset], "source event index")
@@ -648,9 +707,12 @@ def _parse_raw_trace(raw_trace: bytes):
         cwd = fields[offset + 5]
         source_path = fields[offset + 6]
         resolved_path = fields[offset + 7]
-        status = _parse_int(fields[offset + 8], "source event status")
-        function_count = _parse_int(fields[offset + 9], "source event function stack count")
-        offset += 10
+        source_size = _parse_optional_int(fields[offset + 8], "source event source size")
+        source_mtime_ns = _parse_optional_int(fields[offset + 9], "source event source mtime_ns")
+        source_sha256 = fields[offset + 10] or None
+        status = _parse_int(fields[offset + 11], "source event status")
+        function_count = _parse_int(fields[offset + 12], "source event function stack count")
+        offset += 13
 
         if function_count < 0:
             raise RuntimeSourceTraceError("source event function stack count must be non-negative")
@@ -684,6 +746,9 @@ def _parse_raw_trace(raw_trace: bytes):
             cwd=cwd,
             source_path=source_path,
             resolved_path=resolved_path,
+            source_size=source_size,
+            source_mtime_ns=source_mtime_ns,
+            source_sha256=source_sha256,
             status=status,
             function_stack=function_stack,
             arguments=arguments,
@@ -695,3 +760,9 @@ def _parse_raw_trace(raw_trace: bytes):
 
 def _trace_prelude():
     return importlib.resources.files("methods.runtime_evaluator").joinpath("trace_prelude.bash").read_text(encoding="utf-8")
+
+
+def _parse_optional_int(value: str, label: str):
+    if value == "":
+        return None
+    return _parse_int(value, label)

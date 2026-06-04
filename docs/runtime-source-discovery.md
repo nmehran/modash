@@ -79,12 +79,14 @@ Current observations use schema `8`. They record:
 - source function stacks and file-backed observed helper-call provenance for
   review and compatibility with graph validation
 - resolved source paths, source arguments, and source status
-- file fingerprints for the entrypoint, file-backed source files, and
-  file-backed call sites, including sourced files that return non-zero status
+- trace-time file fingerprints for the entrypoint, file-backed source files,
+  and file-backed call sites, including sourced files that return non-zero
+  status
 
 Schema validation rejects observations that omit required fingerprint roles.
 Fingerprint validation compares path, size, mtime, and SHA-256 before supplement
-generation.
+generation. Trace rejects a sourced file that changes while it is being sourced;
+graph construction rejects a source file that changes after it was observed.
 
 Small example:
 
@@ -98,7 +100,7 @@ Small example:
     "version": "GNU bash, version 5.2.21"
   },
   "trace": {
-    "version": "runtime-wrapper-v9"
+    "version": "runtime-wrapper-v10"
   },
   "environment": {
     "policy": "overlay",
@@ -241,6 +243,10 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
   be mapped exactly in an entrypoint, sourced file, or observed child `bash -c`
   payload. Runtime-observed source effects hidden behind `eval` remain trace
   data, but they are not promoted into trusted graph compilation.
+- Runtime graph construction rejects sourced files with top-level
+  function-context-sensitive Bash such as `local`, `caller`, `FUNCNAME`, or
+  `BASH_LINENO`, because the trace wrapper necessarily observes source calls
+  through a function boundary.
 - No-argument `source file` tracing preserves inherited positional parameters
   through the trace alias. If that alias is removed before the source call, or
   if the sourced file may mutate caller positionals at top level with `shift`

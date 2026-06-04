@@ -10,6 +10,7 @@ from methods.source_effects import (
     ForLoop,
     FunctionDef,
     IfBlock,
+    RawCommand,
     WhileLoop,
 )
 from methods.source_frontend import LineParserFrontend
@@ -23,6 +24,9 @@ FUNCTION_DECLARATION_PATTERN = re.compile(
 EVAL_COMMAND_PATTERN = re.compile(r"(?:^|[;&|()]|\bthen\b|\bdo\b)\s*eval(?:\s|$)")
 TRAP_COMMAND_PATTERN = re.compile(r"(?:^|[;&|()]|\bthen\b|\bdo\b)\s*trap(?:\s|$)")
 ALIAS_COMMAND_PATTERN = re.compile(r"(?:^|[;&|()]|\bthen\b|\bdo\b)\s*alias(?:\s|$)")
+FUNCTION_CONTEXT_SENSITIVE_PATTERN = re.compile(
+    r"(?:^|[;&|()]|\bthen\b|\bdo\b)\s*(?:local|caller)(?:\s|$)|\b(?:FUNCNAME|BASH_LINENO)\b"
+)
 EMBEDDED_FUNCTION_DECLARATION_PATTERN = re.compile(
     r"(?:(?:function\s+([a-zA-Z_]\w*)(?:\s*\(\s*\))?)|([a-zA-Z_]\w*)\s*\(\s*\))\s*\{"
 )
@@ -218,6 +222,67 @@ def possible_function_names_by_line(content):
                 names_by_line.setdefault(index, set()).add("*")
         active_heredocs.extend(extract_heredoc_delimiters(line))
     return names_by_line
+
+
+def function_context_sensitive_top_level_lines(path, content: str | None = None) -> tuple[int, ...]:
+    if content is None:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                content = handle.read()
+        except OSError:
+            return ()
+    try:
+        ir = LineParserFrontend().parse(str(path), content)
+    except Exception:
+        return tuple(_text_function_context_sensitive_lines(content))
+    lines: set[int] = set()
+    _collect_function_context_sensitive_lines(ir.nodes, lines)
+    return tuple(sorted(lines))
+
+
+def _collect_function_context_sensitive_lines(nodes, lines: set[int]) -> None:
+    for node in nodes:
+        if isinstance(node, FunctionDef):
+            continue
+        if isinstance(node, RawCommand):
+            if _function_context_sensitive_text(node.text):
+                lines.add(node.location.line)
+            continue
+        if isinstance(node, IfBlock):
+            for branch in node.branches:
+                if branch.condition and _function_context_sensitive_text(branch.condition):
+                    location = branch.condition_location or node.location
+                    lines.add(location.line)
+                _collect_function_context_sensitive_lines(branch.body, lines)
+            continue
+        if isinstance(node, (ForLoop, CStyleForLoop, WhileLoop)):
+            _collect_function_context_sensitive_lines(node.body, lines)
+            continue
+        if isinstance(node, CaseBlock):
+            for arm in node.arms:
+                _collect_function_context_sensitive_lines(arm.body, lines)
+
+
+def _text_function_context_sensitive_lines(content: str):
+    active_heredocs = []
+    for index, line in enumerate(content.splitlines(), start=1):
+        if active_heredocs:
+            if is_heredoc_end(line, active_heredocs[0]):
+                active_heredocs.pop(0)
+            continue
+        code_line = remove_comments(
+            line,
+            ["#"],
+            exclusion_patterns=[r"\#\!.*"],
+            escape_exclusions=False,
+        )
+        if _function_context_sensitive_text(code_line):
+            yield index
+        active_heredocs.extend(extract_heredoc_delimiters(line))
+
+
+def _function_context_sensitive_text(text: str) -> bool:
+    return FUNCTION_CONTEXT_SENSITIVE_PATTERN.search(text) is not None
 
 
 def _usage(message):

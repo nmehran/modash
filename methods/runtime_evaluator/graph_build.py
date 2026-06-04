@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-from methods.runtime_evaluator.graph_model import GRAPH_VERSION
+from methods.runtime_evaluator.graph_model import GRAPH_VERSION, RuntimeSourceGraphError
 from methods.runtime_evaluator.graph_validate import (
     _coerce_observation,
     _ensure_fingerprints_current,
@@ -15,6 +15,7 @@ from methods.runtime_evaluator.graph_validate import (
     _source_fingerprint_paths,
     validate_observed_source_graph,
 )
+from methods.runtime_evaluator.scanners import function_context_sensitive_top_level_lines
 
 def build_observed_source_graph(entrypoint: str | os.PathLike, observation, *, validate_fingerprints=True):
     entrypoint_path = Path(entrypoint).resolve(strict=False)
@@ -24,6 +25,7 @@ def build_observed_source_graph(entrypoint: str | os.PathLike, observation, *, v
     if validate_fingerprints:
         _ensure_fingerprints_current(observation)
         _ensure_source_presence_matches_fingerprints(observation)
+    _ensure_no_function_context_sensitive_sources(observation)
     _ensure_trusted_xtrace_links(observation)
     source_fingerprint_paths = _source_fingerprint_paths(observation.files)
 
@@ -140,3 +142,21 @@ def _edge_to_node(event, source_fingerprint_paths):
     if event.resolved_path in source_fingerprint_paths:
         return _file_node(event.resolved_path)
     return _missing_source_node(event)
+
+
+def _ensure_no_function_context_sensitive_sources(observation):
+    source_paths = {
+        fingerprint.path
+        for fingerprint in observation.files
+        if "source" in fingerprint.roles
+    }
+    for path in sorted(source_paths):
+        lines = function_context_sensitive_top_level_lines(path)
+        if not lines:
+            continue
+        first_line = lines[0]
+        raise RuntimeSourceGraphError(
+            "runtime source graph cannot trust a sourced file with top-level "
+            f"function-context-sensitive Bash at {path}:{first_line}",
+            code="runtime.graph.function_context_sensitive",
+        )
