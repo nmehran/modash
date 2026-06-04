@@ -1587,17 +1587,14 @@ def short_text(value, limit=160):
 
 
 class RealWorldHarnessHelperTestCase(unittest.TestCase):
-    def write_trace_sensitive_runtime_project(self, root):
+    def write_run_order_mismatch_runtime_project(self, root, *, stream="stdout"):
         entrypoint = root / "main.sh"
         dependency = root / "dep.sh"
+        redirection = " >&2" if stream == "stderr" else ""
         entrypoint.write_text(
             "\n".join([
                 "source ./dep.sh",
-                'if [[ -n ${MODASH_TRACE_FILE-} ]]; then',
-                '  printf "mode:trace\\n"',
-                "else",
-                '  printf "mode:original\\n"',
-                "fi",
+                f'printf "pid:%s\\n" "$BASHPID"{redirection}',
                 "",
             ]),
             encoding="utf-8",
@@ -1675,18 +1672,7 @@ class RealWorldHarnessHelperTestCase(unittest.TestCase):
     def test_runtime_observe_compile_probe_detects_trace_stderr_mismatch(self):
         with tempfile.TemporaryDirectory(prefix="modash-realworld-helper-") as tmpdir:
             root = Path(tmpdir)
-            entrypoint = root / "main.sh"
-            dependency = root / "dep.sh"
-            entrypoint.write_text(
-                "\n".join([
-                    "source ./dep.sh",
-                    '[[ -n ${MODASH_TRACE_FILE:-} ]] && printf "trace-only\\n" >&2',
-                    "printf 'main\\n'",
-                    "",
-                ]),
-                encoding="utf-8",
-            )
-            dependency.write_text("printf 'dep\\n'\n", encoding="utf-8")
+            entrypoint = self.write_run_order_mismatch_runtime_project(root, stream="stderr")
 
             record = run_runtime_observe_compile_probe(
                 entrypoint,
@@ -1700,9 +1686,11 @@ class RealWorldHarnessHelperTestCase(unittest.TestCase):
             )
 
         self.assertEqual(record["status"], "mismatch", record)
-        self.assertEqual(record["original"]["stderr"], "")
-        self.assertEqual(record["compiled"]["stderr"], "")
-        self.assertEqual(record["trace_target_stderr"], "trace-only\n")
+        self.assertRegex(record["trace_target_stderr"], r"^pid:\d+\n$")
+        self.assertRegex(record["original"]["stderr"], r"^pid:\d+\n$")
+        self.assertRegex(record["compiled"]["stderr"], r"^pid:\d+\n$")
+        self.assertNotEqual(record["trace_target_stderr"], record["original"]["stderr"])
+        self.assertNotEqual(record["original"]["stderr"], record["compiled"]["stderr"])
 
     def test_runtime_failure_message_includes_timeout_side_and_output_diff(self):
         message = runtime_failure_message({
@@ -1738,7 +1726,7 @@ class RealWorldHarnessHelperTestCase(unittest.TestCase):
     def test_supplement_replay_probe_detects_trace_original_mismatch(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            entrypoint = self.write_trace_sensitive_runtime_project(root)
+            entrypoint = self.write_run_order_mismatch_runtime_project(root)
 
             probe = run_runtime_supplement_replay_probe(
                 entrypoint,
@@ -1754,16 +1742,18 @@ class RealWorldHarnessHelperTestCase(unittest.TestCase):
         self.assertEqual(probe["status"], "mismatch")
         self.assertEqual(probe["source_events"], 1)
         self.assertEqual(probe["trace_returncode"], 0)
-        self.assertEqual(probe["trace_stdout"], "dep\nmode:trace\n")
+        self.assertRegex(probe["trace_stdout"], r"^dep\npid:\d+\n$")
         self.assertEqual(probe["original"]["returncode"], 0)
-        self.assertEqual(probe["original"]["stdout"], "dep\nmode:original\n")
+        self.assertRegex(probe["original"]["stdout"], r"^dep\npid:\d+\n$")
         self.assertEqual(probe["compiled"]["returncode"], 0)
-        self.assertEqual(probe["compiled"]["stdout"], probe["original"]["stdout"])
+        self.assertRegex(probe["compiled"]["stdout"], r"^dep\npid:\d+\n$")
+        self.assertNotEqual(probe["trace_stdout"], probe["original"]["stdout"])
+        self.assertNotEqual(probe["original"]["stdout"], probe["compiled"]["stdout"])
 
     def test_graph_replay_probe_detects_trace_original_mismatch(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            entrypoint = self.write_trace_sensitive_runtime_project(root)
+            entrypoint = self.write_run_order_mismatch_runtime_project(root)
 
             probe = run_runtime_graph_replay_probe(
                 entrypoint,
@@ -1780,11 +1770,13 @@ class RealWorldHarnessHelperTestCase(unittest.TestCase):
         self.assertEqual(probe["source_events"], 1)
         self.assertEqual(probe["graph_edges"], 1)
         self.assertEqual(probe["trace_returncode"], 0)
-        self.assertEqual(probe["trace_stdout"], "dep\nmode:trace\n")
+        self.assertRegex(probe["trace_stdout"], r"^dep\npid:\d+\n$")
         self.assertEqual(probe["original"]["returncode"], 0)
-        self.assertEqual(probe["original"]["stdout"], "dep\nmode:original\n")
+        self.assertRegex(probe["original"]["stdout"], r"^dep\npid:\d+\n$")
         self.assertEqual(probe["compiled"]["returncode"], 0)
-        self.assertEqual(probe["compiled"]["stdout"], probe["original"]["stdout"])
+        self.assertRegex(probe["compiled"]["stdout"], r"^dep\npid:\d+\n$")
+        self.assertNotEqual(probe["trace_stdout"], probe["original"]["stdout"])
+        self.assertNotEqual(probe["original"]["stdout"], probe["compiled"]["stdout"])
 
 
 @unittest.skipUnless(

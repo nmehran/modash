@@ -12,6 +12,10 @@ from methods.runtime_evaluator.compiler_model import (
 from methods.runtime_evaluator.compiler_plan import _build_compile_plan
 from methods.runtime_evaluator.compiler_prelude import _render_replay_prelude, _target_logical_paths
 from methods.runtime_evaluator.compiler_rewrite import _rewrite_file_units, _rewrite_process_payloads
+from methods.runtime_evaluator.compiler_safety import (
+    validate_graph_source_file_safety,
+    validate_runtime_compile_safety,
+)
 from methods.runtime_evaluator.graph import ensure_graph_fingerprints_current, validate_observed_source_graph
 
 
@@ -32,8 +36,10 @@ def render_runtime_graph_script(entrypoint: str | os.PathLike, graph_payload: di
             f"runtime graph entrypoint does not match requested entrypoint: {graph['entrypoint']}",
             code="runtime.compile.entrypoint_mismatch",
         )
+    validate_graph_source_file_safety(graph)
 
     plan = _build_compile_plan(entrypoint_path, graph)
+    validate_runtime_compile_safety(plan)
     _rewrite_process_payloads(plan)
     _rewrite_file_units(plan)
     main_plan = plan.process_plans[0]
@@ -42,7 +48,12 @@ def render_runtime_graph_script(entrypoint: str | os.PathLike, graph_payload: di
         for logical_path, unit in sorted(plan.file_units.items())
         if logical_path != ENTRYPOINT_LOGICAL_PATH
     )
-    prelude = _render_replay_prelude(embedded_files, main_plan.assignments, _target_logical_paths(plan.file_units))
+    prelude = _render_replay_prelude(
+        embedded_files,
+        main_plan.assignments,
+        _target_logical_paths(plan.file_units),
+        child_processes=tuple(sorted(plan.process_payloads)),
+    )
     entrypoint_unit = plan.file_units[ENTRYPOINT_LOGICAL_PATH]
     return (
         prelude

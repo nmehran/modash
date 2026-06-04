@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import shlex
+from dataclasses import dataclass
 from pathlib import Path
 
 from methods.compile import find_unquoted_substring, replace_runtime_source_references
@@ -26,6 +27,14 @@ from methods.source_resolver import (
     strip_shell_word_quotes,
 )
 
+
+@dataclass(frozen=True)
+class _BashCInvocation:
+    payload: str
+    raw_payload_word: str
+    dynamic_payload: bool = False
+
+
 def _rewrite_process_payloads(plan: _CompilePlan) -> None:
     for process_index, process_plan in plan.process_plans.items():
         if process_index == 0:
@@ -47,7 +56,8 @@ def _rewrite_process_payloads(plan: _CompilePlan) -> None:
                 process_plan.assignments,
                 plan.entrypoint,
                 {},
-                rewrite_runtime_references=False,
+                rewrite_runtime_references=True,
+                rewrite_runtime_zero=False,
             )
             embedded_files.append(_EmbeddedFile(file_unit.logical_path, transformed))
         payload = (
@@ -84,6 +94,7 @@ def _rewrite_content(
     process_payloads: dict[int, tuple[str, str]],
     process_replacement_counts: dict[int, int] | None = None,
     rewrite_runtime_references: bool = True,
+    rewrite_runtime_zero: bool = True,
 ) -> str:
     replacements_by_line = _candidate_replacements_by_line(unit)
     lines = unit.content.splitlines()
@@ -92,6 +103,11 @@ def _rewrite_content(
     quote_state: str | None = None
     for line_index, original_line in enumerate(lines, start=1):
         if active_heredocs:
+            if rewrite_runtime_references and _line_has_runtime_reference(original_line):
+                raise RuntimeObservedCompileError(
+                    f"runtime graph compiler does not support runtime source references inside heredocs in {unit.physical_path or unit.logical_path}:{line_index}",
+                    code="runtime.compile.runtime_reference_heredoc",
+                )
             output.append(original_line)
             if is_heredoc_end(original_line, active_heredocs[0]):
                 active_heredocs.pop(0)
@@ -104,12 +120,29 @@ def _rewrite_content(
         replacements = replacements_by_line.get(line_index, [])
         if replacements:
             line = _apply_replacements(line, replacements)
-        if rewrite_runtime_references and unit.physical_path is not None and not _line_has_bash_c_payload(line):
-            line = replace_runtime_source_references(line, unit.physical_path, str(entrypoint))
+        if rewrite_runtime_references and unit.physical_path is not None:
+            if _line_has_bash_c_payload(line):
+                if _line_has_runtime_reference_outside_bash_c_payload(line):
+                    raise RuntimeObservedCompileError(
+                        f"runtime graph compiler does not support runtime source references on child bash -c lines in {unit.physical_path or unit.logical_path}:{line_index}",
+                        code="runtime.compile.runtime_reference_child_bash",
+                    )
+            else:
+                line = replace_runtime_source_references(
+                    line,
+                    unit.physical_path,
+                    str(entrypoint),
+                    include_zero=rewrite_runtime_zero,
+                )
         line = _rewrite_bash_c_payloads(line, process_payloads, process_replacement_counts)
         _ensure_no_unrewritten_source(line, unit, line_index)
         output.append(line)
         next_quote_state = _update_multiline_quote_state(original_line, quote_state)
+        if next_quote_state is not None and _line_starts_multiline_bash_c(original_line):
+            raise RuntimeObservedCompileError(
+                f"runtime graph compiler does not support multiline child bash -c payloads in {unit.physical_path or unit.logical_path}:{line_index}",
+                code="runtime.compile.unsupported_child_bash",
+            )
         if next_quote_state is None:
             active_heredocs.extend(extract_heredoc_delimiters(original_line))
         quote_state = next_quote_state
@@ -140,27 +173,71 @@ def _candidate_replacements_by_line(unit: _RewriteUnit) -> dict[int, list[tuple[
                 f"could not locate source site {candidate.text!r} in {unit.physical_path or unit.logical_path}:{candidate.line}",
                 code="runtime.compile.mapping_failed",
             )
+        if _source_site_has_redirection(line, needle):
+            raise RuntimeObservedCompileError(
+                f"runtime graph compiler does not yet support source redirections in {unit.physical_path or unit.logical_path}:{candidate.line}",
+                code="runtime.compile.source_redirection",
+            )
         end = start + len(needle)
         search_start_by_line[candidate.line] = end
-        replacement = _render_replay_group(candidate.base_id)
+        replacement = _render_replay_group(candidate.base_id, negated=needle.lstrip().startswith("!"))
         if candidate.separator and candidate.text.lstrip().startswith(candidate.separator):
             replacement = f"{candidate.separator} {replacement}"
         replacements_by_line.setdefault(candidate.line, []).append((start, end, replacement))
     return replacements_by_line
 
-def _render_replay_group(base_id: str) -> str:
-    return (
+def _render_replay_group(base_id: str, *, negated: bool = False) -> str:
+    group = (
         f"{{ __modash_select_source_edge {shlex.quote(base_id)}; "
         "__modash_replay_select_status=$?; "
         "if (( __modash_replay_select_status != 0 )); then "
         "( exit \"$__modash_replay_select_status\" ); "
         "elif [[ $__modash_replay_kind == file ]]; then "
         "builtin source \"$__modash_replay_file\" \"${__modash_replay_args[@]}\"; "
+        "__modash_replay_actual_status=$?; "
+        "if (( __modash_replay_actual_status != __modash_replay_status )); then "
+        "__modash_abort \"observed source status drift\"; "
+        "fi; "
+        "( exit \"$__modash_replay_actual_status\" ); "
         "else "
         "printf '%s: line %s: %s\\n' \"$__modash_replay_diag_file\" \"$__modash_replay_diag_line\" \"$__modash_replay_diag_message\" >&2; "
         "( exit \"$__modash_replay_status\" ); "
         "fi; }"
     )
+    return f"! {group}" if negated else group
+
+
+def _source_site_has_redirection(line: str, source_site: str) -> bool:
+    for command in get_commands(line):
+        if find_unquoted_substring(command, source_site) >= 0:
+            return _command_has_unquoted_redirection(command)
+    return False
+
+
+def _command_has_unquoted_redirection(command: str) -> bool:
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    for index, char in enumerate(command):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and not in_single_quote:
+            escaped = True
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            continue
+        if in_single_quote or in_double_quote:
+            continue
+        if char in {"<", ">"}:
+            return True
+        if char == "&" and index + 1 < len(command) and command[index + 1] == ">":
+            return True
+    return False
 
 def _apply_replacements(line: str, replacements: list[tuple[int, int, str]]) -> str:
     rendered = line
@@ -188,10 +265,16 @@ def _rewrite_bash_c_payloads(
         if start < 0:
             continue
         end = start + len(command)
-        payload = _bash_c_payload(command)
-        if payload is None:
+        invocation = _bash_c_invocation(command)
+        if invocation is None:
             search_start = end
             continue
+        if invocation.dynamic_payload:
+            raise RuntimeObservedCompileError(
+                f"runtime graph compiler does not support dynamic child bash -c payloads in {command.strip()}",
+                code="runtime.compile.unsupported_child_bash",
+            )
+        payload = invocation.payload
         replacement = None
         replacement_process = None
         for process_index, (original_payload, transformed_payload) in process_payloads.items():
@@ -211,23 +294,55 @@ def _rewrite_bash_c_payloads(
                 )
             search_start = end
             continue
+        if replacement_process is not None:
+            replacement = _wrap_child_process_command(replacement_process, replacement)
         rewritten = rewritten[:start] + replacement + rewritten[end:]
         if process_replacement_counts is not None and replacement_process is not None:
             process_replacement_counts[replacement_process] = process_replacement_counts.get(replacement_process, 0) + 1
         search_start = start + len(replacement)
     return rewritten
 
+
+def _wrap_child_process_command(process_index: int, command: str) -> str:
+    return f"{{ __modash_select_child_process {process_index}; {command}; }}"
+
 def _rewrite_bash_c_command(command: str, payload: str) -> str:
     words = parse_shell_words_preserving_quotes(command.strip())
-    index = _command_word_index_after_env(words)
+    index = _command_word_index_after_wrappers(words)
     if index is None or index + 2 >= len(words):
         raise RuntimeObservedCompileError(f"unsupported bash -c command: {command}")
-    command_name = strip_shell_word_quotes(words[index])
-    rewritten_words = [*words[:index], command_name, "-c", shlex.quote(payload), *words[index + 3:]]
+    payload_index = _bash_c_payload_index(words, index + 1)
+    if payload_index is None:
+        raise RuntimeObservedCompileError(f"unsupported bash -c command: {command}")
+    rewritten_words = [*words[:payload_index], shlex.quote(payload), *words[payload_index + 1:]]
     return " ".join(rewritten_words)
 
 def _line_has_bash_c_payload(line: str) -> bool:
-    return any(_bash_c_payload(command) is not None for command in get_commands(line))
+    return any(_bash_c_invocation(command) is not None for command in get_commands(line))
+
+
+def _line_has_runtime_reference(line: str) -> bool:
+    return bool(re.search(r"\bBASH_SOURCE\b|\$\{?0(?:\}|(?![0-9]))", line))
+
+
+def _line_has_runtime_reference_outside_bash_c_payload(line: str) -> bool:
+    masked = line
+    search_start = 0
+    for command in get_commands(line):
+        command_start = find_unquoted_substring(masked, command, search_start)
+        if command_start < 0:
+            continue
+        invocation = _bash_c_invocation(command)
+        if invocation is None:
+            search_start = command_start + len(command)
+            continue
+        payload_start = masked.find(invocation.raw_payload_word, command_start)
+        if payload_start >= 0:
+            payload_end = payload_start + len(invocation.raw_payload_word)
+            masked = masked[:payload_start] + (" " * len(invocation.raw_payload_word)) + masked[payload_end:]
+        search_start = command_start + len(command)
+    return _line_has_runtime_reference(masked)
+
 
 def _ensure_unique_process_payloads(process_payloads: dict[int, tuple[str, str]]) -> None:
     payload_owners: dict[str, int] = {}
@@ -262,17 +377,48 @@ def _ensure_no_unrewritten_source(line: str, unit: _RewriteUnit, line_index: int
             )
 
 def _bash_c_payload(command: str) -> str | None:
+    invocation = _bash_c_invocation(command)
+    return invocation.payload if invocation is not None and not invocation.dynamic_payload else None
+
+
+def _bash_c_invocation(command: str) -> _BashCInvocation | None:
     try:
         words = parse_shell_words_preserving_quotes(command.strip())
     except UnsupportedSourceError:
         return None
-    index = _command_word_index_after_env(words)
-    if index is None or index + 2 >= len(words):
+    index = _command_word_index_after_wrappers(words)
+    if index is None:
         return None
     command_name = strip_shell_word_quotes(words[index])
-    if command_name not in {"bash", "/bin/bash", "/usr/bin/bash"} or words[index + 1] != "-c":
+    if command_name not in {"bash", "/bin/bash", "/usr/bin/bash"}:
         return None
-    return strip_shell_word_quotes(words[index + 2])
+    payload_index = _bash_c_payload_index(words, index + 1)
+    if payload_index is None:
+        return None
+    raw_payload = words[payload_index]
+    payload = strip_shell_word_quotes(raw_payload)
+    return _BashCInvocation(payload, raw_payload, _dynamic_bash_c_payload_word(raw_payload))
+
+
+def _command_word_index_after_wrappers(words: list[str]) -> int | None:
+    index = _command_word_index_after_env(words)
+    if index is None:
+        return None
+    command_name = strip_shell_word_quotes(words[index])
+    if command_name != "command":
+        return index
+    index += 1
+    while index < len(words):
+        word = strip_shell_word_quotes(words[index])
+        if word == "--":
+            return index + 1 if index + 1 < len(words) else None
+        if word == "-p":
+            index += 1
+            continue
+        if word.startswith("-"):
+            return None
+        return index
+    return None
 
 
 def _command_word_index_after_env(words: list[str]) -> int | None:
@@ -305,6 +451,72 @@ def _command_word_index_after_env(words: list[str]) -> int | None:
             return None
         return index
     return None
+
+
+def _bash_c_payload_index(words: list[str], index: int) -> int | None:
+    while index < len(words):
+        word = strip_shell_word_quotes(words[index])
+        if word == "-c":
+            return index + 1 if index + 1 < len(words) else None
+        if word.startswith("-") and not word.startswith("--") and "c" in word[1:]:
+            return index + 1 if index + 1 < len(words) else None
+        if word in {"-O", "+O", "-o", "+o"}:
+            index += 2
+            continue
+        if word.startswith("-") or word.startswith("+"):
+            index += 1
+            continue
+        return None
+    return None
+
+
+def _dynamic_bash_c_payload_word(word: str) -> bool:
+    stripped = word.strip()
+    if stripped.startswith("$'"):
+        return True
+    if _is_single_quoted_word(stripped):
+        return False
+    return _has_dynamic_shell_expansion(stripped)
+
+
+def _is_single_quoted_word(word: str) -> bool:
+    return len(word) >= 2 and word[0] == "'" and word[-1] == "'"
+
+
+def _has_dynamic_shell_expansion(word: str) -> bool:
+    in_single_quote = False
+    escaped = False
+    for index, char in enumerate(word):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and not in_single_quote:
+            escaped = True
+            continue
+        if char == "'":
+            in_single_quote = not in_single_quote
+            continue
+        if in_single_quote:
+            continue
+        if char == "`":
+            return True
+        if char != "$":
+            continue
+        next_char = word[index + 1] if index + 1 < len(word) else ""
+        if next_char in {"(", "{", "'"} or next_char.isalpha() or next_char == "_":
+            return True
+    return False
+
+
+def _line_starts_multiline_bash_c(line: str) -> bool:
+    try:
+        if _bash_c_invocation(line) is not None:
+            return True
+    except RuntimeObservedCompileError:
+        return True
+    except Exception:
+        pass
+    return bool(re.search(r"(?:^|\s)(?:env\s+.*)?(?:command\s+)?(?:bash|/bin/bash|/usr/bin/bash)\b.*(?:^|\s)-c(?:\s|$)", line))
 
 
 def _payload_contains_source(payload: str) -> bool:

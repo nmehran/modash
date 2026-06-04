@@ -35,8 +35,8 @@
 
 ### Validation
 
-- Full unit suite: `617` tests, `9` skipped.
-- Targeted runtime graph compiler suite: `17` tests passed.
+- Full unit suite: `632` tests, `9` skipped.
+- Targeted runtime graph compiler suite: `32` tests passed.
 - Opt-in real-world suite with runtime parity, trace, supplement replay,
   trusted graph replay, and observe-compile gates: `17` tests passed.
 - Python bytecode compilation passed for `modash.py`, all `methods` modules, and

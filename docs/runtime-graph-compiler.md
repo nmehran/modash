@@ -44,6 +44,15 @@ Edges whose call sites cannot be mapped precisely, stale file fingerprints,
 unsupported hidden source operations, and nonzero traced targets are rejected
 before executable output is promoted.
 
+The compiler also rejects shapes that can make a trusted graph lie about what
+will run: reserved `__modash_` names, trace-instrumentation-sensitive shell
+state, aliases, dynamic or source-capable `eval`, source redirections, dynamic
+or multiline child `bash -c` payloads, explicit `exit` combined with EXIT trap
+manipulation, runtime `$0` / `BASH_SOURCE` references inside heredocs, and
+runtime `$0` / `BASH_SOURCE` references on parent lines that also contain child
+`bash -c` payloads. A narrow source-free `eval "$shellopts"` restoration from
+`shopt -p` is allowed because it does not generate source operations.
+
 Bundled files rewrite `$0` and `BASH_SOURCE` references to stable original
 physical paths. Exact relative-path spelling and symlink spelling are not part
 of the 0.7 runtime graph compiler contract.

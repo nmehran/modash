@@ -121,6 +121,11 @@ __modash_resolve_source_path() {
     return
   fi
 
+  if ! shopt -q sourcepath; then
+    printf '%s/%s' "$PWD" "$source_path"
+    return
+  fi
+
   local old_ifs=$IFS
   IFS=:
   for directory in $PATH; do

@@ -36,16 +36,16 @@ from methods.source_traits import file_top_level_source_traits
 
 SET_SHEBANG = "#!/bin/bash"
 
-def replace_runtime_source_references(line: str, filepath: str, entry_point: str):
+def replace_runtime_source_references(line: str, filepath: str, entry_point: str, *, include_zero: bool = True):
     return ''.join(
-        _replace_runtime_source_references_segment(segment, filepath, entry_point)
+        _replace_runtime_source_references_segment(segment, filepath, entry_point, include_zero=include_zero)
         if expandable
         else segment
         for segment, expandable in _single_quote_aware_segments(line)
     )
 
 
-def _replace_runtime_source_references_segment(segment: str, filepath: str, entry_point: str):
+def _replace_runtime_source_references_segment(segment: str, filepath: str, entry_point: str, *, include_zero: bool):
     bash_source = shell_quote(os.path.abspath(filepath))
     entry_source = shell_quote(os.path.abspath(entry_point))
 
@@ -56,15 +56,20 @@ def _replace_runtime_source_references_segment(segment: str, filepath: str, entr
         '${BASH_SOURCE[0]}': bash_source,
         '${BASH_SOURCE}': bash_source,
         '$BASH_SOURCE': bash_source,
-        '"${0}"': entry_source,
-        '"$0"': entry_source,
-        '${0}': entry_source,
     }
+    if include_zero:
+        replacements.update({
+            '"${0}"': entry_source,
+            '"$0"': entry_source,
+            '${0}': entry_source,
+        })
 
     for old, new in replacements.items():
         segment = segment.replace(old, new)
 
-    return re.sub(r'\$0(?![0-9])', entry_source, segment)
+    if include_zero:
+        segment = re.sub(r'\$0(?![0-9])', entry_source, segment)
+    return segment
 
 
 def _single_quote_aware_segments(line: str):

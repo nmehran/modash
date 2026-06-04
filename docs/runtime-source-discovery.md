@@ -241,8 +241,13 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
   exited nonzero. Those observations remain diagnostic trace artifacts only.
 - Runtime graph compile is limited to observed source edges whose call site can
   be mapped exactly in an entrypoint, sourced file, or observed child `bash -c`
-  payload. Runtime-observed source effects hidden behind `eval` remain trace
-  data, but they are not promoted into trusted graph compilation.
+  payload. Runtime-observed source effects hidden behind dynamic or source-capable
+  `eval` remain trace data, but they are not promoted into trusted graph
+  compilation. Source-free `eval "$shellopts"` restoration from `shopt -p` is
+  allowed for real-world shell-library helpers.
+- Runtime graph compile also rejects source redirections, dynamic or multiline
+  child `bash -c` payloads, reserved `__modash_` names, and scripts that inspect
+  trace-instrumentation-sensitive shell state.
 - Runtime graph construction rejects sourced files with top-level
   function-context-sensitive Bash such as `local`, `caller`, `FUNCNAME`, or
   `BASH_LINENO`, because the trace wrapper necessarily observes source calls
