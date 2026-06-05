@@ -91,6 +91,11 @@
   redirection expansion order; symlinked source path validation; source-free
   child Bash `CDPATH` behavior; and inert source-looking text passed to safe
   dynamic external commands.
+- Added review-driven replay parity regressions for dynamic command argv and
+  redirection expansion exactly-once behavior, full assignment-prefixed source
+  export/array/readonly behavior, redirection target source-entry status, and
+  simple `LINENO` references in generated entrypoints and child `bash -c`
+  payloads.
 
 ### Changed
 
@@ -130,21 +135,24 @@
   physical current-directory resolution for source path fingerprints. Generated
   replay uses the same physical-cwd source resolution and rechecks missing
   source edges at runtime.
-- Runtime graph replay now preserves assignment-prefixed source commands and
-  simple source redirections instead of rejecting or weakening them. Source
-  redirections are scoped to the emulated source operation so source-argument
-  and assignment-prefix expansion side effects keep Bash parity.
-- Runtime graph replay now wraps dynamic command guards in place, allows inert
+- Runtime graph replay now preserves assignment-prefixed source commands with
+  Bash-native temporary export, array replacement, readonly diagnostic, and
+  sourcepath behavior. Simple source redirections are scoped to the emulated
+  source operation, and redirection target command-substitution status is
+  included in source-entry status validation.
+- Runtime graph replay now wraps dynamic command guards in place without
+  double-evaluating command arguments or redirection targets, allows inert
   source-looking text for ordinary dynamic external commands, validates symlinked
-  file-backed source paths by file identity, and restores ordinary Bash mode for
-  source-free rewritten child `bash -c` payloads. External interpreter
-  environment reads are allowed when trace-owned state is hidden and the payload
-  does not inspect trace/replay-owned names, `/proc` process state, or trace file
-  descriptors.
+  file-backed source paths by file identity, rewrites simple `LINENO` references
+  to original line constants, and restores ordinary Bash mode for source-free
+  rewritten child `bash -c` payloads without shifting child payload line numbers.
+  External interpreter environment reads are allowed when trace-owned state is
+  hidden and the payload does not inspect trace/replay-owned names, `/proc`
+  process state, or trace file descriptors.
 
 ### Validation
 
-- Full unit suite: `764` tests, `9` skipped.
+- Full unit suite: `771` tests, `9` skipped.
 - Runtime-focused graph/source/replay safety suites passed.
 - Opt-in real-world suite with runtime parity, trace, supplement replay,
   trusted graph replay, and observe-compile gates: `17` tests passed. Runtime

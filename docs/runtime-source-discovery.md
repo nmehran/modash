@@ -250,7 +250,9 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
   allowed for real-world shell-library helpers.
 - Runtime graph compile supports simple source redirections by applying them to
   the generated source operation after source argument and assignment-prefix
-  expansion. Heredoc source redirections, dynamic or multiline
+  expansion. Redirection target command substitutions participate in the
+  source-entry status validated against the trusted graph. Heredoc source
+  redirections, dynamic or multiline
   child `bash -c` payloads, reserved `__modash_` names, and scripts that inspect
   trace-instrumentation-sensitive shell state remain fail-closed.
 - Runtime graph construction rejects sourced files with top-level

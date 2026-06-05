@@ -18,11 +18,12 @@ The original script still decides whether a source site runs. modash replaces
 only the operation that would source the file. The generated replay group first
 expands the original source arguments exactly once, validates the selected path,
 arguments, and source-entry status against the trusted graph edge, then calls
-`builtin source` at the original call site. Bash preserves normal source
+the generated source operation at the original call site. Bash preserves normal source
 semantics for supported trusted edges: caller locals, no-argument positional
 inheritance, explicit source arguments, top-level `return`, nested observed
-sources, assignment-prefixed source scope, simple source redirections, and child
-`bash -c` argv.
+sources, assignment-prefixed source scope/export/array behavior, simple source
+redirections including target command-substitution source-entry status, simple
+`LINENO` references, and child `bash -c` argv.
 
 ## Trust boundary
 
@@ -44,7 +45,8 @@ Bash builtins for its own `printf` operations after privileged startup. Replay
 clears trace-owned Bash startup state such as `BASH_ENV`, then leaves
 privileged mode before user content so ordinary Bash behavior such as `CDPATH`
 is preserved. Source-free child `bash -c` payloads rewritten to the trusted
-absolute Bash also leave privileged mode before user payload execution. Runtime
+absolute Bash pass `+p` before `-c` payload execution, so they also leave
+privileged mode without shifting child payload line numbers. Runtime
 tracing keeps trace-owned variables out of the exported environment for user
 commands, while explicitly re-exporting them only for supported child Bash
 launches that need to be traced. Trace helper tools used for observation
@@ -76,8 +78,9 @@ state, aliases, dynamic or source-capable `eval`, dynamic or multiline child
 `bash -c` payloads, unsupported child `bash -c` wrappers that hide source
 operations, `exec`, trap manipulation, computed mutation of
 generated replay state, runtime `$0` / `BASH_SOURCE` references inside heredocs
-or multiline strings, and runtime `$0` / `BASH_SOURCE` references on parent
-lines that also contain child `bash -c` payloads. The main `eval` exception is a
+or multiline strings, complex `LINENO` parameter operations, and runtime `$0` /
+`BASH_SOURCE` references on parent lines that also contain child `bash -c`
+payloads. The main `eval` exception is a
 straight-line `eval "$shellopts"` restore immediately backed by a persistent,
 source-free `shellopts=$(shopt -p ...)`, `local shellopts=$(shopt -p ...)`, or
 `declare` / `typeset` equivalent in the current shell; generated replay

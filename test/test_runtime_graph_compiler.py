@@ -180,6 +180,59 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "dep:foo status:0\nafter:old\n")
 
+    def test_runtime_compiler_preserves_assignment_prefixed_source_export_visibility(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "VAR=old\n"
+                "VAR=foo source ./dep.sh\n"
+                "printf 'after:%s\\n' \"$VAR\"\n",
+            )
+            project.write(
+                "dep.sh",
+                "printf 'shell:%s\\n' \"$VAR\"\n"
+                "bash -c 'printf \"env:%s\\n\" \"$VAR\"'\n",
+            )
+            expected = project.run("main.sh")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            actual = project.run(compiled)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_runtime_compiler_preserves_assignment_prefixed_source_array_scope(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "A=(x y)\n"
+                "A=foo source ./dep.sh\n"
+                "printf 'after:%s len:%s\\n' \"${A[*]}\" \"${#A[@]}\"\n",
+            )
+            project.write("dep.sh", "printf 'inside:%s len:%s\\n' \"${A[*]}\" \"${#A[@]}\"\n")
+            expected = project.run("main.sh")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            actual = project.run(compiled)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_runtime_compiler_preserves_assignment_prefixed_source_readonly_behavior(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "readonly VAR=old\n"
+                "VAR=foo source ./dep.sh\n"
+                "printf 'after:%s status:%s\\n' \"$VAR\" \"$?\"\n",
+            )
+            project.write("dep.sh", "printf 'dep:%s status:%s\\n' \"$VAR\" \"$?\"\n")
+            expected = project.run("main.sh")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            actual = project.run(compiled)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertIn("VAR: readonly variable", actual.stdout)
+        self.assertTrue(actual.stdout.endswith("dep:old status:0\nafter:old status:0\n"), actual.stdout)
+
     def test_runtime_compiler_preserves_assignment_prefixed_sourcepath_lookup(self):
         with ScriptProject() as project:
             project.mkdir("lib")
@@ -210,6 +263,23 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(graph["edges"][0]["source_entry_status"], 1)
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "inside:1 var:\n")
+
+    def test_runtime_compiler_preserves_redirection_target_source_entry_status(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "false\n"
+                "source ./dep.sh > \"$(false; echo out.txt)\"\n"
+                "cat out.txt\n",
+            )
+            project.write("dep.sh", "printf 'inside:%s\\n' \"$?\"\n")
+            expected = project.run("main.sh")
+            compiled, graph = self.compile_observed(project, "main.sh")
+            actual = project.run(compiled)
+
+        self.assertEqual(graph["edges"][0]["source_entry_status"], 0)
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
 
     def test_runtime_compiler_fails_closed_on_sourcepath_path_drift(self):
         with ScriptProject() as project:
@@ -307,6 +377,23 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
         self.assertEqual(actual.stdout, expected.stdout)
 
+    def test_runtime_compiler_preserves_lineno_in_entrypoint_and_child_bash(self):
+        cases = {
+            "entrypoint": "printf 'mainline:%s\\n' \"$LINENO\"\nsource ./dep.sh\n",
+            "source-free child": "bash -c 'printf \"childline:%s\\n\" \"$LINENO\"'\nsource ./dep.sh\n",
+            "source-bearing child": "bash -c 'printf \"childline:%s\\n\" \"$LINENO\"; source ./dep.sh'\n",
+        }
+        for name, script in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("main.sh", script)
+                project.write("dep.sh", "printf 'dep\\n'\n")
+                expected = project.run("main.sh")
+                compiled, _graph = self.compile_observed(project, "main.sh")
+                actual = project.run(compiled)
+
+            self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+            self.assertEqual(actual.stdout, expected.stdout)
+
     def test_runtime_compiler_preserves_prior_status_before_dynamic_command_guard(self):
         with ScriptProject() as project:
             project.write(
@@ -357,6 +444,46 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
             self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
             self.assertEqual(actual.stdout, expected.stdout)
             self.assertNotIn("SHOULD-NOT", actual.stdout)
+
+    def test_runtime_compiler_evaluates_dynamic_command_arguments_once(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "cmd=printf\n"
+                "printf 0 > count\n"
+                "\"$cmd\" 'arg:%s\\n' \"$(n=$(cat count); printf '%s' $((n + 1)) > count; printf value)\"\n"
+                "printf 'count:%s\\n' \"$(cat count)\"\n"
+                "source ./dep.sh\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            expected = project.run("main.sh")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            project.write("count", "0")
+            actual = project.run(compiled)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_runtime_compiler_evaluates_dynamic_command_redirections_once(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "cmd=printf\n"
+                "printf 0 > count\n"
+                "\"$cmd\" 'body\\n' > \"$(n=$(cat count); printf '%s' $((n + 1)) > count; printf out.txt)\"\n"
+                "cat out.txt\n"
+                "printf 'count:%s\\n' \"$(cat count)\"\n"
+                "source ./dep.sh\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            expected = project.run("main.sh")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            project.write("count", "0")
+            project.path("out.txt").unlink()
+            actual = project.run(compiled)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
 
     def test_runtime_compiler_fails_closed_when_unobserved_source_branch_runs_later(self):
         with ScriptProject() as project:

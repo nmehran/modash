@@ -129,37 +129,6 @@ __modash_literal_eval_argument_is_safe() {{
   return 0
 }}
 
-__modash_save_source_assignments() {{
-  local name
-  __modash_source_assignment_names=("$@")
-  __modash_source_assignment_was_set=()
-  __modash_source_assignment_old=()
-  for name in "$@"; do
-    if [[ ${{!name+x}} == x ]]; then
-      __modash_source_assignment_was_set+=(1)
-      __modash_source_assignment_old+=("${{!name}}")
-    else
-      __modash_source_assignment_was_set+=(0)
-      __modash_source_assignment_old+=("")
-    fi
-  done
-}}
-
-__modash_restore_source_assignments() {{
-  local index name
-  for ((index = ${{#__modash_source_assignment_names[@]}} - 1; index >= 0; index--)); do
-    name=${{__modash_source_assignment_names[$index]}}
-    if [[ ${{__modash_source_assignment_was_set[$index]}} == 1 ]]; then
-      builtin printf -v "$name" '%s' "${{__modash_source_assignment_old[$index]}}"
-    else
-      unset -v "$name"
-    fi
-  done
-  __modash_source_assignment_names=()
-  __modash_source_assignment_was_set=()
-  __modash_source_assignment_old=()
-}}
-
 eval() {{
   local command=${{1-}} argument
   if (( $# == 0 )); then
