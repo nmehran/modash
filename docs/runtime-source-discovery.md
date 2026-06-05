@@ -249,7 +249,8 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
   compilation. Source-free `eval "$shellopts"` restoration from `shopt -p` is
   allowed for real-world shell-library helpers.
 - Runtime graph compile supports simple source redirections by applying them to
-  the generated replay group. Heredoc source redirections, dynamic or multiline
+  the generated source operation after source argument and assignment-prefix
+  expansion. Heredoc source redirections, dynamic or multiline
   child `bash -c` payloads, reserved `__modash_` names, and scripts that inspect
   trace-instrumentation-sensitive shell state remain fail-closed.
 - Runtime graph construction rejects sourced files with top-level

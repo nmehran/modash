@@ -255,9 +255,6 @@ __modash_guard_dynamic_command() {{
       ;;
     *)
       shift
-      for word in "$@"; do
-        __modash_word_contains_source_payload "$word" && __modash_abort "runtime replay cannot allow dynamic source payload"
-      done
       return
       ;;
   esac
@@ -437,7 +434,9 @@ __modash_validate_source_argv() {{
   fi
   actual_resolved=$(__modash_normalize_source_path "$(__modash_resolve_source_path "$source_path")")
   if [[ $actual_resolved != "$__modash_replay_resolved_path" ]]; then
-    __modash_abort "observed source path drift"
+    if [[ $__modash_replay_kind != file || ! -e $actual_resolved || ! -e $__modash_replay_resolved_path || ! $actual_resolved -ef $__modash_replay_resolved_path ]]; then
+      __modash_abort "observed source path drift"
+    fi
   fi
   if [[ $__modash_replay_kind == missing && -n $source_path && ( -e $actual_resolved || -L $actual_resolved ) ]]; then
     __modash_abort "observed missing source drift"

@@ -43,12 +43,14 @@ bundle is unpacked, cleaned up, or aborted. Generated replay infrastructure uses
 Bash builtins for its own `printf` operations after privileged startup. Replay
 clears trace-owned Bash startup state such as `BASH_ENV`, then leaves
 privileged mode before user content so ordinary Bash behavior such as `CDPATH`
-is preserved. Runtime tracing keeps trace-owned variables out of the exported
-environment for user commands, while explicitly re-exporting them only for
-supported child Bash launches that need to be traced. Trace helper tools used
-for observation bookkeeping are resolved before user code runs, so traced
-scripts can change `PATH` without breaking trace locks. Ordinary user variables
-such as `ENV` are preserved.
+is preserved. Source-free child `bash -c` payloads rewritten to the trusted
+absolute Bash also leave privileged mode before user payload execution. Runtime
+tracing keeps trace-owned variables out of the exported environment for user
+commands, while explicitly re-exporting them only for supported child Bash
+launches that need to be traced. Trace helper tools used for observation
+bookkeeping are resolved before user code runs, so traced scripts can change
+`PATH` without breaking trace locks. Ordinary user variables such as `ENV` are
+preserved.
 
 Static `modash` compile remains deterministic and trace-free. Runtime graph
 compilation is used only by the explicit `compile-observed` and
@@ -151,6 +153,9 @@ Relative source paths are resolved against the shell's physical current working
 directory, not a user-assigned `PWD` string. Missing-source edges are replayed
 only while the resolved missing path remains absent; if that file appears before
 generated execution, replay aborts as graph drift.
+File-backed source path validation accepts symlink spelling when the runtime
+path and observed path still identify the same file, and fails closed if that
+symlink is retargeted.
 
 Sourced library files may define functions that were not executed by the traced
 command. Those inert function bodies are not treated as top-level replay actions,
@@ -160,8 +165,11 @@ dynamic command tails, `mapfile` / `readarray` callbacks, source-bearing shell
 payloads, and similar replay-bypass commands remain rejected or guarded. Plain
 unobserved `source` / `.` in an inert function body remains guarded by generated
 runtime source/dot functions and aborts if it ever runs. Runtime guards are also
-inserted before preserved dynamic command sites so benign helper dispatch can
-continue while replay-critical runtime values fail closed.
+wrapped around preserved dynamic command sites so benign helper dispatch can
+continue while replay-critical runtime values fail closed. Ordinary external
+dynamic commands may receive inert text that looks like shell source syntax;
+only replay-critical command identities and shell `-c` payloads are treated as
+source execution risk.
 
 Bundled files rewrite `$0` and `BASH_SOURCE` references to stable original
 physical paths. Exact relative-path spelling and symlink spelling are not part

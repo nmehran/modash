@@ -266,6 +266,18 @@ def _render_replay_group(
             "__modash_source_assignment_status=$?; "
         )
         assignment_restore = "__modash_restore_source_assignments; "
+    file_source_operation = (
+        "( exit \"$__modash_source_entry_status\" ); "
+        "builtin source <(__modash_emit_embedded_file \"$__modash_replay_target\") \"${__modash_replay_args[@]}\"; "
+        "__modash_replay_actual_status=$?; "
+    )
+    missing_source_operation = (
+        "builtin printf '%s: line %s: %s\\n' \"$__modash_replay_diag_file\" \"$__modash_replay_diag_line\" \"$__modash_replay_diag_message\" >&2; "
+        "( exit \"$__modash_replay_status\" ); "
+    )
+    if redirection_suffix:
+        file_source_operation = f"{{ {file_source_operation}}} {redirection_suffix}; "
+        missing_source_operation = f"{{ {missing_source_operation}}} {redirection_suffix}; "
     group = (
         f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {source_expression} ); "
         "__modash_source_expansion_status=$?; "
@@ -279,22 +291,19 @@ def _render_replay_group(
         "( exit \"$__modash_replay_select_status\" ); "
         "elif [[ $__modash_replay_kind == file ]]; then "
         "__modash_require_embedded_file \"$__modash_replay_target\"; "
-        "( exit \"$__modash_source_entry_status\" ); "
-        "builtin source <(__modash_emit_embedded_file \"$__modash_replay_target\") \"${__modash_replay_args[@]}\"; "
-        "__modash_replay_actual_status=$?; "
+        f"{file_source_operation}"
         f"{assignment_restore}"
         "if (( __modash_replay_actual_status != __modash_replay_status )); then "
         "__modash_abort \"observed source status drift\"; "
         "fi; "
         "( exit \"$__modash_replay_actual_status\" ); "
         "else "
+        f"{missing_source_operation}"
+        "__modash_replay_missing_status=$?; "
         f"{assignment_restore}"
-        "builtin printf '%s: line %s: %s\\n' \"$__modash_replay_diag_file\" \"$__modash_replay_diag_line\" \"$__modash_replay_diag_message\" >&2; "
-        "( exit \"$__modash_replay_status\" ); "
+        "( exit \"$__modash_replay_missing_status\" ); "
         "fi; }"
     )
-    if redirection_suffix:
-        group = f"{group} {redirection_suffix}"
     return f"! {group}" if negated else group
 
 
@@ -527,7 +536,7 @@ def _rewrite_bash_c_payloads(
                     f"unobserved child bash -c source payload in {command.strip()}",
                     code="runtime.compile.unobserved_child_source",
                 )
-            replacement = _rewrite_bash_c_command(command, payload)
+            replacement = _rewrite_bash_c_command(command, _source_free_child_payload(payload))
             rewritten = rewritten[:start] + replacement + rewritten[end:]
             search_start = start + len(replacement)
             continue
@@ -620,6 +629,10 @@ def _rewrite_bash_c_command(command: str, payload: str) -> str:
     guard = " ".join(f"__modash_reject_function_override {shlex.quote(name)};" for name in guard_names)
     command_text = " ".join(rewritten_words)
     return f"{guard} {command_text}".strip()
+
+
+def _source_free_child_payload(payload: str) -> str:
+    return "set +p\n" + payload
 
 
 def _trusted_child_bash_prefix(raw_words: list[str]) -> tuple[list[str], tuple[str, ...]]:
@@ -1393,16 +1406,23 @@ def _guard_dynamic_command_sites(line: str) -> str:
             start = rewritten.find(command, search_start)
         if start < 0:
             continue
-        guard = _dynamic_command_guard(command)
-        if guard is None:
+        replacement = _dynamic_command_guarded_replacement(command)
+        if replacement is None:
             search_start = start + len(command)
             continue
-        rewritten = rewritten[:start] + guard + rewritten[start:]
-        search_start = start + len(guard) + len(command)
+        rewritten = rewritten[:start] + replacement + rewritten[start + len(command):]
+        search_start = start + len(replacement)
     return rewritten
 
 
 def _dynamic_command_guard(command: str) -> str | None:
+    guarded = _dynamic_command_guarded_replacement(command)
+    if guarded is None:
+        return None
+    return guarded
+
+
+def _dynamic_command_guarded_replacement(command: str) -> str | None:
     try:
         raw_words = tuple(parse_shell_words_preserving_quotes(command.strip()))
     except UnsupportedSourceError:
@@ -1417,8 +1437,55 @@ def _dynamic_command_guard(command: str) -> str | None:
     name = words[index]
     if not (_has_dynamic_shell_expansion(raw_name) or _has_dynamic_shell_expansion(name)):
         return None
-    guard_args = " ".join(raw_words[index:])
-    return f"__modash_guard_dynamic_command_preserve_status {guard_args}; "
+    if _dynamic_command_word_is_nested_expansion(raw_name):
+        return None
+    simple_start = _dynamic_simple_command_start(raw_words, words, index)
+    simple_end = _dynamic_simple_command_end(words, index)
+    spans = _raw_word_spans(command, raw_words)
+    if spans is None:
+        return None
+    start = spans[simple_start][0]
+    end = spans[simple_end - 1][1]
+    simple_command = command[start:end]
+    guard_args = " ".join(raw_words[index:simple_end])
+    guarded = f"{{ __modash_guard_dynamic_command_preserve_status {guard_args}; {simple_command}; }}"
+    return command[:start] + guarded + command[end:]
+
+
+def _dynamic_simple_command_start(raw_words: tuple[str, ...], words: tuple[str, ...], command_index: int) -> int:
+    index = command_index
+    while index > 0 and ASSIGNMENT_WORD_PATTERN.match(words[index - 1]):
+        index -= 1
+    return index
+
+
+def _dynamic_simple_command_end(words: tuple[str, ...], command_index: int) -> int:
+    index = command_index + 1
+    while index < len(words):
+        if words[index] in {"|", "||", "&&", ";", "then", "do", "fi", "done", ")", "}"}:
+            break
+        index += 1
+    return index
+
+
+def _dynamic_command_word_is_nested_expansion(raw_word: str) -> bool:
+    stripped = raw_word.lstrip()
+    return stripped.startswith("$(") or stripped.startswith("`")
+
+
+def _raw_word_spans(command: str, raw_words: tuple[str, ...]) -> tuple[tuple[int, int], ...] | None:
+    spans: list[tuple[int, int]] = []
+    search_start = 0
+    for word in raw_words:
+        start = command.find(word, search_start)
+        if start < 0:
+            start = find_unquoted_substring(command, word, search_start)
+        if start < 0:
+            return None
+        end = start + len(word)
+        spans.append((start, end))
+        search_start = end
+    return tuple(spans)
 
 
 def _dynamic_command_index(words: tuple[str, ...]) -> int | None:
@@ -1444,6 +1511,7 @@ def _dynamic_command_index(words: tuple[str, ...]) -> int | None:
 def _not_dynamic_command_dispatch_word(word: str) -> bool:
     return (
         word in {"[[", "[", "(("}
+        or word.startswith("-")
         or word.startswith("((")
         or bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]+\])?(?:\+)?=", word))
     )

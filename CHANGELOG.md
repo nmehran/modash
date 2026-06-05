@@ -86,6 +86,11 @@
   `printf -vNAME` replay-state mutation, command-tail `kill` bypasses,
   replay-time missing-source drift, source redirection replay, and external
   trace-fd probes.
+- Added follow-up replay parity regressions for in-place dynamic-command guards
+  in short-circuit, pipeline, and command-substitution contexts; source
+  redirection expansion order; symlinked source path validation; source-free
+  child Bash `CDPATH` behavior; and inert source-looking text passed to safe
+  dynamic external commands.
 
 ### Changed
 
@@ -126,14 +131,20 @@
   replay uses the same physical-cwd source resolution and rechecks missing
   source edges at runtime.
 - Runtime graph replay now preserves assignment-prefixed source commands and
-  simple source redirections instead of rejecting or weakening them. External
-  interpreter environment reads are allowed when trace-owned state is hidden and
-  the payload does not inspect trace/replay-owned names, `/proc` process state,
-  or trace file descriptors.
+  simple source redirections instead of rejecting or weakening them. Source
+  redirections are scoped to the emulated source operation so source-argument
+  and assignment-prefix expansion side effects keep Bash parity.
+- Runtime graph replay now wraps dynamic command guards in place, allows inert
+  source-looking text for ordinary dynamic external commands, validates symlinked
+  file-backed source paths by file identity, and restores ordinary Bash mode for
+  source-free rewritten child `bash -c` payloads. External interpreter
+  environment reads are allowed when trace-owned state is hidden and the payload
+  does not inspect trace/replay-owned names, `/proc` process state, or trace file
+  descriptors.
 
 ### Validation
 
-- Full unit suite: `759` tests, `9` skipped.
+- Full unit suite: `764` tests, `9` skipped.
 - Runtime-focused graph/source/replay safety suites passed.
 - Opt-in real-world suite with runtime parity, trace, supplement replay,
   trusted graph replay, and observe-compile gates: `17` tests passed. Runtime
