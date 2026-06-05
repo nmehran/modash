@@ -140,6 +140,8 @@ Useful options:
   sites.
 - `trace --cwd DIR`: run the target script from a specific directory.
 - `trace --env KEY=VALUE`: add an environment overlay for the traced run.
+  Source-relevant inherited environment values are replay-checked when observed;
+  use `--env` for values you want to make explicit in review artifacts.
 - `trace --timeout SECONDS`: bound target execution. Default: `30`.
 - `graph --from-observation FILE`: build a trusted source graph from a trace
   observation.

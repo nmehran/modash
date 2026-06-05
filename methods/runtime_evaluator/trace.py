@@ -52,6 +52,20 @@ PROCESS_MARKER = "MODASH_PROCESS_EVENT"
 TRACE_MARKER = "MODASH_SOURCE_EVENT"
 DEFAULT_TRACE_TIMEOUT_SECONDS = 30
 BASH_VERSION_TIMEOUT_SECONDS = 5
+TRACE_OWNED_ENVIRONMENT_KEYS = frozenset({
+    "BASH_ENV",
+    "BASH_XTRACEFD",
+    "PS4",
+    "SHELLOPTS",
+    "MODASH_TRACE_FILE",
+    "MODASH_TRACE_COUNTER_FILE",
+    "MODASH_TRACE_XTRACE_FILE",
+    "MODASH_TRACE_FAILURE_FILE",
+    "MODASH_TRACE_POSITIONAL_SCANNER",
+    "MODASH_TRACE_FUNCTION_SCANNER",
+    "MODASH_TRACE_FINGERPRINT_SCANNER",
+    "MODASH_TRACE_PYTHON",
+})
 
 
 @dataclass(frozen=True)
@@ -121,6 +135,7 @@ def trace_sources(
 
     argv = tuple(str(argument) for argument in (argv or ()))
     run_env = _trace_environment(env)
+    user_visible_env = dict(run_env)
 
     with tempfile.TemporaryDirectory(prefix="modash-trace-") as tmpdir:
         tmpdir_path = Path(tmpdir)
@@ -210,6 +225,11 @@ def trace_sources(
             reconciled_xtrace.raw_events_by_xtrace_index,
             reconciled_xtrace.source_identities_by_xtrace_index,
         )
+        environment_values = _recorded_environment_values(
+            user_visible_env,
+            env,
+            source_events,
+        )
         observation = RuntimeSourceObservation(
             entrypoint=str(entrypoint_path),
             cwd=str(cwd_path),
@@ -218,8 +238,8 @@ def trace_sources(
             trace=TraceInfo(version=TRACE_VERSION),
             environment=EnvironmentInfo(
                 policy="inherit" if env is None else "overlay",
-                recorded_keys=tuple(sorted(str(key) for key in (env or {}).keys())),
-                values={str(key): str(value) for key, value in (env or {}).items()},
+                recorded_keys=tuple(sorted(environment_values)),
+                values=environment_values,
             ),
             run=RuntimeRunInfo(
                 observed_at_utc=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -257,21 +277,7 @@ def _trace_environment(env):
     run_env = os.environ.copy()
     if env:
         run_env.update({str(key): str(value) for key, value in env.items()})
-    trace_owned = {
-        "BASH_ENV",
-        "BASH_XTRACEFD",
-        "PS4",
-        "SHELLOPTS",
-        "MODASH_TRACE_FILE",
-        "MODASH_TRACE_COUNTER_FILE",
-        "MODASH_TRACE_XTRACE_FILE",
-        "MODASH_TRACE_FAILURE_FILE",
-        "MODASH_TRACE_POSITIONAL_SCANNER",
-        "MODASH_TRACE_FUNCTION_SCANNER",
-        "MODASH_TRACE_FINGERPRINT_SCANNER",
-        "MODASH_TRACE_PYTHON",
-    }
-    present_trace_owned = sorted(key for key in trace_owned if key in run_env)
+    present_trace_owned = sorted(key for key in TRACE_OWNED_ENVIRONMENT_KEYS if key in run_env)
     if present_trace_owned:
         raise RuntimeSourceTraceError(
             "runtime source trace does not support user-provided trace instrumentation environment: "
@@ -290,6 +296,87 @@ def _trace_environment(env):
             code="runtime.trace.exported_function",
         )
     return run_env
+
+
+def _recorded_environment_values(run_env: dict[str, str], explicit_env, source_events) -> dict[str, str]:
+    values = {
+        str(key): str(value)
+        for key, value in (explicit_env or {}).items()
+    }
+    for event in source_events:
+        payloads = (event.resolved_path, *event.arguments)
+        for key in _source_relevant_variable_names(event.call_site.command):
+            if key in values or key not in run_env or key in TRACE_OWNED_ENVIRONMENT_KEYS:
+                continue
+            value = str(run_env[key])
+            if _environment_value_contributed_to_source(value, payloads):
+                values[key] = value
+    return {key: values[key] for key in sorted(values)}
+
+
+def _source_relevant_variable_names(text: str) -> set[str]:
+    names: set[str] = set()
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and not in_single_quote:
+            escaped = True
+            index += 1
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            index += 1
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            index += 1
+            continue
+        if in_single_quote or char != "$":
+            index += 1
+            continue
+        if index + 1 >= len(text):
+            index += 1
+            continue
+        if text[index + 1] == "{":
+            end = text.find("}", index + 2)
+            if end < 0:
+                index += 2
+                continue
+            match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)", text[index + 2:end])
+            if match:
+                names.add(match.group(1))
+            index = end + 1
+            continue
+        match = re.match(r"[A-Za-z_][A-Za-z0-9_]*", text[index + 1:])
+        if match:
+            names.add(match.group(0))
+            index += 1 + len(match.group(0))
+            continue
+        index += 1
+    return names
+
+
+def _environment_value_contributed_to_source(value: str, payloads: tuple[str, ...]) -> bool:
+    if value == "":
+        return False
+    if any(value in payload for payload in payloads):
+        return True
+    try:
+        resolved = str(Path(value).resolve(strict=False))
+    except OSError:
+        return False
+    return any(resolved and resolved in payload for payload in payloads)
+
+
+def _is_shell_identifier(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value))
 
 
 def _raise_trace_prelude_failure(path: Path):

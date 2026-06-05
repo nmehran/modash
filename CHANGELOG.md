@@ -66,6 +66,10 @@
   computed external interpreter probes of trace environment, hidden
   source-bearing non-Bash shell payloads, and argv-visible child replay token
   forgery.
+- Added review-driven hardening for inert sourced-library bodies, source-free
+  literal eval lookup replay, attached `mapfile` / `readarray` callbacks,
+  command-tail non-Bash shell wrappers, obfuscated external trace-environment
+  probes, and source-relevant inherited environment drift.
 - Added guarded direct-`kill` replay support for ordinary background-helper
   cleanup while rejecting guard-bypassing kill forms and current-shell targets.
 

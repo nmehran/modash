@@ -170,6 +170,7 @@ def _rewrite_content(
                     )
         line = _rewrite_bash_c_payloads(line, process_payloads, process_replacement_counts)
         line = _guard_positional_replay_state_targets(line)
+        line = _guard_dynamic_command_sites(line)
         line = _rewrite_safe_shopt_restore_eval(line)
         _ensure_no_unrewritten_source(line, unit, line_index)
         output.append(line)
@@ -1194,6 +1195,71 @@ def _positional_read_guard(command: str) -> str | None:
         return None
     tests = " || ".join(f"[[ ${{{position}-}} == __modash_* ]]" for position in sorted(set(guarded_positionals)))
     return f"{{ {tests}; }} && __modash_abort \"runtime replay state read target rejected\"; "
+
+
+def _guard_dynamic_command_sites(line: str) -> str:
+    search_start = 0
+    rewritten = line
+    for command in get_commands(line):
+        start = find_unquoted_substring(rewritten, command, search_start)
+        if start < 0:
+            start = rewritten.find(command, search_start)
+        if start < 0:
+            continue
+        guard = _dynamic_command_guard(command)
+        if guard is None:
+            search_start = start + len(command)
+            continue
+        rewritten = rewritten[:start] + guard + rewritten[start:]
+        search_start = start + len(guard) + len(command)
+    return rewritten
+
+
+def _dynamic_command_guard(command: str) -> str | None:
+    try:
+        raw_words = tuple(parse_shell_words_preserving_quotes(command.strip()))
+    except UnsupportedSourceError:
+        return None
+    if not raw_words:
+        return None
+    words = tuple(strip_shell_word_quotes(word) for word in raw_words)
+    index = _dynamic_command_index(words)
+    if index is None:
+        return None
+    raw_name = raw_words[index]
+    name = words[index]
+    if not (_has_dynamic_shell_expansion(raw_name) or _has_dynamic_shell_expansion(name)):
+        return None
+    guard_args = " ".join(raw_words[index:])
+    return f"__modash_guard_dynamic_command {guard_args}; "
+
+
+def _dynamic_command_index(words: tuple[str, ...]) -> int | None:
+    index = 0
+    while index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[index]):
+        index += 1
+    while index < len(words) and words[index] in {"if", "then", "elif", "else", "do", "while", "until", "for", "time", "!"}:
+        if words[index] == "time":
+            index += 1
+            while index < len(words) and words[index].startswith("-"):
+                index += 1
+            continue
+        index += 1
+    if index >= len(words):
+        return None
+    if _not_dynamic_command_dispatch_word(words[index]):
+        return None
+    if words[index] in {"command", "builtin"}:
+        return _command_or_builtin_payload_target_index(words, index)
+    return index
+
+
+def _not_dynamic_command_dispatch_word(word: str) -> bool:
+    return (
+        word in {"[[", "[", "(("}
+        or word.startswith("((")
+        or bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]+\])?(?:\+)?=", word))
+    )
 
 
 def _rewrite_safe_shopt_restore_eval(line: str) -> str:

@@ -74,11 +74,13 @@ validates the restored text again at runtime before applying it as `shopt`
 state. Subshell, pipeline, environment-assignment, branch-local, mutated, or
 environment-controlled variants are rejected. Source-free literal lookup forms
 such as `eval echo ...` and `eval : ...` are allowed when the evaluated command
-word is fixed and later arguments are static or escaped parameter-reference
-construction that cannot inject shell syntax. `eval printf ...` is rejected
-because `printf -v` can mutate computed replay state variables. Escaped
-parameter lookup evals reject array subscripts and parameter operators that can
-trigger command substitution or indirect runtime source execution.
+word is fixed and later arguments are static or guarded escaped
+parameter-reference construction. Generated replay validates the final eval
+arguments after normal shell expansion and marks replay failed if the constructed
+argument can inject shell syntax. `eval printf ...` is rejected because
+`printf -v` can mutate computed replay state variables. Escaped parameter lookup
+evals reject array subscripts and parameter operators that can trigger command
+substitution or indirect runtime source execution.
 
 Child process replay uses a generated verification marker rather than treating
 ordinary child exit status as the replay proof. A legitimate observed child can
@@ -100,8 +102,9 @@ instrumentation variables, absolute or PATH-based environment dumps,
 and dynamic command dispatch that can become `builtin source ...`,
 `command source ...`, `eval`, replay-state mutation, or shell `-c` execution.
 Source-bearing shell payloads hidden behind direct non-Bash shells, BusyBox
-shell applets, or exec-style utilities such as `find -exec sh -c` are also
-rejected instead of being left live.
+shell applets, common command-tail wrappers such as `nice`, `timeout`, `setsid`,
+`nohup`, and `stdbuf`, or exec-style utilities such as `find -exec sh -c` are
+also rejected instead of being left live.
 Source command recognition covers source-capable `time` and `coproc` prefixes so
 they fail closed instead of live-sourcing; observed `time`-prefixed source sites
 are rejected until timing output can be replayed precisely.
@@ -125,15 +128,21 @@ finite helper call sequence without trusting changed runtime arguments. Dynamic
 helper path arguments that depend on explicit trace/observe `--env` overlays are
 supported by recording those exact values in the graph and verifying them before
 replay. Ambient environment values are not serialized wholesale; source-relevant
-environment values should be passed explicitly with `--env KEY=VALUE`.
+ambient values used by observed source call sites are recorded when they
+contribute to the selected source path or arguments. Use `--env KEY=VALUE` for
+explicit overlays and for complex environment-dependent source selection that
+should be reviewed directly.
 
 Sourced library files may define functions that were not executed by the traced
 command. Those inert function bodies are not treated as top-level replay actions,
 but literal `builtin source`, `command source`, generated replay-token access,
-`eval`, `exec`, `trap`, `enable`, source-capable dynamic command tails,
-source-bearing shell payloads, and similar replay-bypass commands remain
-rejected. Plain unobserved `source` / `.` in an inert function body remains
-guarded by generated runtime source/dot functions and aborts if it ever runs.
+computed replay-state mutation, `eval`, `exec`, `trap`, `enable`, source-capable
+dynamic command tails, `mapfile` / `readarray` callbacks, source-bearing shell
+payloads, and similar replay-bypass commands remain rejected or guarded. Plain
+unobserved `source` / `.` in an inert function body remains guarded by generated
+runtime source/dot functions and aborts if it ever runs. Runtime guards are also
+inserted before preserved dynamic command sites so benign helper dispatch can
+continue while replay-critical runtime values fail closed.
 
 Bundled files rewrite `$0` and `BASH_SOURCE` references to stable original
 physical paths. Exact relative-path spelling and symlink spelling are not part

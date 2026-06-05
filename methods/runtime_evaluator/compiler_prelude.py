@@ -77,6 +77,10 @@ readonly __modash_bash __modash_mktemp __modash_mkdir __modash_base64 __modash_r
 
 __modash_abort() {{
   builtin printf 'modash runtime replay error: %s\\n' "$1" >&2
+  if [[ ${{BASHPID:-$$}} != $$ ]]; then
+    builtin printf '%s\\n' "$1" > "$__modash_tmp/replay-failure" 2>/dev/null || :
+    builtin exit {REPLAY_FAILURE_STATUS}
+  fi
   "$__modash_rm" -rf -- "$__modash_tmp"
   builtin trap - EXIT
   builtin exit {REPLAY_FAILURE_STATUS}
@@ -108,6 +112,144 @@ __modash_eval_shopt_restore() {{
     option=${{BASH_REMATCH[2]}}
     builtin shopt "$flag" "$option" || __modash_abort "failed shopt restore"
   done <<< "$script"
+}}
+
+__modash_literal_eval_argument_is_safe() {{
+  local argument=$1
+  [[ $argument =~ ^\\$\\{{[A-Za-z_][A-Za-z0-9_]*\\}}$ ]] && return 0
+  case "$argument" in
+    *'$'*|*'`'*|*';'*|*'&'*|*'|'*|*'<'*|*'>'*|*'('*|*')'*)
+      return 1
+      ;;
+  esac
+  return 0
+}}
+
+eval() {{
+  local command=${{1-}} argument
+  if (( $# == 0 )); then
+    builtin eval
+    return
+  fi
+  case "$command" in
+    echo|:)
+      shift
+      for argument in "$@"; do
+        __modash_literal_eval_argument_is_safe "$argument" || __modash_abort "unsafe literal eval argument"
+      done
+      builtin eval "$command" "$@"
+      ;;
+    *)
+      __modash_abort "runtime replay cannot allow live eval"
+      ;;
+  esac
+}}
+
+__modash_word_contains_source_payload() {{
+  case "$1" in
+    *"source "*|*" source"*|*". "*|*" ."*|*"builtin source"*|*"command source"*|*"builtin ."*|*"command ."*|*'__modash_'*|*'__entrypoint__'*|*'__process_command__'*)
+      return 0
+      ;;
+  esac
+  return 1
+}}
+
+__modash_guard_dynamic_command() {{
+  local command=${{1-}} word skip_next=0 saw_shell_c=0
+  case "$command" in
+    source|.|eval|exec|trap|enable)
+      case "$command" in
+        source|.)
+          __modash_abort "unobserved live source command: $command"
+          ;;
+        eval)
+          __modash_abort "runtime replay cannot allow live eval"
+          ;;
+        exec)
+          __modash_abort "runtime replay cannot allow live exec"
+          ;;
+        trap)
+          __modash_abort "runtime replay cannot allow live trap"
+          ;;
+        *)
+          __modash_abort "runtime replay cannot allow dynamic replay-critical command: $command"
+          ;;
+      esac
+      ;;
+    command|builtin)
+      shift
+      while (( $# )); do
+        case "$1" in
+          --)
+            shift
+            break
+            ;;
+          -p)
+            shift
+            continue
+            ;;
+          -*)
+            __modash_abort "runtime replay cannot allow dynamic command wrapper options"
+            ;;
+          *)
+            break
+            ;;
+        esac
+      done
+      (( $# == 0 )) && __modash_abort "runtime replay cannot allow empty dynamic command wrapper"
+      __modash_guard_dynamic_command "$@"
+      return
+      ;;
+    printf)
+      shift
+      while (( $# )); do
+        [[ $1 == -v ]] && __modash_abort "runtime replay cannot allow dynamic printf -v"
+        shift
+      done
+      return
+      ;;
+    mapfile|readarray)
+      shift
+      while (( $# )); do
+        [[ $1 == -C* ]] && __modash_abort "runtime replay cannot allow dynamic mapfile/readarray callback"
+        shift
+      done
+      return
+      ;;
+    bash|sh|dash|ksh|ksh93|mksh|zsh|ash|busybox)
+      ;;
+    *)
+      shift
+      for word in "$@"; do
+        __modash_word_contains_source_payload "$word" && __modash_abort "runtime replay cannot allow dynamic source payload"
+      done
+      return
+      ;;
+  esac
+  shift
+  while (( $# )); do
+    if (( skip_next )); then
+      skip_next=0
+      shift
+      continue
+    fi
+    word=$1
+    if (( saw_shell_c )); then
+      __modash_word_contains_source_payload "$word" && __modash_abort "runtime replay cannot allow dynamic shell source payload"
+      saw_shell_c=0
+      shift
+      continue
+    fi
+    case "$word" in
+      -c|-[!-]*c*)
+        saw_shell_c=1
+        ;;
+      -O|+O|-o|+o)
+        skip_next=1
+        ;;
+    esac
+    shift
+  done
 }}
 
 declare -a __modash_edge_keys=({" ".join(shlex.quote(key) for key in edge_keys)})
@@ -252,6 +394,9 @@ __modash_reject_function_override() {{
 __modash_verify_replay_consumed() {{
   local status=${{1:-$?}} key
   [[ $__modash_verify_trap_active == 1 ]] || __modash_abort "generated replay verifier called outside EXIT trap"
+  if [[ -s "$__modash_tmp/replay-failure" ]]; then
+    status={REPLAY_FAILURE_STATUS}
+  fi
 {edge_verify}
 {process_verify}
   if [[ -n ${{__modash_child_replay_marker:-}} ]]; then

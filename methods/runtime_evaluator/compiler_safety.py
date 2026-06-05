@@ -151,16 +151,21 @@ def _validate_unit_text(
             )
         if skip_inert_function_bodies:
             one_line_body = _one_line_function_body(line)
-            if one_line_body is not None and _inert_function_body_can_bypass_replay(one_line_body):
+            one_line_body_code = (
+                _inert_function_body_bypass_code(one_line_body)
+                if one_line_body is not None else None
+            )
+            if one_line_body_code is not None:
                 raise RuntimeObservedCompileError(
                     f"runtime graph compiler input uses replay-critical function body dispatch at {label}:{line_number}",
-                    code="runtime.compile.dynamic_command",
+                    code=one_line_body_code,
                 )
         if inert_function_body:
-            if _inert_function_body_can_bypass_replay(line):
+            inert_body_code = _inert_function_body_bypass_code(line)
+            if inert_body_code is not None:
                 raise RuntimeObservedCompileError(
                     f"runtime graph compiler input uses replay-critical function body dispatch at {label}:{line_number}",
-                    code="runtime.compile.dynamic_command",
+                    code=inert_body_code,
                 )
             continue
         if _opens_simple_scope(line):
@@ -341,7 +346,12 @@ def _contains_coproc_command(line: str) -> bool:
 
 
 def _contains_mapfile_callback(line: str) -> bool:
-    return bool(re.search(r"(^|[;&|({]|\bthen\b|\bdo\b).*\b(?:mapfile|readarray)\b[^;&|]*\s-C(?:\s|=|$)", line))
+    for command in get_commands(line):
+        parsed = _parse_command(command)
+        for index, word in enumerate(parsed.words):
+            if word in {"mapfile", "readarray"} and _mapfile_has_callback(parsed.words[index:]):
+                return True
+    return False
 
 
 def _opens_control_scope(words: tuple[str, ...]) -> bool:
@@ -468,12 +478,16 @@ def _defines_replay_critical_function(line: str) -> bool:
 
 
 def _inert_function_body_can_bypass_replay(line: str) -> bool:
+    return _inert_function_body_bypass_code(line) is not None
+
+
+def _inert_function_body_bypass_code(line: str) -> str | None:
     if re.search(r"(^|[;&|{])\s*(?:builtin|command)\s+(?:source|\.)\b", line):
-        return True
+        return "runtime.compile.dynamic_command"
     if _words_have_source_bearing_shell_payload(line):
-        return True
+        return "runtime.compile.dynamic_command"
     if _inert_function_literal_mentions_generated_replay(line):
-        return True
+        return "runtime.compile.dynamic_command"
     for command in get_commands(line):
         parsed = _parse_command(command)
         if not parsed.words:
@@ -482,12 +496,14 @@ def _inert_function_body_can_bypass_replay(line: str) -> bool:
         if command_index is None:
             continue
         if parsed.name in {"builtin", "command", "eval", "exec", "trap", "enable"}:
-            return True
-        if _dynamic_inert_command_can_become_source(parsed.words):
-            return True
+            return "runtime.compile.dynamic_command"
+        if _dynamic_state_mutation(parsed, in_simple_scope=True):
+            return "runtime.compile.dynamic_state"
         if _contains_mapfile_callback(command):
-            return True
-    return False
+            return "runtime.compile.dynamic_state"
+        if _dynamic_inert_command_can_become_source(parsed.words):
+            return "runtime.compile.dynamic_command"
+    return None
 
 
 def _dynamic_inert_command_can_become_source(words: tuple[str, ...]) -> bool:
@@ -650,11 +666,16 @@ def _introspects_instrumented_environment(command: _Command) -> bool:
 
 
 def _external_interpreter_payload_can_probe_environment(word: str) -> bool:
+    collapsed = re.sub(r"[\s\"'+]", "", word)
     return bool(
         "environ" in word
         or "getenv" in word
         or "BASH_" in word
         or "MODASH_TRACE_" in word
+        or "environ" in collapsed
+        or "getenv" in collapsed
+        or "BASH_ENV" in collapsed
+        or "MODASH_TRACE" in collapsed
         or re.search(r"BASH[\"']?\s*\+\s*[\"']?_ENV", word)
         or re.search(r"MODASH[\"']?\s*\+\s*[\"']?_TRACE", word)
     )
@@ -812,7 +833,7 @@ def _mapfile_targets(words: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _mapfile_has_callback(words: tuple[str, ...]) -> bool:
-    return "-C" in words[1:]
+    return any(word == "-C" or word.startswith("-C") for word in words[1:])
 
 
 def _read_target_can_mutate_replay_state(word: str) -> bool:
@@ -986,7 +1007,86 @@ def _shell_command_index_after_wrappers(words: list[str]) -> int | None:
             if word.startswith("-"):
                 return None
             break
+    while index < len(words):
+        wrapper = _path_basename(words[index])
+        if wrapper == "nice":
+            index = _command_tail_after_nice(words, index + 1)
+        elif wrapper == "timeout":
+            index = _command_tail_after_timeout(words, index + 1)
+        elif wrapper == "setsid":
+            index = _command_tail_after_option_wrapper(words, index + 1)
+        elif wrapper == "nohup":
+            index += 1
+        elif wrapper == "stdbuf":
+            index = _command_tail_after_stdbuf(words, index + 1)
+        else:
+            break
+        if index is None:
+            return None
     return index if index < len(words) else None
+
+
+def _command_tail_after_nice(words: list[str], index: int) -> int | None:
+    while index < len(words):
+        word = words[index]
+        if word in {"-n", "--adjustment"}:
+            index += 2
+            continue
+        if word.startswith("--adjustment="):
+            index += 1
+            continue
+        if re.fullmatch(r"-[0-9]+", word) or re.fullmatch(r"-n[0-9]+", word):
+            index += 1
+            continue
+        if word.startswith("-"):
+            return None
+        return index
+    return None
+
+
+def _command_tail_after_timeout(words: list[str], index: int) -> int | None:
+    while index < len(words):
+        word = words[index]
+        if word in {"-k", "--kill-after", "-s", "--signal"}:
+            index += 2
+            continue
+        if word.startswith("--kill-after=") or word.startswith("--signal="):
+            index += 1
+            continue
+        if word in {"--preserve-status", "--foreground", "-v", "--verbose"}:
+            index += 1
+            continue
+        if word.startswith("-"):
+            return None
+        index += 1
+        return index if index < len(words) else None
+    return None
+
+
+def _command_tail_after_option_wrapper(words: list[str], index: int) -> int | None:
+    while index < len(words):
+        if words[index] == "--":
+            return index + 1 if index + 1 < len(words) else None
+        if words[index].startswith("-"):
+            index += 1
+            continue
+        return index
+    return None
+
+
+def _command_tail_after_stdbuf(words: list[str], index: int) -> int | None:
+    while index < len(words):
+        word = words[index]
+        if word in {"-i", "-o", "-e", "--input", "--output", "--error"}:
+            index += 2
+            continue
+        if re.match(r"^(?:-[ioe]|--(?:input|output|error)=)", word):
+            index += 1
+            continue
+        if word.startswith("-"):
+            return None
+        return index
+    return None
 
 
 def _is_non_bash_shell_name(word: str) -> bool:

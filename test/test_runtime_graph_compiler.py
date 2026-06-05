@@ -69,6 +69,30 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(drifted.returncode, 125, drifted.stdout)
         self.assertIn("observed environment drift: DEP", drifted.stdout)
 
+    def test_runtime_compiler_records_source_relevant_inherited_environment(self):
+        with ScriptProject() as project:
+            one = project.write("one.sh", "printf 'one\\n'\n")
+            two = project.write("two.sh", "printf 'two\\n'\n")
+            project.write("main.sh", "source \"$DEP\"\nprintf 'done\\n'\n")
+            old_dep = os.environ.get("DEP")
+            os.environ["DEP"] = str(one)
+            try:
+                compiled, graph = self.compile_observed(project, "main.sh")
+            finally:
+                if old_dep is None:
+                    os.environ.pop("DEP", None)
+                else:
+                    os.environ["DEP"] = old_dep
+            matched = project.run(compiled, env={"DEP": str(one)})
+            drifted = project.run(compiled, env={"DEP": str(two)})
+
+        self.assertEqual(graph["environment"]["policy"], "inherit")
+        self.assertEqual(graph["environment"]["values"], {"DEP": str(one)})
+        self.assertEqual(matched.returncode, 0, matched.stdout)
+        self.assertEqual(matched.stdout, "one\ndone\n")
+        self.assertEqual(drifted.returncode, 125, drifted.stdout)
+        self.assertIn("observed environment drift: DEP", drifted.stdout)
+
     def test_runtime_compiler_fails_closed_when_unobserved_source_branch_runs_later(self):
         with ScriptProject() as project:
             project.write("extra.sh", 'printf "extra\\n"\n')
@@ -138,6 +162,8 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         cases = {
             "eval literal": ("evil() { \"$CMD\" 'builtin source ./extra.sh'; }\n", "runtime.compile.dynamic_command"),
             "mapfile callback": ("evil() { mapfile -C 'builtin source ./extra.sh' -c 1 arr; }\n", "runtime.compile.dynamic_state"),
+            "mapfile attached callback": ("evil() { mapfile -C'builtin source ./extra.sh' -c 1 arr; }\n", "runtime.compile.dynamic_state"),
+            "readarray attached callback": ("evil() { readarray -C'builtin source ./extra.sh' -c 1 arr; }\n", "runtime.compile.dynamic_state"),
             "non-bash shell": ("evil() { sh -c '. ./extra.sh'; }\n", "runtime.compile.dynamic_command"),
         }
         for name, (lib_script, code) in cases.items():
@@ -150,6 +176,91 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                     "main.sh",
                     code=code,
                 )
+
+    def test_runtime_compiler_rejects_inert_function_computed_replay_state_mutation(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source ./lib.sh\n"
+                "source ./one.sh\n"
+                "if [[ ${RUN_TWO:-yes} == yes ]]; then\n"
+                "  source ./two.sh\n"
+                "fi\n"
+                "if [[ ${MUTATE:-} ]]; then\n"
+                "  mark_consumed 'p0:__entrypoint__:4:0|0'\n"
+                "fi\n",
+            )
+            project.write(
+                "lib.sh",
+                "mark_consumed() {\n"
+                "  p=__mod\n"
+                "  q=ash_edge_consumed\n"
+                "  target=$p$q[$1]\n"
+                "  printf -v \"$target\" 1\n"
+                "}\n",
+            )
+            project.write("one.sh", "printf 'one\\n'\n")
+            project.write("two.sh", "printf 'two\\n'\n")
+            self.assert_compile_observed_error(
+                project,
+                "main.sh",
+                code="runtime.compile.dynamic_state",
+            )
+
+    def test_runtime_compiler_guards_inert_function_dynamic_eval_source_dispatch(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source ./lib.sh\n"
+                "if [[ ${RUN:-} ]]; then\n"
+                "  X=eval\n"
+                "  Y='builtin source ./extra.sh'\n"
+                "  evil\n"
+                "fi\n"
+                "printf 'done\\n'\n",
+            )
+            project.write(
+                "lib.sh",
+                "evil() {\n"
+                "  \"$X\" \"$Y\"\n"
+                "}\n",
+            )
+            project.write("extra.sh", "printf 'extra-live\\n'\n")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            normal = project.run(compiled)
+            hostile = project.run(compiled, env={"RUN": "1"})
+
+        self.assertEqual(normal.returncode, 0, normal.stdout)
+        self.assertEqual(normal.stdout, "done\n")
+        self.assertEqual(hostile.returncode, 125, hostile.stdout)
+        self.assertIn("runtime replay cannot allow live eval", hostile.stdout)
+        self.assertNotIn("extra-live", hostile.stdout)
+
+    def test_runtime_compiler_does_not_guard_arithmetic_or_array_assignments_as_dynamic_commands(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source ./lib.sh\n"
+                "collect value\n"
+                "source ./base.sh\n",
+            )
+            project.write(
+                "lib.sh",
+                "collect() {\n"
+                "  local -a values=()\n"
+                "  local k=0\n"
+                "  values[k++]=$1\n"
+                "  if ((${#values[@]} == 1)); then\n"
+                "    printf 'values:%s\\n' \"${values[0]}\"\n"
+                "  fi\n"
+                "}\n",
+            )
+            project.write("base.sh", "printf 'base\\n'\n")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "values:value\nbase\n")
 
     def test_runtime_compiler_rejects_literal_eval_array_subscript_source(self):
         cases = {
@@ -194,21 +305,26 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(actual.stderr, expected.stderr)
 
     def test_runtime_compiler_rejects_external_computed_trace_environment_probe(self):
-        with ScriptProject() as project:
-            project.write(
-                "main.sh",
-                "if python3 -c 'import os,sys; sys.exit(0 if os.getenv(\"BASH\"+\"_ENV\") else 1)'; then\n"
-                "  DEP=./dep.sh\n"
-                "fi\n"
-                "source \"$DEP\" || true\n"
-                "printf 'done\\n'\n",
-            )
-            project.write("dep.sh", "printf 'dep-traceonly\\n'\n")
-            self.assert_compile_observed_error(
-                project,
-                "main.sh",
-                code="runtime.compile.instrumentation_sensitive",
-            )
+        cases = {
+            "computed getenv": 'os.getenv("BASH"+"_ENV")',
+            "getattr environ": 'getattr(os,"en"+"viron").get("BA"+"SH"+"_ENV")',
+        }
+        for name, probe in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write(
+                    "main.sh",
+                    f"if python3 -c 'import os,sys; sys.exit(0 if {probe} else 1)'; then\n"
+                    "  DEP=./dep.sh\n"
+                    "fi\n"
+                    "source \"$DEP\" || true\n"
+                    "printf 'done\\n'\n",
+                )
+                project.write("dep.sh", "printf 'dep-traceonly\\n'\n")
+                self.assert_compile_observed_error(
+                    project,
+                    "main.sh",
+                    code="runtime.compile.instrumentation_sensitive",
+                )
 
     def test_runtime_compiler_rejects_find_exec_non_bash_shell_source_payload(self):
         with ScriptProject() as project:
@@ -1816,6 +1932,38 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                     code="runtime.compile.unobserved_child_source",
                 )
 
+    def test_runtime_compiler_rejects_source_bearing_non_bash_shell_wrappers(self):
+        cases = {
+            "nice": "nice sh -c '. ./dep.sh'\nprintf 'done\\n'\n",
+            "timeout": "timeout 5 sh -c '. ./dep.sh'\nprintf 'done\\n'\n",
+            "setsid": "setsid sh -c '. ./dep.sh'\nprintf 'done\\n'\n",
+            "nohup": "nohup sh -c '. ./dep.sh'\nprintf 'done\\n'\n",
+            "stdbuf": "stdbuf -o0 sh -c '. ./dep.sh'\nprintf 'done\\n'\n",
+        }
+        for name, script in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("main.sh", script)
+                project.write("dep.sh", "printf 'dep\\n'\n")
+                self.assert_compile_observed_error(
+                    project,
+                    "main.sh",
+                    code="runtime.compile.unrewritten_source",
+                )
+
+    def test_runtime_compiler_allows_inert_non_execution_shell_words(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "echo sh -c '. ./not-a-command.sh'\n"
+                "source ./dep.sh\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "sh -c . ./not-a-command.sh\ndep\n")
+
     def test_runtime_compiler_rejects_unobserved_dynamic_child_bash_payloads(self):
         cases = {
             "dynamic command": "bash -c '$CMD ./dep.sh; printf child-done\\n'\nprintf 'done\\n'\n",
@@ -2479,6 +2627,31 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout + (result.stderr or ""))
         self.assertEqual(result.stdout, "case:hello world\nbase\n")
+
+    def test_runtime_compiler_guards_literal_echo_eval_lookup_runtime_injection(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "i=${I:-01}\n"
+                "result=\"$(eval echo \\${TEST_CASE_\"$i\"})\"\n"
+                "printf 'case:%s\\n' \"$result\"\n"
+                "source ./base.sh\n",
+            )
+            project.write("base.sh", "printf 'base\\n'\n")
+            project.write("dep.sh", "printf 'dep-eval-inject\\n'\n")
+            env = {"TEST_CASE_01": "hello"}
+            compiled, _graph = self.compile_observed(project, "main.sh", env=env)
+            normal = project.run(compiled, env=env)
+            hostile = project.run(
+                compiled,
+                env={**env, "I": "} ; builtin source ./dep.sh #"},
+            )
+
+        self.assertEqual(normal.returncode, 0, normal.stdout)
+        self.assertEqual(normal.stdout, "case:hello\nbase\n")
+        self.assertEqual(hostile.returncode, 125, hostile.stdout)
+        self.assertIn("unsafe literal eval argument", hostile.stdout)
+        self.assertNotIn("dep-eval-inject", hostile.stdout)
 
     def test_runtime_compiler_rejects_coproc_dynamic_execution(self):
         cases = {
