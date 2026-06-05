@@ -38,6 +38,7 @@ SOURCE_LIKE_PREFIXES = (
 )
 SHELL_CONTROL_WORDS = frozenset({"then", "do", "else", "fi", "done", "}"})
 SHELL_CONTROL_OPERATORS = frozenset({"&&", "||", "|"})
+SOURCE_COMMAND_PREFIX_WORDS = frozenset({"time", "coproc"})
 
 
 @dataclass(frozen=True)
@@ -86,38 +87,77 @@ def source_command_position(words: Sequence[str]):
         command_start += 1
     while command_start < len(words) and words[command_start] == "!":
         command_start += 1
+    effective_start = _source_effective_command_start(words, command_start)
 
     for index, word in enumerate(words):
         if word not in SOURCE_COMMAND_NAMES:
             continue
 
-        if index == command_start:
+        if index == effective_start:
             return command_start, index
 
-        first_word = words[command_start] if command_start < len(words) else ""
+        first_word = words[effective_start] if effective_start < len(words) else ""
         previous_word = words[index - 1]
         if first_word == "builtin":
-            command_index = _builtin_source_command_index(words, command_start)
+            command_index = _builtin_source_command_index(words, effective_start)
             if index == command_index:
                 return command_start, index
         if first_word == "command":
-            command_index = _command_source_command_index(words, command_start)
+            command_index = _command_source_command_index(words, effective_start)
             if index == command_index:
                 return command_start, index
         if first_word in {"if", "while", "until", "then", "elif", "else", "do"}:
-            branch_index = command_start + 1
+            branch_index = effective_start + 1
             while branch_index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[branch_index]):
                 branch_index += 1
             while branch_index < len(words) and words[branch_index] == "!":
                 branch_index += 1
+            branch_index = _source_effective_command_start(words, branch_index)
             if index == branch_index:
                 return command_start, index
+            branch_word = words[branch_index] if branch_index < len(words) else ""
+            if branch_word == "builtin":
+                command_index = _builtin_source_command_index(words, branch_index)
+                if index == command_index:
+                    return command_start, index
+            if branch_word == "command":
+                command_index = _command_source_command_index(words, branch_index)
+                if index == command_index:
+                    return command_start, index
         if previous_word == "{" or previous_word.endswith("{"):
             return command_start, index
         if any(candidate.endswith(")") for candidate in words[command_start:index]):
             return command_start, index
 
     return None
+
+
+def _source_effective_command_start(words: Sequence[str], index: int):
+    while index < len(words) and words[index] == "!":
+        index += 1
+    while index < len(words) and words[index] in SOURCE_COMMAND_PREFIX_WORDS:
+        word = words[index]
+        index += 1
+        if word == "time":
+            while index < len(words) and words[index].startswith("-"):
+                index += 1
+            while index < len(words) and words[index] == "!":
+                index += 1
+            continue
+        if word == "coproc":
+            while index < len(words) and words[index] == "!":
+                index += 1
+            if index < len(words) and words[index] == "{":
+                index += 1
+                continue
+            if index < len(words) and words[index] not in {"{", "source", ".", "builtin", "command", "time"}:
+                index += 1
+                if index < len(words) and words[index] == "{":
+                    index += 1
+            continue
+    if index < len(words) and words[index] == "{":
+        index += 1
+    return index
 
 
 def source_command_invocation(
@@ -387,7 +427,7 @@ def _contains_nested_source_command(text: str, depth: int):
         if char == "`":
             body, end_index = read_backtick_body(text, index + 1)
             if body is None:
-                return True
+                return _shell_body_contains_source(text[index + 1 :], depth + 1)
             if _shell_body_contains_source(body, depth + 1):
                 return True
             index = end_index + 1
@@ -396,7 +436,7 @@ def _contains_nested_source_command(text: str, depth: int):
         if text.startswith("$((", index):
             body, end_index = read_balanced_body(text, index + 3)
             if end_index is None:
-                return True
+                return _shell_body_contains_source(text[index + 3 :], depth + 1)
             if _contains_nested_source_command(body, depth + 1):
                 return True
             index = end_index + 1
@@ -405,7 +445,7 @@ def _contains_nested_source_command(text: str, depth: int):
         if text.startswith("$(", index):
             body, end_index = read_balanced_body(text, index + 2)
             if end_index is None:
-                return True
+                return _shell_body_contains_source(text[index + 2 :], depth + 1)
             if _shell_body_contains_source(body, depth + 1):
                 return True
             index = end_index + 1
@@ -414,7 +454,7 @@ def _contains_nested_source_command(text: str, depth: int):
         if not in_double_quote and (text.startswith("<(", index) or text.startswith(">(", index)):
             body, end_index = read_balanced_body(text, index + 2)
             if end_index is None:
-                return True
+                return _shell_body_contains_source(text[index + 2 :], depth + 1)
             if _shell_body_contains_source(body, depth + 1):
                 return True
             index = end_index + 1
@@ -423,7 +463,7 @@ def _contains_nested_source_command(text: str, depth: int):
         if not in_double_quote and text.startswith("((", index):
             body, end_index = read_balanced_body(text, index + 2)
             if end_index is None:
-                return True
+                return _shell_body_contains_source(text[index + 2 :], depth + 1)
             if _contains_nested_source_command(body, depth + 1):
                 return True
             index = end_index + 1
@@ -432,14 +472,21 @@ def _contains_nested_source_command(text: str, depth: int):
         if not in_double_quote and char == "(" and is_array_assignment_paren(text, index):
             body, end_index = read_balanced_body(text, index + 1)
             if end_index is None:
+                return _shell_body_contains_source(text[index + 1 :], depth + 1)
+            if _contains_nested_source_command(body, depth + 1):
                 return True
             index = end_index + 1
+            continue
+
+        if not in_double_quote and char == "(" and index > 0 and text[index - 1] in "?*+@!":
+            _body, end_index = read_balanced_body(text, index + 1)
+            index = end_index + 1 if end_index is not None else index + 1
             continue
 
         if not in_double_quote and char == "(":
             body, end_index = read_balanced_body(text, index + 1)
             if end_index is None:
-                return True
+                return _shell_body_contains_source(text[index + 1 :], depth + 1)
             if _shell_body_contains_source(body, depth + 1):
                 return True
             index = end_index + 1

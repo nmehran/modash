@@ -107,17 +107,16 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
             },
         )
 
-    def test_build_rejects_nonzero_target_observation(self):
+    def test_build_preserves_nonzero_target_status(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", "source ./dep.sh\nexit 7\n")
             project.write("dep.sh", "printf 'dep\\n'\n")
             observation = project.trace("main.sh").observation
 
-            with self.assertRaises(RuntimeSourceGraphError) as context:
-                build_observed_source_graph(entrypoint, observation)
+            graph = build_observed_source_graph(entrypoint, observation)
 
-        self.assertEqual(context.exception.code, "runtime.graph.nonzero_trace")
-        self.assertIn("status 7", str(context.exception))
+        self.assertEqual(graph["run"]["target_status"], 7)
+        self.assertEqual(graph["summary"]["edges"], 1)
 
     def test_rejects_stale_observation_before_building_graph(self):
         with ScriptProject() as project:
@@ -291,15 +290,13 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
 
         self.assertIn("source_identity must match", str(context.exception))
 
-    def test_validate_graph_rejects_nonzero_target_status_tampering(self):
+    def test_validate_graph_preserves_nonzero_target_status(self):
         graph = self._direct_source_graph()
         graph["run"]["target_status"] = 7
 
-        with self.assertRaises(RuntimeSourceGraphError) as context:
-            validate_observed_source_graph(graph)
+        validated = validate_observed_source_graph(graph)
 
-        self.assertEqual(context.exception.code, "runtime.graph.nonzero_trace")
-        self.assertIn("status 7", str(context.exception))
+        self.assertEqual(validated["run"]["target_status"], 7)
 
     def test_validate_graph_rejects_non_source_trace_wrapper_tampering(self):
         graph = self._direct_source_graph()

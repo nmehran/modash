@@ -297,6 +297,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             observation_path = project.path("observation.json")
             graph_path = project.path("runtime-graph.json")
             output_path = project.path("compiled.sh")
+            run_env = {**os.environ, "LIB_DIR": str(project.path("lib"))}
             write_trace_observation(observation, observation_path)
 
             graph_result = subprocess.run(
@@ -331,16 +332,19 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
                 text=True,
             )
             run_result = subprocess.run(
-                ["bash", str(output_path)],
+                [str(output_path)],
                 cwd=str(project.root),
+                env=run_env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
             )
+            graph = json.loads(graph_path.read_text())
 
         self.assertEqual(graph_result.returncode, 0, graph_result.stderr)
         self.assertEqual(compile_result.returncode, 0, compile_result.stderr)
         self.assertEqual(compile_result.stdout, "")
+        self.assertEqual(graph["environment"]["values"]["LIB_DIR"], str(project.path("lib")))
         self.assertIn("modash: compiled from trusted runtime graph:", compile_result.stderr)
         self.assertEqual(run_result.returncode, 0, run_result.stderr)
         self.assertEqual(run_result.stdout, "dep\n")
@@ -387,7 +391,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
                 text=True,
             )
             run_result = subprocess.run(
-                ["bash", str(output_path)],
+                [str(output_path)],
                 cwd=str(project.root),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -463,7 +467,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
                 text=True,
             )
             run_result = subprocess.run(
-                ["bash", str(output_path)],
+                [str(output_path)],
                 cwd=str(project.root),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -565,9 +569,11 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             graph = json.loads(graph_path.read_text())
             observation = json.loads(observation_path.read_text())
             report = report_path.read_text()
+            run_env = {**os.environ, "LIB_DIR": str(project.path("lib"))}
             run_result = subprocess.run(
-                ["bash", str(output_path)],
+                [str(output_path)],
                 cwd=str(project.root),
+                env=run_env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -577,6 +583,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
         self.assertEqual(result.stdout, "dep:exact\nmain\n")
         self.assertEqual(graph["observation_version"], 8)
         self.assertEqual(graph["environment"]["recorded_keys"], ["LIB_DIR"])
+        self.assertEqual(graph["environment"]["values"]["LIB_DIR"], str(project.path("lib")))
         self.assertEqual(observation["version"], 8)
         self.assertEqual(observation["run"]["target_status"], 0)
         self.assertIn("trusted: yes", report)
@@ -584,7 +591,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
         self.assertEqual(run_result.returncode, 0, run_result.stderr)
         self.assertEqual(run_result.stdout, "dep:exact\nmain\n")
 
-    def test_observe_compile_cli_stops_after_nonzero_trace(self):
+    def test_observe_compile_cli_compiles_nonzero_target_trace(self):
         with ScriptProject() as project:
             entrypoint = project.write(
                 "main.sh",
@@ -623,16 +630,30 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             graph_exists = graph_path.exists()
             report_exists = report_path.exists()
             output_exists = output_path.exists()
+            graph = json.loads(graph_path.read_text()) if graph_exists else {}
+            observation = json.loads(observation_path.read_text()) if observation_exists else {}
+            run_result = subprocess.run(
+                [str(output_path)],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            ) if output_exists else None
 
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("refusing to compile", result.stderr)
+        self.assertEqual(result.returncode, 7)
+        self.assertIn("modash: compiled from newly observed trusted runtime graph:", result.stderr)
         self.assertEqual(result.stdout, "dep\n")
         self.assertTrue(observation_exists)
-        self.assertFalse(graph_exists)
-        self.assertFalse(report_exists)
-        self.assertFalse(output_exists)
+        self.assertTrue(graph_exists)
+        self.assertTrue(report_exists)
+        self.assertTrue(output_exists)
+        self.assertEqual(observation["run"]["target_status"], 7)
+        self.assertEqual(graph["run"]["target_status"], 7)
+        self.assertIsNotNone(run_result)
+        self.assertEqual(run_result.returncode, 7, run_result.stderr)
+        self.assertEqual(run_result.stdout, "dep\n")
 
-    def test_graph_cli_rejects_nonzero_trace_observation(self):
+    def test_graph_cli_promotes_nonzero_trace_observation(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", "source ./dep.sh\nexit 7\n")
             project.write("dep.sh", "printf 'dep\\n'\n")
@@ -688,18 +709,28 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             graph_exists = graph_path.exists()
             observation_exists = observation_path.is_file()
             output_exists = output_path.exists()
+            graph = json.loads(graph_path.read_text()) if graph_exists else {}
+            run_result = subprocess.run(
+                [str(output_path)],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            ) if output_exists else None
 
         self.assertEqual(trace_result.returncode, 7)
         self.assertEqual(trace_result.stdout, "dep\n")
         self.assertTrue(observation_exists)
-        self.assertEqual(graph_result.returncode, 1)
-        self.assertIn("status 7", graph_result.stderr)
-        self.assertFalse(graph_exists)
-        self.assertEqual(compile_result.returncode, 1)
-        self.assertIn("does not exist", compile_result.stderr)
-        self.assertFalse(output_exists)
+        self.assertEqual(graph_result.returncode, 0, graph_result.stderr)
+        self.assertTrue(graph_exists)
+        self.assertEqual(graph["run"]["target_status"], 7)
+        self.assertEqual(compile_result.returncode, 0, compile_result.stderr)
+        self.assertTrue(output_exists)
+        self.assertIsNotNone(run_result)
+        self.assertEqual(run_result.returncode, 7, run_result.stderr)
+        self.assertEqual(run_result.stdout, "dep\n")
 
-    def test_supplement_cli_rejects_nonzero_trace_observation(self):
+    def test_supplement_cli_promotes_nonzero_trace_observation(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", "source ./dep.sh\nexit 7\n")
             project.write("dep.sh", "printf 'dep\\n'\n")
@@ -741,15 +772,16 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             )
             supplement_exists = supplement_path.exists()
             report_exists = report_path.exists()
+            supplement = json.loads(supplement_path.read_text()) if supplement_exists else {}
 
         self.assertEqual(trace_result.returncode, 7)
         self.assertEqual(trace_result.stdout, "dep\n")
-        self.assertEqual(supplement_result.returncode, 1)
-        self.assertIn("status 7", supplement_result.stderr)
-        self.assertFalse(supplement_exists)
-        self.assertFalse(report_exists)
+        self.assertEqual(supplement_result.returncode, 0, supplement_result.stderr)
+        self.assertTrue(supplement_exists)
+        self.assertTrue(report_exists)
+        self.assertEqual(supplement["version"], 1)
 
-    def test_observe_compile_cli_stops_after_alias_perturbed_trace(self):
+    def test_observe_compile_cli_rejects_replay_critical_function_override(self):
         with ScriptProject() as project:
             entrypoint = project.write(
                 "main.sh",
@@ -791,10 +823,10 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
             output_exists = output_path.exists()
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("refusing to compile", result.stderr)
+        self.assertIn("redefines replay-critical shell functions", result.stderr)
         self.assertTrue(observation_exists)
-        self.assertFalse(graph_exists)
-        self.assertFalse(report_exists)
+        self.assertTrue(graph_exists)
+        self.assertTrue(report_exists)
         self.assertFalse(output_exists)
 
     def test_supplement_cli_writes_explicit_report_path(self):

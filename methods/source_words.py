@@ -78,6 +78,7 @@ def extract_heredoc_delimiters(line: str):
                 break
 
             quote = line[delimiter_start] if line[delimiter_start] in {'"', "'"} else ''
+            quoted = bool(quote)
             if quote:
                 delimiter_end = line.find(quote, delimiter_start + 1)
                 if delimiter_end < 0:
@@ -92,7 +93,7 @@ def extract_heredoc_delimiters(line: str):
                 index = delimiter_end
 
             if delimiter:
-                delimiters.append(HeredocDelimiter(delimiter, strip_tabs))
+                delimiters.append(HeredocDelimiter(delimiter, strip_tabs, quoted))
             continue
 
         index += 1

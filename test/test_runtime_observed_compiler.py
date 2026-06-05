@@ -28,8 +28,10 @@ class RuntimeObservedCompilerTestCase(unittest.TestCase):
         merged = os.environ.copy()
         if env:
             merged.update({str(key): str(value) for key, value in env.items()})
+        script_path = project.path(script)
+        command = [str(script_path), *argv] if os.access(script_path, os.X_OK) else ["bash", str(script_path), *argv]
         return subprocess.run(
-            ["bash", str(project.path(script)), *argv],
+            command,
             cwd=project.root,
             env=merged,
             stdout=subprocess.PIPE,
@@ -96,8 +98,8 @@ class RuntimeObservedCompilerTestCase(unittest.TestCase):
                 'printf "done:%s\\n" "${VALUE-unset}"\n',
             )
             project.write("dep.sh", 'VALUE=loaded\nprintf "dep\\n"\n')
-            compiled = self._compile_from_trace(project, env={"LOAD_DEP": "no"})
-            observed = self._bash(compiled, project, env={"LOAD_DEP": "no"})
+            compiled = self._compile_from_trace(project)
+            observed = self._bash(compiled, project)
             unobserved = self._bash(compiled, project, env={"LOAD_DEP": "yes"})
 
         self.assertEqual(observed.returncode, 0, observed.stderr)

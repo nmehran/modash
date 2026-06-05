@@ -32,5 +32,5 @@ class GlobMatch:
 class HeredocDelimiter:
     value: str
     strip_tabs: bool = False
-
+    quoted: bool = False
 

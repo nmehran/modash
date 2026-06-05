@@ -5,6 +5,7 @@ import sys
 
 from methods.shell_text import remove_comments
 from methods.source_effects import (
+    Assignment,
     CaseBlock,
     CStyleForLoop,
     ForLoop,
@@ -25,7 +26,9 @@ EVAL_COMMAND_PATTERN = re.compile(r"(?:^|[;&|()]|\bthen\b|\bdo\b)\s*eval(?:\s|$)
 TRAP_COMMAND_PATTERN = re.compile(r"(?:^|[;&|()]|\bthen\b|\bdo\b)\s*trap(?:\s|$)")
 ALIAS_COMMAND_PATTERN = re.compile(r"(?:^|[;&|()]|\bthen\b|\bdo\b)\s*alias(?:\s|$)")
 FUNCTION_CONTEXT_SENSITIVE_PATTERN = re.compile(
-    r"(?:^|[;&|()]|\bthen\b|\bdo\b)\s*(?:local|caller)(?:\s|$)|\b(?:FUNCNAME|BASH_LINENO)\b"
+    r"(?:^|[;&|()]|\bthen\b|\bdo\b)\s*(?:local|caller|declare|typeset)(?:\s|$)"
+    r"|\b(?:FUNCNAME|BASH_LINENO|PIPESTATUS)\b"
+    r"|\$(?:_|{_})"
 )
 EMBEDDED_FUNCTION_DECLARATION_PATTERN = re.compile(
     r"(?:(?:function\s+([a-zA-Z_]\w*)(?:\s*\(\s*\))?)|([a-zA-Z_]\w*)\s*\(\s*\))\s*\{"
@@ -240,11 +243,64 @@ def function_context_sensitive_top_level_lines(path, content: str | None = None)
     return tuple(sorted(lines))
 
 
+def inert_function_body_lines(path, content: str | None = None, active_lines=()) -> frozenset[int]:
+    if content is None:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                content = handle.read()
+        except OSError:
+            return frozenset()
+    try:
+        ir = LineParserFrontend().parse(str(path), content)
+    except Exception:
+        return frozenset()
+    lines: set[int] = set()
+    _collect_inert_function_body_lines(ir.nodes, lines, set(active_lines))
+    return frozenset(lines)
+
+
+def _collect_inert_function_body_lines(nodes, lines: set[int], active_lines: set[int]) -> None:
+    for node in nodes:
+        if isinstance(node, FunctionDef):
+            body_lines: set[int] = set()
+            _collect_node_lines(node.body, body_lines)
+            if not body_lines.intersection(active_lines):
+                lines.update(body_lines)
+            continue
+        if isinstance(node, IfBlock):
+            for branch in node.branches:
+                _collect_inert_function_body_lines(branch.body, lines, active_lines)
+            continue
+        if isinstance(node, (ForLoop, CStyleForLoop, WhileLoop)):
+            _collect_inert_function_body_lines(node.body, lines, active_lines)
+            continue
+        if isinstance(node, CaseBlock):
+            for arm in node.arms:
+                _collect_inert_function_body_lines(arm.body, lines, active_lines)
+
+
+def _collect_node_lines(nodes, lines: set[int]) -> None:
+    for node in nodes:
+        lines.add(node.location.line)
+        if isinstance(node, FunctionDef):
+            _collect_node_lines(node.body, lines)
+        elif isinstance(node, IfBlock):
+            for branch in node.branches:
+                if branch.condition_location is not None:
+                    lines.add(branch.condition_location.line)
+                _collect_node_lines(branch.body, lines)
+        elif isinstance(node, (ForLoop, CStyleForLoop, WhileLoop)):
+            _collect_node_lines(node.body, lines)
+        elif isinstance(node, CaseBlock):
+            for arm in node.arms:
+                _collect_node_lines(arm.body, lines)
+
+
 def _collect_function_context_sensitive_lines(nodes, lines: set[int]) -> None:
     for node in nodes:
         if isinstance(node, FunctionDef):
             continue
-        if isinstance(node, RawCommand):
+        if isinstance(node, (Assignment, RawCommand)):
             if _function_context_sensitive_text(node.text):
                 lines.add(node.location.line)
             continue

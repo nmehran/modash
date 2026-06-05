@@ -57,8 +57,7 @@ def validate_observed_source_graph(data):
     if _nonnegative_int(data["observation_version"], "observation_version") != OBSERVATION_VERSION:
         raise RuntimeSourceGraphError(f"observation_version must be {OBSERVATION_VERSION}")
     EnvironmentInfo.from_dict(data["environment"])
-    run = RuntimeRunInfo.from_dict(data["run"])
-    _ensure_successful_graph_run(run)
+    RuntimeRunInfo.from_dict(data["run"])
     summary = _summary(data["summary"])
     nodes = _object_list(data["nodes"], "nodes")
     edges = _object_list(data["edges"], "edges")
@@ -405,20 +404,6 @@ def _ensure_graph_entrypoint(entrypoint_path: Path, observation: RuntimeSourceOb
         raise RuntimeSourceGraphError(
             f"observation entrypoint does not match requested entrypoint: {observed_entrypoint}",
             code="runtime.graph.entrypoint_mismatch",
-        )
-
-def _ensure_successful_observation_run(run: RuntimeRunInfo):
-    if run.target_status != 0:
-        raise RuntimeSourceGraphError(
-            f"runtime source observation target exited with status {run.target_status}; refusing trusted graph promotion",
-            code="runtime.graph.nonzero_trace",
-        )
-
-def _ensure_successful_graph_run(run: RuntimeRunInfo):
-    if run.target_status != 0:
-        raise RuntimeSourceGraphError(
-            f"runtime source graph target exited with status {run.target_status}; refusing trusted graph replay",
-            code="runtime.graph.nonzero_trace",
         )
 
 def _ensure_fingerprints_current(observation: RuntimeSourceObservation):

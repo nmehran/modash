@@ -10,7 +10,6 @@ from methods.runtime_evaluator.graph_validate import (
     _ensure_fingerprints_current,
     _ensure_graph_entrypoint,
     _ensure_source_presence_matches_fingerprints,
-    _ensure_successful_observation_run,
     _ensure_trusted_xtrace_links,
     _source_fingerprint_paths,
     validate_observed_source_graph,
@@ -21,7 +20,6 @@ def build_observed_source_graph(entrypoint: str | os.PathLike, observation, *, v
     entrypoint_path = Path(entrypoint).resolve(strict=False)
     observation = _coerce_observation(observation)
     _ensure_graph_entrypoint(entrypoint_path, observation)
-    _ensure_successful_observation_run(observation.run)
     if validate_fingerprints:
         _ensure_fingerprints_current(observation)
         _ensure_source_presence_matches_fingerprints(observation)

@@ -23,7 +23,7 @@ TOP_LEVEL_KEYS = frozenset({
 })
 BASH_KEYS = frozenset({"version"})
 TRACE_KEYS = frozenset({"version"})
-ENVIRONMENT_KEYS = frozenset({"policy", "recorded_keys"})
+ENVIRONMENT_KEYS = frozenset({"policy", "recorded_keys", "values"})
 RUN_KEYS = frozenset({
     "observed_at_utc",
     "modash_version",
@@ -116,27 +116,37 @@ class TraceInfo:
 class EnvironmentInfo:
     policy: str
     recorded_keys: tuple[str, ...] = field(default_factory=tuple)
+    values: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
         object.__setattr__(self, "policy", _nonempty_string(self.policy, "environment.policy"))
+        values = {
+            _environment_key(key, "environment.values key"): _exact_string(value, "environment.values[]")
+            for key, value in dict(self.values).items()
+        }
         keys = tuple(sorted({
             _environment_key(key, "environment.recorded_keys")
             for key in _sequence(self.recorded_keys, "environment.recorded_keys")
-        }))
+        } | set(values)))
         object.__setattr__(self, "recorded_keys", keys)
+        object.__setattr__(self, "values", {key: values[key] for key in sorted(values)})
 
     @classmethod
     def from_dict(cls, data):
+        if isinstance(data, dict) and "values" not in data:
+            data = {**data, "values": {}}
         _require_keys(data, ENVIRONMENT_KEYS, "environment")
         return cls(
             policy=data["policy"],
             recorded_keys=_string_list(data["recorded_keys"], "environment.recorded_keys"),
+            values=_environment_values(data["values"], "environment.values"),
         )
 
     def to_dict(self):
         return {
             "policy": self.policy,
             "recorded_keys": list(self.recorded_keys),
+            "values": dict(self.values),
         }
 
 @dataclass(frozen=True)
@@ -694,6 +704,14 @@ def _environment_key(value, label: str):
     if "=" in value:
         raise _schema_error(f"{label} values must not contain '='")
     return value
+
+def _environment_values(value, label: str):
+    if not isinstance(value, dict):
+        raise _schema_error(f"{label} must be an object")
+    return {
+        _environment_key(key, f"{label} key"): _exact_string(item, f"{label}[]")
+        for key, item in value.items()
+    }
 
 def _file_role(value, label: str):
     value = _nonempty_string(value, label)

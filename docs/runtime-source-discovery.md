@@ -235,10 +235,11 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - Generated graphs and supplements should be reviewed before use.
 - `observe-compile` is explicit and artifact-writing; normal compile never
   traces or auto-supplements silently.
-- `observe-compile` refuses to build graph or executable output when the traced
-  target exits nonzero.
-- `graph` and `supplement` refuse to promote observations whose traced target
-  exited nonzero. Those observations remain diagnostic trace artifacts only.
+- Nonzero target exit status is recorded in the observation/graph and is not
+  itself a trust failure. `observe-compile` may return that same nonzero status
+  after writing graph, report, observation, and compiled output.
+- Trace instrumentation failures still stop promotion before graph or executable
+  output is written.
 - Runtime graph compile is limited to observed source edges whose call site can
   be mapped exactly in an entrypoint, sourced file, or observed child `bash -c`
   payload. Runtime-observed source effects hidden behind dynamic or source-capable

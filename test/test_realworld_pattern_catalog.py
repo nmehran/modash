@@ -372,13 +372,12 @@ class RealWorldPatternCatalogTestCase(unittest.TestCase):
                     load_mergetool() {
                       source "$1"
                     }
-                    "$MODASH_GIT_HELPER" "$MODASH_GIT_MERGETOOLS_DIR/bc"
-                    "$MODASH_GIT_HELPER" "$MODASH_GIT_MERGETOOLS_DIR/vimdiff"
+                    "$MODASH_GIT_HELPER" ./mergetools/bc
+                    "$MODASH_GIT_HELPER" ./mergetools/vimdiff
                     """),
             )
             env = {
                 "MODASH_GIT_HELPER": "load_mergetool",
-                "MODASH_GIT_MERGETOOLS_DIR": str(project.path("mergetools")),
             }
             output = project.path("compiled-static.sh")
 
@@ -391,6 +390,44 @@ class RealWorldPatternCatalogTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "tool:bc\ntool:vimdiff\n")
         self.assert_edge_names(graph, ["bc", "vimdiff"])
+
+    def test_git_runtime_selected_helper_name_with_dynamic_path_args_replays_with_env_constraint(self):
+        with ScriptProject() as project:
+            project.write("mergetools/bc", 'printf "tool:bc\\n"\n')
+            project.write("drift/bc", 'printf "drift\\n"\n')
+            project.write(
+                "main.sh",
+                textwrap.dedent("""\
+                    load_mergetool() {
+                      source "$1"
+                    }
+                    "$MODASH_GIT_HELPER" "$MODASH_GIT_MERGETOOLS_DIR/bc"
+                    """),
+            )
+            env = {
+                "MODASH_GIT_HELPER": "load_mergetool",
+                "MODASH_GIT_MERGETOOLS_DIR": str(project.path("mergetools")),
+            }
+            entrypoint = project.path("main.sh")
+            trace = project.trace("main.sh", env=env)
+            graph = build_observed_source_graph(entrypoint, trace.observation)
+            graph_path = project.path("graph/runtime-source-graph.json")
+            write_observed_source_graph(graph, graph_path)
+            compiled = project.path("compiled.sh")
+
+            compile_observed_main(str(entrypoint), str(compiled), graph=str(graph_path))
+            result = project.run(compiled, env=env)
+            drifted = project.run(compiled, env={
+                **env,
+                "MODASH_GIT_MERGETOOLS_DIR": str(project.path("drift")),
+            })
+            self.assert_no_live_source(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "tool:bc\n")
+        self.assertEqual(drifted.returncode, 125, drifted.stdout)
+        self.assertIn("observed environment drift: MODASH_GIT_MERGETOOLS_DIR", drifted.stdout)
+        self.assertEqual(graph["environment"]["values"]["MODASH_GIT_HELPER"], "load_mergetool")
 
     def test_mkinitcpio_runtime_hook_dispatch_graph_replays_observed_hooks(self):
         with ScriptProject() as project:

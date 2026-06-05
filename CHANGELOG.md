@@ -24,7 +24,50 @@
 - Added adversarial runtime graph compiler coverage for computed generated-state
   mutation, `exec`, EXIT trap manipulation, trace-instrumentation-sensitive
   probes, command/builtin `eval`, live unobserved source dispatch, child
-  `bash -c` wrapper drift, and unsupported runtime `$0` / `BASH_SOURCE` forms.
+  `bash -c` wrapper drift, hostile replay setup environments, source file
+  version drift during trace, source-entry-sensitive `PIPESTATUS` / `$_`
+  references, dynamic validation-bypass command dispatch, child replay failure
+  propagation, unsafe shopt-restore poisoning, generated `exit` bypasses,
+  exported Bash function rejection, time-prefixed source fail-closed behavior,
+  and unsupported runtime `$0` / `BASH_SOURCE` forms.
+- Added regressions for plain-`bash` launch rejection, embedded payload stream
+  replay, child process replay success markers, `BASH_ENV` child startup
+  neutralization, unquoted heredoc command-substitution bypasses, positional
+  `read` replay-state guards, and array-glob arithmetic predicates from
+  real-world pacman helpers.
+- Added hardening regressions for runtime-validated shopt restore evals,
+  trace-owned environment rejection, user `ENV` preservation, child replay
+  failure propagation and marker-forgery rejection, top-level `declare` /
+  `typeset` source-context drift,
+  instrumentation-sensitive `env` / `set` probes, `read -a` / `mapfile`
+  generated-state mutation, nested dynamic eval, unsupported coprocess
+  execution, and source-free literal `eval echo` lookup forms found in real
+  Git mergetool sources.
+- Added regressions for generated replay `printf` function poisoning, source
+  expansions inside array assignments, wrapped positional `builtin read` /
+  `command read` replay-state mutation, dynamic later arguments to literal
+  `eval`, absolute `printenv` and `/proc/*/environ` instrumentation probes, and
+  child replay marker forgeries through `/proc/$$/environ`.
+- Added regressions for child replay marker forgery through arbitrary external
+  environment readers, `bash -c` implicit `$0` preservation, source-bearing
+  non-Bash shell payload rejection, dynamic shell command `-c` rejection, safe
+  literal `eval printf -v` replay-state mutation rejection, trace-owned
+  `BASHOPTS` / `BASH_ALIASES` / file descriptor probes, and replay-critical
+  command-resolution introspection.
+- Added hardening regressions for forged generated helper calls, dynamic
+  `eval` live-source bypasses, Bash prompt-transformation eval expansion,
+  dynamic shell `-c` payloads, `mapfile` / `readarray` callbacks, mutable replay
+  file races, dynamic array command dispatch, child replay marker forgery with
+  abnormal child termination, legitimate child status `125`, and env-constrained
+  dynamic helper path arguments.
+- Added regressions for dynamic command dispatch drifting into `eval` source
+  execution, inert sourced-library functions with source-capable dynamic tails,
+  literal eval array-subscript command substitution, empty sourced files,
+  computed external interpreter probes of trace environment, hidden
+  source-bearing non-Bash shell payloads, and argv-visible child replay token
+  forgery.
+- Added guarded direct-`kill` replay support for ordinary background-helper
+  cleanup while rejecting guard-bypassing kill forms and current-shell targets.
 
 ### Changed
 
@@ -36,13 +79,32 @@
   from static source evaluation.
 - Documentation now describes runtime observed compilation as graph-tape
   rewriting rather than in-memory supplement replay.
+- Runtime graph replay now sources bundled files from embedded payload streams
+  instead of mutable temporary replay files.
+- Rewritten child `bash -c` replay now preserves a legitimate child status
+  `125` when replay verification succeeds.
+- Runtime observations now carry exact explicit `--env` overlay values. Generated
+  runtime graph output verifies those values before replay, allowing traced
+  env-dependent source paths to compile without trusting changed runtime env.
+- Runtime graph safety validation now distinguishes observed source/helper
+  function bodies from inert sourced-library function bodies, so real-world
+  libraries can define uncalled dynamic external-tool helpers without blocking
+  the observed replay path.
+- Nonzero traced target status is now preserved as trusted observation/graph
+  data instead of blocking graph, supplement, or observed executable generation.
+  Trace instrumentation failures still fail before promotion.
+- Child replay tokens are no longer injected into child `bash -c` command-line
+  payloads; generated child setup reads them from short-lived replay files before
+  user payload execution.
 
 ### Validation
 
-- Full unit suite: `646` tests, `9` skipped.
-- Targeted runtime graph compiler suite: `46` tests passed.
+- Full unit suite: `724` tests, `9` skipped.
+- Runtime-focused graph/source/replay safety suites passed.
 - Opt-in real-world suite with runtime parity, trace, supplement replay,
-  trusted graph replay, and observe-compile gates: `17` tests passed.
+  trusted graph replay, and observe-compile gates: `17` tests passed. Runtime
+  graph replay recorded `10` matches and observe-compile recorded `11` matches,
+  with no expected-error records.
 - Python bytecode compilation passed for `modash.py`, all `methods` modules, and
   all tests.
 

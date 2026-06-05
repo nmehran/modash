@@ -393,8 +393,8 @@ __modash_command_source_command_index() {
 }
 
 __modash_trace_source_common() {
-  local kind=$1 builtin_name=$2
-  shift 2
+  local prior_status=$1 kind=$2 builtin_name=$3
+  shift 3
 
   local event_index
   event_index=$(__modash_next_source_index)
@@ -466,12 +466,15 @@ __modash_trace_source_common() {
 
   if ((source_arg_count == 1)); then
     if ((${#__modash_caller_positionals[@]} > 0)); then
+      ( exit "$prior_status" )
       builtin "$builtin_name" "$source_path" "${__modash_caller_positionals[@]}"
     else
       set --
+      ( exit "$prior_status" )
       builtin "$builtin_name" "$source_path"
     fi
   else
+    ( exit "$prior_status" )
     builtin "$builtin_name" "${source_args[@]}"
   fi
   status=$?
@@ -517,19 +520,22 @@ __modash_trace_source_common() {
 }
 
 __modash_trace_source_alias() {
+  local prior_status=$?
   local kind=$1 builtin_name=$2 caller_count=$3
   shift 3
   __modash_capture_source_call "$caller_count" "$@"
-  __modash_trace_source_common "$kind" "$builtin_name" "${__modash_source_call_args[@]}"
+  __modash_trace_source_common "$prior_status" "$kind" "$builtin_name" "${__modash_source_call_args[@]}"
 }
 
 source() {
+  local prior_status=$?
   __modash_caller_positionals=()
   __modash_caller_positionals_captured=0
-  __modash_trace_source_common source source "$@"
+  __modash_trace_source_common "$prior_status" source source "$@"
 }
 
 __modash_trace_builtin() {
+  local prior_status=$?
   local caller_count=$1
   shift
   __modash_capture_source_call "$caller_count" "$@"
@@ -538,10 +544,10 @@ __modash_trace_builtin() {
     builtin_name=${__modash_source_call_args[$__modash_source_command_index]}
     case "$builtin_name" in
       source)
-        __modash_trace_source_common source source "${__modash_source_call_args[@]:$((__modash_source_command_index + 1))}"
+        __modash_trace_source_common "$prior_status" source source "${__modash_source_call_args[@]:$((__modash_source_command_index + 1))}"
         ;;
       .)
-        __modash_trace_source_common dot . "${__modash_source_call_args[@]:$((__modash_source_command_index + 1))}"
+        __modash_trace_source_common "$prior_status" dot . "${__modash_source_call_args[@]:$((__modash_source_command_index + 1))}"
         ;;
     esac
     return
@@ -549,10 +555,10 @@ __modash_trace_builtin() {
   builtin_name=${__modash_source_call_args[0]-}
   case "$builtin_name" in
     source)
-      __modash_trace_source_common source source "${__modash_source_call_args[@]:1}"
+      __modash_trace_source_common "$prior_status" source source "${__modash_source_call_args[@]:1}"
       ;;
     .)
-      __modash_trace_source_common dot . "${__modash_source_call_args[@]:1}"
+      __modash_trace_source_common "$prior_status" dot . "${__modash_source_call_args[@]:1}"
       ;;
     *)
       builtin "${__modash_source_call_args[@]}"
@@ -561,6 +567,7 @@ __modash_trace_builtin() {
 }
 
 __modash_trace_command() {
+  local prior_status=$?
   local caller_count=$1
   shift
   __modash_capture_source_call "$caller_count" "$@"
@@ -569,10 +576,10 @@ __modash_trace_command() {
     command_name=${__modash_source_call_args[$__modash_source_command_index]}
     case "$command_name" in
       source)
-        __modash_trace_source_common source source "${__modash_source_call_args[@]:$((__modash_source_command_index + 1))}"
+        __modash_trace_source_common "$prior_status" source source "${__modash_source_call_args[@]:$((__modash_source_command_index + 1))}"
         ;;
       .)
-        __modash_trace_source_common dot . "${__modash_source_call_args[@]:$((__modash_source_command_index + 1))}"
+        __modash_trace_source_common "$prior_status" dot . "${__modash_source_call_args[@]:$((__modash_source_command_index + 1))}"
         ;;
     esac
     return
@@ -580,10 +587,10 @@ __modash_trace_command() {
   command_name=${__modash_source_call_args[0]-}
   case "$command_name" in
     source)
-      __modash_trace_source_common source source "${__modash_source_call_args[@]:1}"
+      __modash_trace_source_common "$prior_status" source source "${__modash_source_call_args[@]:1}"
       ;;
     .)
-      __modash_trace_source_common dot . "${__modash_source_call_args[@]:1}"
+      __modash_trace_source_common "$prior_status" dot . "${__modash_source_call_args[@]:1}"
       ;;
     *)
       command "${__modash_source_call_args[@]}"

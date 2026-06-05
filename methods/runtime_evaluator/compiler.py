@@ -52,6 +52,7 @@ def render_runtime_graph_script(entrypoint: str | os.PathLike, graph_payload: di
         embedded_files,
         main_plan.assignments,
         _target_logical_paths(plan.file_units),
+        environment_values=graph["environment"].get("values", {}),
         child_processes=tuple(sorted(plan.process_payloads)),
     )
     entrypoint_unit = plan.file_units[ENTRYPOINT_LOGICAL_PATH]
@@ -61,6 +62,7 @@ def render_runtime_graph_script(entrypoint: str | os.PathLike, graph_payload: di
         + (entrypoint_unit.transformed or entrypoint_unit.content).rstrip("\n")
         + "\n}\n"
         + "__modash_script_status=$?\n"
+        + "__modash_verify_trap_active=1\n"
         + "__modash_verify_replay_consumed \"$__modash_script_status\"\n"
     )
 

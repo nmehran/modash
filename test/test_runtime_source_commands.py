@@ -8,6 +8,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from methods.source_commands import (  # noqa: E402
     clean_shell_word,
+    contains_nested_source_command,
     is_source_like_command_text,
     is_trace_wrapper_source_command,
     normalized_trace_wrapper_words,
@@ -85,8 +86,25 @@ class RuntimeSourceCommandsTestCase(unittest.TestCase):
         self.assertTrue(is_source_like_command_text("__modash_trace_source_alias source source"))
         self.assertFalse(is_source_like_command_text("echo source ./dep.sh"))
 
+    def test_source_invocation_parses_reserved_word_prefixes(self):
+        cases = {
+            "time": "time builtin source ./dep.sh",
+            "time option": "time -p command source ./dep.sh",
+            "time negated builtin": "time ! builtin source ./dep.sh",
+            "coproc block": "coproc { builtin source ./dep.sh",
+            "coproc name": "coproc loader source ./dep.sh",
+        }
+        for name, command in cases.items():
+            with self.subTest(name=name):
+                self.assert_invocation(command, "./dep.sh", ())
+
     def test_clean_shell_word_strips_quotes_and_trailing_semicolons(self):
         self.assertEqual(clean_shell_word("'./dep.sh';;"), "./dep.sh")
+
+    def test_nested_source_scanner_ignores_extglob_patterns(self):
+        self.assertFalse(
+            contains_nested_source_command("if [[ ! ${CDPATH-} || $cur == ?(.)?(.)/* ]]")
+        )
 
 
 if __name__ == "__main__":

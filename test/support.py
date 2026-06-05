@@ -43,8 +43,10 @@ class ScriptProject:
         return target
 
     def run(self, script, cwd=None, env=None):
+        script_path = self.path(script)
+        command = [str(script_path)] if os.access(script_path, os.X_OK) else ["bash", str(script_path)]
         return subprocess.run(
-            ["bash", str(self.path(script))],
+            command,
             cwd=str(self.path(cwd) if cwd is not None else self.root),
             env=self._merged_env(env),
             stdout=subprocess.PIPE,

@@ -219,6 +219,7 @@ def trace_sources(
             environment=EnvironmentInfo(
                 policy="inherit" if env is None else "overlay",
                 recorded_keys=tuple(sorted(str(key) for key in (env or {}).keys())),
+                values={str(key): str(value) for key, value in (env or {}).items()},
             ),
             run=RuntimeRunInfo(
                 observed_at_utc=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -256,6 +257,38 @@ def _trace_environment(env):
     run_env = os.environ.copy()
     if env:
         run_env.update({str(key): str(value) for key, value in env.items()})
+    trace_owned = {
+        "BASH_ENV",
+        "BASH_XTRACEFD",
+        "PS4",
+        "SHELLOPTS",
+        "MODASH_TRACE_FILE",
+        "MODASH_TRACE_COUNTER_FILE",
+        "MODASH_TRACE_XTRACE_FILE",
+        "MODASH_TRACE_FAILURE_FILE",
+        "MODASH_TRACE_POSITIONAL_SCANNER",
+        "MODASH_TRACE_FUNCTION_SCANNER",
+        "MODASH_TRACE_FINGERPRINT_SCANNER",
+        "MODASH_TRACE_PYTHON",
+    }
+    present_trace_owned = sorted(key for key in trace_owned if key in run_env)
+    if present_trace_owned:
+        raise RuntimeSourceTraceError(
+            "runtime source trace does not support user-provided trace instrumentation environment: "
+            + ", ".join(present_trace_owned),
+            code="runtime.trace.instrumentation_environment",
+        )
+    exported_functions = sorted(
+        key
+        for key in run_env
+        if key.startswith("BASH_FUNC_") and key.endswith("%%")
+    )
+    if exported_functions:
+        raise RuntimeSourceTraceError(
+            "runtime source trace does not support exported Bash functions because trusted replay runs under bash -p: "
+            + ", ".join(exported_functions),
+            code="runtime.trace.exported_function",
+        )
     return run_env
 
 
@@ -586,13 +619,24 @@ def _observation_file_fingerprints(entrypoint_path, entrypoint_fingerprint, raw_
         if raw_event.source_size is None or raw_event.source_mtime_ns is None or raw_event.source_sha256 is None:
             continue
         resolved_path = Path(raw_event.resolved_path).resolve(strict=False)
-        trace_source_fingerprints[resolved_path] = RuntimeFileFingerprint(
+        fingerprint = RuntimeFileFingerprint(
             path=str(resolved_path),
             size=raw_event.source_size,
             mtime_ns=raw_event.source_mtime_ns,
             sha256=raw_event.source_sha256,
             roles=("source",),
         )
+        previous = trace_source_fingerprints.get(resolved_path)
+        if previous is not None and (
+            previous.size != fingerprint.size
+            or previous.mtime_ns != fingerprint.mtime_ns
+            or previous.sha256 != fingerprint.sha256
+        ):
+            raise RuntimeSourceTraceError(
+                f"runtime source trace observed multiple versions of sourced file: {resolved_path}",
+                code="runtime.trace.source_version_drift",
+            )
+        trace_source_fingerprints[resolved_path] = fingerprint
 
     def add_role(path, role):
         resolved = Path(path).resolve(strict=False)

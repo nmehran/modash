@@ -33,7 +33,7 @@ RESULTS_DIR = REPO_ROOT / ".realworld" / "results"
 OUTPUTS_DIR = REALWORLD_DIR / "outputs"
 PINNED_MODES = ("context", "executable")
 EXPECTED_STATUSES = frozenset({"success", "unsupported", "timeout", "skip"})
-RUNTIME_EXPECTED_STATUSES = frozenset({"match"})
+RUNTIME_EXPECTED_STATUSES = frozenset({"match", "error"})
 RUNTIME_PROBE_KEYS = frozenset({"trace", "supplement", "graph", "observe_compile"})
 
 LOCAL_SMOKE_PATTERNS = (
@@ -223,6 +223,16 @@ def validate_runtime_probe_spec(project, runtime, key):
         return
     if not isinstance(spec, dict):
         raise ValueError(f"real-world project {project['name']} runtime {key} probe must be an object")
+    expected = spec.get("expected", "match")
+    if expected not in RUNTIME_EXPECTED_STATUSES:
+        raise ValueError(f"real-world project {project['name']} runtime {key} probe has invalid expected status")
+    if expected == "error":
+        diagnostic = spec.get("diagnostic")
+        if not isinstance(diagnostic, dict) or not diagnostic.get("fragment"):
+            raise ValueError(
+                f"real-world project {project['name']} runtime {key} error expectation "
+                "must declare a diagnostic fragment"
+            )
     minimum_events = spec.get("minimum_events", 1)
     if not isinstance(minimum_events, int) or minimum_events < 0:
         raise ValueError(f"real-world project {project['name']} runtime {key} minimum_events must be non-negative")
@@ -901,6 +911,21 @@ def source_suffixes_match(record, spec):
     )
 
 
+def runtime_probe_expected_status(spec):
+    return spec.get("expected", "match")
+
+
+def runtime_probe_error_matches(record, spec):
+    diagnostic = spec.get("diagnostic", {})
+    fragment = diagnostic.get("fragment")
+    if record.get("status") != "error" or not fragment:
+        return False
+    exception = record.get("exception") or {}
+    if diagnostic.get("type") and exception.get("type") != diagnostic["type"]:
+        return False
+    return fragment in exception.get("message", "")
+
+
 def normalize_record_paths(record, root):
     normalized = dict(record)
     normalized["entrypoint"] = relative_to_root(record["entrypoint"], root)
@@ -1103,13 +1128,15 @@ def completed_output_text(value):
     return value
 
 
-def run_runtime_command(script, cwd, environment, timeout_seconds):
+def run_runtime_command(script, cwd, environment, timeout_seconds, *, prefer_executable=False):
     started_at = time.perf_counter()
     env = os.environ.copy()
     env.update(environment)
+    script_path = Path(script)
+    command = [str(script_path)] if prefer_executable and os.access(script_path, os.X_OK) else ["bash", str(script_path)]
     try:
         result = subprocess.run(
-            ["bash", str(script)],
+            command,
             cwd=str(cwd),
             env=env,
             stdout=subprocess.PIPE,
@@ -1146,7 +1173,7 @@ def run_runtime_parity_probe(entrypoint_path, compiled_path, cwd, environment, t
             "original": original,
         }
 
-    compiled = run_runtime_command(compiled_path, cwd, environment, timeout_seconds)
+    compiled = run_runtime_command(compiled_path, cwd, environment, timeout_seconds, prefer_executable=True)
     if compiled["status"] == "timeout":
         return {
             "status": "timeout",
@@ -1297,7 +1324,7 @@ def run_runtime_supplement_replay_probe(
         }
 
     original = run_runtime_command(entrypoint_path, cwd, trace_environment, timeout_seconds)
-    compiled = run_runtime_command(compiled_path, cwd, trace_environment, timeout_seconds)
+    compiled = run_runtime_command(compiled_path, cwd, trace_environment, timeout_seconds, prefer_executable=True)
     if original["status"] == "timeout" or compiled["status"] == "timeout":
         status = "timeout"
     else:
@@ -1387,7 +1414,7 @@ def run_runtime_graph_replay_probe(
         }
 
     original = run_runtime_command(entrypoint_path, cwd, trace_environment, timeout_seconds)
-    compiled = run_runtime_command(compiled_path, cwd, trace_environment, timeout_seconds)
+    compiled = run_runtime_command(compiled_path, cwd, trace_environment, timeout_seconds, prefer_executable=True)
     if original["status"] == "timeout" or compiled["status"] == "timeout":
         status = "timeout"
     else:
@@ -1480,7 +1507,7 @@ def run_runtime_observe_compile_probe(
     trace_stderr = stderr.getvalue()
     trace_target_stderr = observe_compile_target_stderr(trace_stderr)
     original = run_runtime_command(entrypoint_path, cwd, trace_environment, timeout_seconds)
-    compiled = run_runtime_command(compiled_path, cwd, trace_environment, timeout_seconds)
+    compiled = run_runtime_command(compiled_path, cwd, trace_environment, timeout_seconds, prefer_executable=True)
     if original["status"] == "timeout":
         status = "timeout"
     elif compiled["status"] == "timeout":
@@ -2267,15 +2294,19 @@ class RealWorldProjectTestCase(unittest.TestCase):
                         relative_to_root(source_path, root)
                         for source_path in record["source_paths"]
                     ]
-                record["expected_status"] = "match"
-                record["matched_expectation"] = (
-                    record["status"] == "match"
-                    and record.get("source_events", 0) >= minimum_probe_events(spec)
-                    and record.get("graph_edges", 0) >= minimum_probe_events(spec)
-                    and source_suffixes_match(record, spec)
-                    and record.get("runtime_graph") is not None
-                    and record.get("graph_review_report") is not None
-                )
+                expected_status = runtime_probe_expected_status(spec)
+                record["expected_status"] = expected_status
+                if expected_status == "error":
+                    record["matched_expectation"] = runtime_probe_error_matches(record, spec)
+                else:
+                    record["matched_expectation"] = (
+                        record["status"] == "match"
+                        and record.get("source_events", 0) >= minimum_probe_events(spec)
+                        and record.get("graph_edges", 0) >= minimum_probe_events(spec)
+                        and source_suffixes_match(record, spec)
+                        and record.get("runtime_graph") is not None
+                        and record.get("graph_review_report") is not None
+                    )
                 records.append(record)
                 if not record["matched_expectation"]:
                     failures.append(record)
@@ -2357,17 +2388,21 @@ class RealWorldProjectTestCase(unittest.TestCase):
                         relative_to_root(source_path, root)
                         for source_path in record["source_paths"]
                     ]
-                record["expected_status"] = "match"
-                record["matched_expectation"] = (
-                    record["status"] == "match"
-                    and isinstance(record.get("graph_edges"), int)
-                    and record["graph_edges"] >= minimum_probe_events(spec)
-                    and source_suffixes_match(record, spec)
-                    and record.get("observation_path") is not None
-                    and record.get("runtime_graph") is not None
-                    and record.get("graph_review_report") is not None
-                    and record.get("output_path") is not None
-                )
+                expected_status = runtime_probe_expected_status(spec)
+                record["expected_status"] = expected_status
+                if expected_status == "error":
+                    record["matched_expectation"] = runtime_probe_error_matches(record, spec)
+                else:
+                    record["matched_expectation"] = (
+                        record["status"] == "match"
+                        and isinstance(record.get("graph_edges"), int)
+                        and record["graph_edges"] >= minimum_probe_events(spec)
+                        and source_suffixes_match(record, spec)
+                        and record.get("observation_path") is not None
+                        and record.get("runtime_graph") is not None
+                        and record.get("graph_review_report") is not None
+                        and record.get("output_path") is not None
+                    )
                 records.append(record)
                 if not record["matched_expectation"]:
                     failures.append(record)

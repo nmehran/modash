@@ -414,7 +414,7 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                 text=True,
             )
             actual = subprocess.run(
-                ["bash", str(compiled)],
+                [str(compiled)],
                 cwd=str(project.root),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -709,19 +709,17 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                 "main.sh",
                 "\n".join([
                     'load_one() { source "$1"; }',
-                    '"$MODASH_TEST_HELPER" "$MODASH_TEST_TARGET_ONE"',
-                    '"$MODASH_TEST_HELPER" "$MODASH_TEST_TARGET_TWO"',
+                    '"$MODASH_TEST_HELPER" ./one.sh',
+                    '"$MODASH_TEST_HELPER" ./two.sh',
                     "",
                 ]),
             )
-            dependency_one = project.write("one.sh", 'printf "dep:one\\n"\n')
-            dependency_two = project.write("two.sh", 'printf "dep:two\\n"\n')
+            project.write("one.sh", 'printf "dep:one\\n"\n')
+            project.write("two.sh", 'printf "dep:two\\n"\n')
             trace = project.trace(
                 "main.sh",
                 env={
                     "MODASH_TEST_HELPER": "load_one",
-                    "MODASH_TEST_TARGET_ONE": str(dependency_one),
-                    "MODASH_TEST_TARGET_TWO": str(dependency_two),
                 },
             )
             graph = build_observed_source_graph(entrypoint, trace.observation)
@@ -734,8 +732,6 @@ class RuntimeSupplementReplayTestCase(unittest.TestCase):
                 compiled,
                 env={
                     "MODASH_TEST_HELPER": "load_one",
-                    "MODASH_TEST_TARGET_ONE": str(dependency_one),
-                    "MODASH_TEST_TARGET_TWO": str(dependency_two),
                 },
             )
 
