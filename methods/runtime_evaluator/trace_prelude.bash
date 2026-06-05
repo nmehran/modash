@@ -79,8 +79,8 @@ __modash_emit_source_event_with_stack() {
 __modash_next_source_index() {
   local lock_path="${MODASH_TRACE_COUNTER_FILE}.lock"
   local index
-  while ! mkdir "$lock_path" 2>/dev/null; do
-    sleep 0.001
+  while ! "$MODASH_TRACE_MKDIR" "$lock_path" 2>/dev/null; do
+    "$MODASH_TRACE_SLEEP" 0.001
   done
   if [[ -r $MODASH_TRACE_COUNTER_FILE ]]; then
     IFS= read -r index < "$MODASH_TRACE_COUNTER_FILE"
@@ -88,7 +88,7 @@ __modash_next_source_index() {
     index=0
   fi
   printf '%s\n' "$((index + 1))" > "$MODASH_TRACE_COUNTER_FILE"
-  rmdir "$lock_path"
+  "$MODASH_TRACE_RMDIR" "$lock_path"
   printf '%s' "$index"
 }
 
@@ -104,12 +104,17 @@ __modash_fingerprint_file() {
   ((${#__modash_source_fingerprint[@]} == 3))
 }
 
+__modash_physical_pwd() {
+  builtin pwd -P 2>/dev/null || printf '%s' "$PWD"
+}
+
 __modash_resolve_source_path() {
   local source_path=${1-}
-  local directory
+  local directory cwd
+  cwd=$(__modash_physical_pwd)
 
   if [[ -z $source_path ]]; then
-    printf '%s/' "$PWD"
+    printf '%s/' "$cwd"
     return
   fi
 
@@ -117,13 +122,13 @@ __modash_resolve_source_path() {
     if [[ $source_path == /* ]]; then
       printf '%s' "$source_path"
     else
-      printf '%s/%s' "$PWD" "$source_path"
+      printf '%s/%s' "$cwd" "$source_path"
     fi
     return
   fi
 
   if ! shopt -q sourcepath; then
-    printf '%s/%s' "$PWD" "$source_path"
+    printf '%s/%s' "$cwd" "$source_path"
     return
   fi
 
@@ -137,14 +142,14 @@ __modash_resolve_source_path() {
       if [[ $directory == /* ]]; then
         printf '%s/%s' "$directory" "$source_path"
       else
-        printf '%s/%s/%s' "$PWD" "$directory" "$source_path"
+        printf '%s/%s/%s' "$cwd" "$directory" "$source_path"
       fi
       IFS=$old_ifs
       return
     fi
   done
   IFS=$old_ifs
-  printf '%s/%s' "$PWD" "$source_path"
+  printf '%s/%s' "$cwd" "$source_path"
 }
 
 __modash_source_file_from_bash_source() {
@@ -281,7 +286,7 @@ __modash_process_entrypoint() {
     if [[ $shell_entrypoint == /* ]]; then
       printf '%s' "$shell_entrypoint"
     else
-      printf '%s/%s' "$PWD" "$shell_entrypoint"
+      printf '%s/%s' "$(__modash_physical_pwd)" "$shell_entrypoint"
     fi
   else
     __modash_resolve_source_path "$shell_entrypoint"
@@ -338,12 +343,19 @@ __modash_source_may_mutate_positionals() {
 }
 
 __modash_source_builtin_enabled() {
+  local line
   case "$1" in
     source)
-      enable -p | grep -q '^enable source$'
+      while IFS= read -r line; do
+        [[ $line == "enable source" ]] && return 0
+      done < <(enable -p)
+      return 1
       ;;
     .)
-      enable -p | grep -q '^enable \.$'
+      while IFS= read -r line; do
+        [[ $line == "enable ." ]] && return 0
+      done < <(enable -p)
+      return 1
       ;;
     *)
       return 1
@@ -614,6 +626,9 @@ __modash_trace_run_child_bash() {
   MODASH_TRACE_FUNCTION_SCANNER=$MODASH_TRACE_FUNCTION_SCANNER \
   MODASH_TRACE_FINGERPRINT_SCANNER=$MODASH_TRACE_FINGERPRINT_SCANNER \
   MODASH_TRACE_PYTHON=$MODASH_TRACE_PYTHON \
+  MODASH_TRACE_MKDIR=$MODASH_TRACE_MKDIR \
+  MODASH_TRACE_RMDIR=$MODASH_TRACE_RMDIR \
+  MODASH_TRACE_SLEEP=$MODASH_TRACE_SLEEP \
   command "$@"
 }
 
@@ -680,7 +695,10 @@ export -n \
   MODASH_TRACE_POSITIONAL_SCANNER \
   MODASH_TRACE_FUNCTION_SCANNER \
   MODASH_TRACE_FINGERPRINT_SCANNER \
-  MODASH_TRACE_PYTHON
+  MODASH_TRACE_PYTHON \
+  MODASH_TRACE_MKDIR \
+  MODASH_TRACE_RMDIR \
+  MODASH_TRACE_SLEEP
 
 alias source='__modash_trace_source_alias source source "$#" "$@" --'
 alias .='__modash_trace_source_alias dot . "$#" "$@" --'

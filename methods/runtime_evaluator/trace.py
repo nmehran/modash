@@ -47,7 +47,7 @@ from methods.source_resolver import (
     strip_shell_word_quotes,
 )
 
-TRACE_VERSION = "runtime-wrapper-v11"
+TRACE_VERSION = "runtime-wrapper-v12"
 PROCESS_MARKER = "MODASH_PROCESS_EVENT"
 TRACE_MARKER = "MODASH_SOURCE_EVENT"
 DEFAULT_TRACE_TIMEOUT_SECONDS = 30
@@ -65,6 +65,9 @@ TRACE_OWNED_ENVIRONMENT_KEYS = frozenset({
     "MODASH_TRACE_FUNCTION_SCANNER",
     "MODASH_TRACE_FINGERPRINT_SCANNER",
     "MODASH_TRACE_PYTHON",
+    "MODASH_TRACE_MKDIR",
+    "MODASH_TRACE_RMDIR",
+    "MODASH_TRACE_SLEEP",
 })
 
 
@@ -170,6 +173,9 @@ def trace_sources(
             "MODASH_TRACE_FUNCTION_SCANNER": str(function_scanner_path),
             "MODASH_TRACE_FINGERPRINT_SCANNER": str(fingerprint_scanner_path),
             "MODASH_TRACE_PYTHON": sys.executable,
+            "MODASH_TRACE_MKDIR": _required_tool("mkdir"),
+            "MODASH_TRACE_RMDIR": _required_tool("rmdir"),
+            "MODASH_TRACE_SLEEP": _required_tool("sleep"),
         })
 
         try:
@@ -513,6 +519,28 @@ def _bash_version(bash):
 def _resolved_shell(bash):
     resolved = shutil.which(str(bash))
     return resolved or str(bash)
+
+
+def _required_tool(name: str) -> str:
+    resolved = shutil.which(name)
+    if resolved is None:
+        raise RuntimeSourceTraceError(
+            f"runtime trace cannot locate required helper tool: {name}",
+            code="runtime.trace.tool_unavailable",
+        )
+    try:
+        path = Path(resolved).resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeSourceTraceError(
+            f"runtime trace cannot resolve required helper tool: {name}: {resolved}",
+            code="runtime.trace.tool_unavailable",
+        ) from exc
+    if not path.is_absolute():
+        raise RuntimeSourceTraceError(
+            f"runtime trace resolved non-absolute helper tool path: {name}: {path}",
+            code="runtime.trace.tool_unavailable",
+        )
+    return str(path)
 
 
 def _modash_version():

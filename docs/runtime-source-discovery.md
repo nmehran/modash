@@ -101,7 +101,7 @@ Small example:
     "version": "GNU bash, version 5.2.21"
   },
   "trace": {
-    "version": "runtime-wrapper-v11"
+    "version": "runtime-wrapper-v12"
   },
   "environment": {
     "policy": "overlay",
@@ -248,9 +248,10 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
   `eval` remain trace data, but they are not promoted into trusted graph
   compilation. Source-free `eval "$shellopts"` restoration from `shopt -p` is
   allowed for real-world shell-library helpers.
-- Runtime graph compile also rejects source redirections, dynamic or multiline
+- Runtime graph compile supports simple source redirections by applying them to
+  the generated replay group. Heredoc source redirections, dynamic or multiline
   child `bash -c` payloads, reserved `__modash_` names, and scripts that inspect
-  trace-instrumentation-sensitive shell state.
+  trace-instrumentation-sensitive shell state remain fail-closed.
 - Runtime graph construction rejects sourced files with top-level
   function-context-sensitive Bash such as `local`, `caller`, `FUNCNAME`, or
   `BASH_LINENO`, because the trace wrapper necessarily observes source calls

@@ -104,6 +104,10 @@ __modash_require_embedded_file() {{
   [[ ${{__modash_embedded_payload[$logical_path]+set}} == set ]] || __modash_abort "missing embedded payload: $logical_path"
 }}
 
+__modash_physical_pwd() {{
+  builtin pwd -P 2>/dev/null || builtin printf '%s' "$PWD"
+}}
+
 __modash_eval_shopt_restore() {{
   local script=$1 line flag option
   while IFS= read -r line || [[ -n $line ]]; do
@@ -123,6 +127,37 @@ __modash_literal_eval_argument_is_safe() {{
       ;;
   esac
   return 0
+}}
+
+__modash_save_source_assignments() {{
+  local name
+  __modash_source_assignment_names=("$@")
+  __modash_source_assignment_was_set=()
+  __modash_source_assignment_old=()
+  for name in "$@"; do
+    if [[ ${{!name+x}} == x ]]; then
+      __modash_source_assignment_was_set+=(1)
+      __modash_source_assignment_old+=("${{!name}}")
+    else
+      __modash_source_assignment_was_set+=(0)
+      __modash_source_assignment_old+=("")
+    fi
+  done
+}}
+
+__modash_restore_source_assignments() {{
+  local index name
+  for ((index = ${{#__modash_source_assignment_names[@]}} - 1; index >= 0; index--)); do
+    name=${{__modash_source_assignment_names[$index]}}
+    if [[ ${{__modash_source_assignment_was_set[$index]}} == 1 ]]; then
+      builtin printf -v "$name" '%s' "${{__modash_source_assignment_old[$index]}}"
+    else
+      unset -v "$name"
+    fi
+  done
+  __modash_source_assignment_names=()
+  __modash_source_assignment_was_set=()
+  __modash_source_assignment_old=()
 }}
 
 eval() {{
@@ -203,7 +238,7 @@ __modash_guard_dynamic_command() {{
     printf)
       shift
       while (( $# )); do
-        [[ $1 == -v ]] && __modash_abort "runtime replay cannot allow dynamic printf -v"
+        [[ $1 == -v || $1 == -v* ]] && __modash_abort "runtime replay cannot allow dynamic printf -v"
         shift
       done
       return
@@ -295,21 +330,22 @@ readonly -A __modash_edge_target __modash_edge_resolved_path __modash_edge_kind 
 readonly -A __modash_edge_diag_file __modash_edge_diag_line __modash_edge_diag_message __modash_process_expected
 
 __modash_resolve_source_path() {{
-  local source_path=${{1-}} directory old_ifs
+  local source_path=${{1-}} directory old_ifs cwd
+  cwd=$(__modash_physical_pwd)
   if [[ -z $source_path ]]; then
-    builtin printf '%s/' "$PWD"
+    builtin printf '%s/' "$cwd"
     return
   fi
   if [[ $source_path == */* ]]; then
     if [[ $source_path == /* ]]; then
       builtin printf '%s' "$source_path"
     else
-      builtin printf '%s/%s' "$PWD" "$source_path"
+      builtin printf '%s/%s' "$cwd" "$source_path"
     fi
     return
   fi
   if ! builtin shopt -q sourcepath; then
-    builtin printf '%s/%s' "$PWD" "$source_path"
+    builtin printf '%s/%s' "$cwd" "$source_path"
     return
   fi
   old_ifs=$IFS
@@ -322,14 +358,14 @@ __modash_resolve_source_path() {{
       if [[ $directory == /* ]]; then
         builtin printf '%s/%s' "$directory" "$source_path"
       else
-        builtin printf '%s/%s/%s' "$PWD" "$directory" "$source_path"
+        builtin printf '%s/%s/%s' "$cwd" "$directory" "$source_path"
       fi
       IFS=$old_ifs
       return
     fi
   done
   IFS=$old_ifs
-  builtin printf '%s/%s' "$PWD" "$source_path"
+  builtin printf '%s/%s' "$cwd" "$source_path"
 }}
 
 __modash_normalize_source_path() {{
@@ -341,7 +377,7 @@ __modash_normalize_source_path() {{
   directory=${{path%/*}}
   basename=${{path##*/}}
   if [[ $directory == "$path" ]]; then
-    directory=$PWD
+    directory=$(__modash_physical_pwd)
   elif [[ -z $directory ]]; then
     directory=/
   fi
@@ -402,6 +438,9 @@ __modash_validate_source_argv() {{
   actual_resolved=$(__modash_normalize_source_path "$(__modash_resolve_source_path "$source_path")")
   if [[ $actual_resolved != "$__modash_replay_resolved_path" ]]; then
     __modash_abort "observed source path drift"
+  fi
+  if [[ $__modash_replay_kind == missing && -n $source_path && ( -e $actual_resolved || -L $actual_resolved ) ]]; then
+    __modash_abort "observed missing source drift"
   fi
   if (( $# != __modash_replay_argc + 1 )); then
     __modash_abort "observed source argument drift"

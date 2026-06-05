@@ -80,6 +80,12 @@
   trace-environment hiding from external interpreter probes.
 - Added source-free external interpreter heredoc replay coverage while keeping
   heredoc bodies that inspect trace-owned environment fail-closed.
+- Added review-driven regressions for physical-cwd source resolution when `PWD`
+  is assigned by user code, assignment-prefixed source scope and sourcepath
+  lookup, assignment command-substitution source-entry status, attached
+  `printf -vNAME` replay-state mutation, command-tail `kill` bypasses,
+  replay-time missing-source drift, source redirection replay, and external
+  trace-fd probes.
 
 ### Changed
 
@@ -115,10 +121,19 @@
   selecting the trusted edge, validates the selected source path and arguments
   against the graph, and aborts on replay-time drift instead of blindly replaying
   the observed target.
+- Runtime tracing now resolves its helper tools before user code runs and uses
+  physical current-directory resolution for source path fingerprints. Generated
+  replay uses the same physical-cwd source resolution and rechecks missing
+  source edges at runtime.
+- Runtime graph replay now preserves assignment-prefixed source commands and
+  simple source redirections instead of rejecting or weakening them. External
+  interpreter environment reads are allowed when trace-owned state is hidden and
+  the payload does not inspect trace/replay-owned names, `/proc` process state,
+  or trace file descriptors.
 
 ### Validation
 
-- Full unit suite: `753` tests, `9` skipped.
+- Full unit suite: `759` tests, `9` skipped.
 - Runtime-focused graph/source/replay safety suites passed.
 - Opt-in real-world suite with runtime parity, trace, supplement replay,
   trusted graph replay, and observe-compile gates: `17` tests passed. Runtime

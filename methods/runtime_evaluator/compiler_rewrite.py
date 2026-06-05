@@ -211,22 +211,26 @@ def _candidate_replacements_by_line(unit: _RewriteUnit) -> dict[int, list[tuple[
                 f"could not locate source site {candidate.text!r} in {unit.physical_path or unit.logical_path}:{candidate.line}",
                 code="runtime.compile.mapping_failed",
             )
-        if _source_site_has_redirection(line, needle):
+        source_word_offset = _source_word_offset_in_candidate(needle)
+        if _source_site_is_inside_process_substitution(line, start + source_word_offset):
             raise RuntimeObservedCompileError(
-                f"runtime graph compiler does not yet support source redirections in {unit.physical_path or unit.logical_path}:{candidate.line}",
-                code="runtime.compile.source_redirection",
+                f"unsupported unrewritten source command in process substitution at {unit.physical_path or unit.logical_path}:{candidate.line}: {candidate.text.strip()}",
+                code="runtime.compile.unrewritten_source",
             )
         if _source_site_has_unsupported_prefix(needle):
             raise RuntimeObservedCompileError(
                 f"runtime graph compiler does not yet support replaying source command prefixes in {unit.physical_path or unit.logical_path}:{candidate.line}: {needle.strip()}",
                 code="runtime.compile.unsupported_source_prefix",
             )
+        source_expression, redirection_suffix = _source_expression_and_redirections_for_candidate(candidate)
         end = start + len(needle)
         search_start_by_line[candidate.line] = end
         replacement = _render_replay_group(
             candidate,
-            source_expression=_source_expression_for_candidate(candidate),
-            source_expression_sets_status=_source_expression_sets_status(candidate),
+            source_expression=source_expression,
+            source_expression_sets_status=_has_command_substitution(source_expression),
+            assignment_words=_source_assignment_words_for_candidate(candidate),
+            redirection_suffix=redirection_suffix,
             negated=_source_site_is_negated(needle, candidate.separator),
         )
         if candidate.separator and candidate.text.lstrip().startswith(candidate.separator):
@@ -239,16 +243,33 @@ def _render_replay_group(
     *,
     source_expression: str,
     source_expression_sets_status: bool,
+    assignment_words: tuple[str, ...] = (),
+    redirection_suffix: str = "",
     negated: bool = False,
 ) -> str:
+    assignment_names = _source_assignment_names(assignment_words)
+    assignment_sets_status = any(_has_command_substitution(word) for word in assignment_words)
     source_entry_status = (
+        "__modash_source_assignment_status"
+        if assignment_sets_status
+        else
         "__modash_source_expansion_status"
         if source_expression_sets_status
         else "__modash_source_command_prior_status"
     )
+    assignment_setup = ""
+    assignment_restore = ""
+    if assignment_words:
+        assignment_setup = (
+            f"__modash_save_source_assignments {' '.join(shlex.quote(name) for name in assignment_names)}; "
+            f"{' '.join(assignment_words)}; "
+            "__modash_source_assignment_status=$?; "
+        )
+        assignment_restore = "__modash_restore_source_assignments; "
     group = (
         f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {source_expression} ); "
         "__modash_source_expansion_status=$?; "
+        f"{assignment_setup}"
         f"__modash_source_entry_status=${source_entry_status}; "
         f"__modash_replay_select_active=1; __modash_select_source_edge {shlex.quote(candidate.base_id)}; "
         "__modash_replay_select_active=0; "
@@ -261,19 +282,28 @@ def _render_replay_group(
         "( exit \"$__modash_source_entry_status\" ); "
         "builtin source <(__modash_emit_embedded_file \"$__modash_replay_target\") \"${__modash_replay_args[@]}\"; "
         "__modash_replay_actual_status=$?; "
+        f"{assignment_restore}"
         "if (( __modash_replay_actual_status != __modash_replay_status )); then "
         "__modash_abort \"observed source status drift\"; "
         "fi; "
         "( exit \"$__modash_replay_actual_status\" ); "
         "else "
+        f"{assignment_restore}"
         "builtin printf '%s: line %s: %s\\n' \"$__modash_replay_diag_file\" \"$__modash_replay_diag_line\" \"$__modash_replay_diag_message\" >&2; "
         "( exit \"$__modash_replay_status\" ); "
         "fi; }"
     )
+    if redirection_suffix:
+        group = f"{group} {redirection_suffix}"
     return f"! {group}" if negated else group
 
 
 def _source_expression_for_candidate(candidate: _SourceCandidate) -> str:
+    source_expression, _redirections = _source_expression_and_redirections_for_candidate(candidate)
+    return source_expression
+
+
+def _source_expression_and_redirections_for_candidate(candidate: _SourceCandidate) -> tuple[str, str]:
     probe = candidate.text.strip()
     if candidate.separator and probe.startswith(candidate.separator):
         probe = probe[len(candidate.separator):].strip()
@@ -283,12 +313,112 @@ def _source_expression_for_candidate(candidate: _SourceCandidate) -> str:
             f"could not render source argv validation for observed source site: {candidate.text!r}",
             code="runtime.compile.mapping_failed",
         )
-    return invocation.source_expression
+    try:
+        raw_words = tuple(parse_shell_words_preserving_quotes(probe))
+    except UnsupportedSourceError as exc:
+        raise RuntimeObservedCompileError(
+            f"could not parse source argv validation for observed source site: {candidate.text!r}",
+            code="runtime.compile.mapping_failed",
+        ) from exc
+    source_words = raw_words[invocation.source_index + 1:]
+    argv_words, redirection_words = _split_source_redirections(source_words)
+    if not argv_words:
+        raise RuntimeObservedCompileError(
+            f"could not render source argv validation for observed source site: {candidate.text!r}",
+            code="runtime.compile.mapping_failed",
+        )
+    return " ".join(argv_words), " ".join(redirection_words)
+
+
+def _source_assignment_words_for_candidate(candidate: _SourceCandidate) -> tuple[str, ...]:
+    probe = candidate.text.strip()
+    if candidate.separator and probe.startswith(candidate.separator):
+        probe = probe[len(candidate.separator):].strip()
+    invocation = source_command_invocation(probe, stop_at_shell_control=True)
+    if invocation is None or invocation.source_index <= 0:
+        return ()
+    try:
+        raw_words = tuple(parse_shell_words_preserving_quotes(probe))
+    except UnsupportedSourceError:
+        return ()
+    assignment_words: list[str] = []
+    for raw_word, word in zip(raw_words[:invocation.source_index], invocation.words[:invocation.source_index]):
+        if ASSIGNMENT_WORD_PATTERN.match(word):
+            assignment_words.append(raw_word)
+    return tuple(assignment_words)
+
+
+def _source_assignment_names(assignment_words: tuple[str, ...]) -> tuple[str, ...]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for word in assignment_words:
+        clean = strip_shell_word_quotes(word)
+        if "=" not in clean:
+            continue
+        name = clean.split("=", 1)[0]
+        if name.endswith("+"):
+            name = name[:-1]
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            raise RuntimeObservedCompileError(
+                f"runtime graph compiler cannot replay this source assignment prefix: {word!r}",
+                code="runtime.compile.unsupported_source_prefix",
+            )
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+    return tuple(names)
 
 
 def _source_expression_sets_status(candidate: _SourceCandidate) -> bool:
     expression = _source_expression_for_candidate(candidate)
     return _has_command_substitution(expression)
+
+
+def _split_source_redirections(words: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    argv_words: list[str] = []
+    redirection_words: list[str] = []
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if _is_process_substitution_word(word):
+            argv_words.append(word)
+            index += 1
+            continue
+        redirection = _source_redirection_token_kind(word)
+        if redirection is None:
+            argv_words.append(word)
+            index += 1
+            continue
+        if redirection == "unsupported":
+            raise RuntimeObservedCompileError(
+                "runtime graph compiler does not yet support source heredoc redirections",
+                code="runtime.compile.source_redirection",
+            )
+        redirection_words.append(word)
+        index += 1
+        if redirection == "separate-target":
+            if index >= len(words):
+                raise RuntimeObservedCompileError(
+                    "runtime graph compiler could not parse source redirection target",
+                    code="runtime.compile.source_redirection",
+                )
+            redirection_words.append(words[index])
+            index += 1
+    return tuple(argv_words), tuple(redirection_words)
+
+
+def _is_process_substitution_word(word: str) -> bool:
+    return word.startswith("<(") or word.startswith(">(")
+
+
+def _source_redirection_token_kind(word: str) -> str | None:
+    if re.match(r"^(?:[0-9]+)?<<", word):
+        return "unsupported"
+    if re.fullmatch(r"(?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|)", word):
+        return "separate-target"
+    if re.match(r"^(?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|).+", word):
+        return "combined-target"
+    return None
 
 
 def _has_command_substitution(text: str) -> bool:
@@ -317,38 +447,6 @@ def _has_command_substitution(text: str) -> bool:
         index += 1
     return False
 
-
-def _source_site_has_redirection(line: str, source_site: str) -> bool:
-    for command in get_commands(line):
-        if find_unquoted_substring(command, source_site) >= 0:
-            return _command_has_unquoted_redirection(command)
-    return False
-
-
-def _command_has_unquoted_redirection(command: str) -> bool:
-    in_single_quote = False
-    in_double_quote = False
-    escaped = False
-    for index, char in enumerate(command):
-        if escaped:
-            escaped = False
-            continue
-        if char == "\\" and not in_single_quote:
-            escaped = True
-            continue
-        if char == "'" and not in_double_quote:
-            in_single_quote = not in_single_quote
-            continue
-        if char == '"' and not in_single_quote:
-            in_double_quote = not in_double_quote
-            continue
-        if in_single_quote or in_double_quote:
-            continue
-        if char in {"<", ">"}:
-            return True
-        if char == "&" and index + 1 < len(command) and command[index + 1] == ">":
-            return True
-    return False
 
 def _apply_replacements(line: str, replacements: list[tuple[int, int, str]]) -> str:
     rendered = line
@@ -665,6 +763,7 @@ def _ensure_no_unrewritten_source(line: str, unit: _RewriteUnit, line_index: int
         if (
             contains_source_command(command)
             or contains_nested_source_command(command)
+            or _process_substitution_contains_source(command)
             or _source_bearing_shell_c_payload(command)
             or (name == "eval" and ("source" in command or re.search(r"(^|[\s;&|({])\.\s+", command)))
         ):
@@ -672,6 +771,26 @@ def _ensure_no_unrewritten_source(line: str, unit: _RewriteUnit, line_index: int
                 f"unsupported unrewritten source command in {unit.physical_path or unit.logical_path}:{line_index}: {command.strip()}",
                 code="runtime.compile.unrewritten_source",
             )
+
+
+def _process_substitution_contains_source(command: str) -> bool:
+    return bool(re.search(r"[<>]\([^)]*(?:^|[\s;&|({])(?:source|\.|builtin\s+(?:source|\.)|command\s+(?:source|\.))\b", command))
+
+
+def _source_site_is_inside_process_substitution(line: str, start: int) -> bool:
+    opener = max(line.rfind("<(", 0, start), line.rfind(">(", 0, start))
+    if opener < 0:
+        return False
+    closer = line.rfind(")", 0, start)
+    return closer < opener
+
+
+def _source_word_offset_in_candidate(source_site: str) -> int:
+    invocation = source_command_invocation(source_site)
+    if invocation is None or invocation.source_column_offset is None:
+        return 0
+    return max(invocation.source_column_offset, 0)
+
 
 def _bash_c_payload(command: str) -> str | None:
     invocation = _bash_c_invocation(command)

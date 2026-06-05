@@ -28,6 +28,9 @@ TRACE_VARIABLES = {
     "MODASH_TRACE_FUNCTION_SCANNER",
     "MODASH_TRACE_FINGERPRINT_SCANNER",
     "MODASH_TRACE_PYTHON",
+    "MODASH_TRACE_MKDIR",
+    "MODASH_TRACE_RMDIR",
+    "MODASH_TRACE_SLEEP",
     "BASH_EXECUTION_STRING",
 }
 INSTRUMENTATION_VARIABLES = {"BASH_ENV", "BASH_XTRACEFD", "PS4", "SHELLOPTS", "BASHOPTS", "BASH_ALIASES", *TRACE_VARIABLES}
@@ -688,19 +691,17 @@ def _line_has_external_interpreter_heredoc(line: str) -> bool:
 def _external_interpreter_payload_can_probe_environment(word: str) -> bool:
     collapsed = re.sub(r"[\s\"'+]", "", word)
     return bool(
-        "environ" in word
-        or "getenv" in word
+        re.search(r"/proc/(?:self|\$\$|\$BASHPID|\$\{BASHPID\}|[0-9]+|\*)/(?:environ|cmdline|fd)(?:/|$)", word)
+        or re.search(r"listdir\([^)]*[\"']/proc/(?:self|\$\$|\$BASHPID|\$\{BASHPID\}|[0-9]+|\*)/fd[\"']", word)
         or "BASH_" in word
         or "MODASH_TRACE_" in word
-        or "environ" in collapsed
-        or "getenv" in collapsed
-        or "BASH_ENV" in collapsed
-        or "MODASH_TRACE" in collapsed
-        or re.search(r"chr\(\s*(?:66|77|95)", word)
-        or "map(chr" in collapsed
-        or "getattr(os," in collapsed
-        or re.search(r"BASH[\"']?\s*\+\s*[\"']?_ENV", word)
-        or re.search(r"MODASH[\"']?\s*\+\s*[\"']?_TRACE", word)
+        or "/proc/self/fd" in collapsed
+        or "/proc/self/environ" in collapsed
+        or "/proc/self/cmdline" in collapsed
+        or "__modash_child_replay_marker" in collapsed
+        or "__modash_child_replay_token" in collapsed
+        or "child_replay_marker" in collapsed
+        or "child_replay_token" in collapsed
     )
 
 
@@ -802,6 +803,8 @@ def _printf_v_target_is_dynamic(words: tuple[str, ...]) -> bool:
     for index, word in enumerate(words[1:], start=1):
         if word == "-v" and index + 1 < len(words):
             return _has_dynamic_shell_expansion(words[index + 1])
+        if word.startswith("-v") and word != "-v":
+            return _has_dynamic_shell_expansion(word[2:])
     return False
 
 
@@ -1213,17 +1216,16 @@ def _kill_bypasses_generated_guard(words: tuple[str, ...]) -> bool:
     if index >= len(words):
         return False
     command = words[index]
-    if _path_basename(command) == "kill" and command != "kill":
-        return True
     if command == "builtin":
         target = _command_or_builtin_target_index(words, index)
         return target is not None and target < len(words) and words[target] == "kill"
-    if command == "command":
-        target = _command_or_builtin_target_index(words, index)
-        return target is not None and target < len(words) and _path_basename(words[target]) == "kill"
-    if command == "env":
-        target = _shell_command_index_after_wrappers(list(words[index:]))
-        return target is not None and target < len(words[index:]) and _path_basename(words[index + target]) == "kill"
+    target = _shell_command_index_after_wrappers(list(words[index:]))
+    if target is None or index + target >= len(words):
+        return False
+    target_word = words[index + target]
+    if _path_basename(target_word) != "kill":
+        return False
+    return target != 0 or target_word != "kill"
     return False
 
 

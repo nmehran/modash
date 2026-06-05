@@ -21,7 +21,8 @@ arguments, and source-entry status against the trusted graph edge, then calls
 `builtin source` at the original call site. Bash preserves normal source
 semantics for supported trusted edges: caller locals, no-argument positional
 inheritance, explicit source arguments, top-level `return`, nested observed
-sources, and child `bash -c` argv.
+sources, assignment-prefixed source scope, simple source redirections, and child
+`bash -c` argv.
 
 ## Trust boundary
 
@@ -44,7 +45,9 @@ clears trace-owned Bash startup state such as `BASH_ENV`, then leaves
 privileged mode before user content so ordinary Bash behavior such as `CDPATH`
 is preserved. Runtime tracing keeps trace-owned variables out of the exported
 environment for user commands, while explicitly re-exporting them only for
-supported child Bash launches that need to be traced. Ordinary user variables
+supported child Bash launches that need to be traced. Trace helper tools used
+for observation bookkeeping are resolved before user code runs, so traced
+scripts can change `PATH` without breaking trace locks. Ordinary user variables
 such as `ENV` are preserved.
 
 Static `modash` compile remains deterministic and trace-free. Runtime graph
@@ -67,9 +70,9 @@ output; it is not a graph-trust failure by itself.
 
 The compiler also rejects shapes that can make a trusted graph lie about what
 will run: reserved `__modash_` names, trace-instrumentation-sensitive shell
-state, aliases, dynamic or source-capable `eval`, source redirections, dynamic
-or multiline child `bash -c` payloads, unsupported child `bash -c` wrappers that
-hide source operations, `exec`, trap manipulation, computed mutation of
+state, aliases, dynamic or source-capable `eval`, dynamic or multiline child
+`bash -c` payloads, unsupported child `bash -c` wrappers that hide source
+operations, `exec`, trap manipulation, computed mutation of
 generated replay state, runtime `$0` / `BASH_SOURCE` references inside heredocs
 or multiline strings, and runtime `$0` / `BASH_SOURCE` references on parent
 lines that also contain child `bash -c` payloads. The main `eval` exception is a
@@ -102,11 +105,12 @@ compiler also rejects or guards runtime shapes that can bypass validation indire
 including unsafe nameref targets, `unset -f` forms that can remove replay
 guards, positional `read` targets that could point at generated replay state,
 wrapped `builtin read` / `command read` variants of those positional targets,
-`mapfile` / `readarray` callback execution, indirect expansion over
-instrumentation variables, absolute or PATH-based environment dumps,
-`/proc/*/environ` and `/proc/*/cmdline` probes, trace file descriptor probes,
-and dynamic command dispatch that can become `builtin source ...`,
-`command source ...`, `eval`, replay-state mutation, or shell `-c` execution.
+`mapfile` / `readarray` callback execution, `printf -v` with computed targets,
+indirect expansion over instrumentation variables, absolute or PATH-based
+environment dumps, `/proc/*/environ`, `/proc/*/cmdline`, and `/proc/*/fd`
+probes, trace file descriptor probes, wrapper-executed external `kill`, and
+dynamic command dispatch that can become `builtin source ...`, `command source
+...`, `eval`, replay-state mutation, or shell `-c` execution.
 Source-bearing shell payloads hidden behind direct non-Bash shells, BusyBox
 shell applets, `env -S` / `env --split-string`, common command-tail wrappers
 such as `nice`, `timeout`, `setsid`, `nohup`, and `stdbuf`, or exec-style
@@ -119,7 +123,8 @@ Source-free external interpreter heredocs are allowed, but heredoc bodies that
 probe trace-owned environment remain rejected.
 Direct `kill` calls are guarded at runtime so normal background-helper cleanup
 can work, but attempts to target the replay shell or bypass the guard with
-`builtin kill`, `command kill`, `env kill`, or absolute kill paths are rejected.
+`builtin kill`, `command kill`, `env kill`, command-tail wrappers, or absolute
+kill paths are rejected.
 
 Generated scripts also install source/dot guard functions. Rewritten replay
 groups use `builtin source`, but a live unobserved `source` or `.` command that
@@ -141,6 +146,11 @@ ambient values used by observed source call sites are recorded when they
 contribute to the selected source path or arguments. Use `--env KEY=VALUE` for
 explicit overlays and for complex environment-dependent source selection that
 should be reviewed directly.
+
+Relative source paths are resolved against the shell's physical current working
+directory, not a user-assigned `PWD` string. Missing-source edges are replayed
+only while the resolved missing path remains absent; if that file appears before
+generated execution, replay aborts as graph drift.
 
 Sourced library files may define functions that were not executed by the traced
 command. Those inert function bodies are not treated as top-level replay actions,

@@ -143,6 +143,74 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertIn("observed source path drift", drifted.stdout)
         self.assertNotIn("two\n", drifted.stdout)
 
+    def test_runtime_compiler_resolves_relative_sources_against_physical_cwd_not_pwd(self):
+        with ScriptProject() as project:
+            project.mkdir("fake")
+            project.write(
+                "main.sh",
+                f"PWD={project.path('fake')}\n"
+                "source ./dep.sh\n"
+                "printf 'pwd:%s\\n' \"$PWD\"\n",
+            )
+            project.write("dep.sh", "printf 'real-dep\\n'\n")
+            project.write("fake/dep.sh", "printf 'fake-dep\\n'\n")
+            compiled, graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(graph["edges"][0]["resolved_path"], str(project.path("dep.sh")))
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, f"real-dep\npwd:{project.path('fake')}\n")
+
+    def test_runtime_compiler_preserves_assignment_prefixed_source_scope(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "VAR=old\n"
+                "VAR=foo source ./dep.sh\n"
+                "printf 'after:%s\\n' \"$VAR\"\n",
+            )
+            project.write(
+                "dep.sh",
+                "printf 'dep:%s status:%s\\n' \"$VAR\" \"$?\"\n"
+                "VAR=bar\n",
+            )
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "dep:foo status:0\nafter:old\n")
+
+    def test_runtime_compiler_preserves_assignment_prefixed_sourcepath_lookup(self):
+        with ScriptProject() as project:
+            project.mkdir("lib")
+            project.write(
+                "main.sh",
+                "PATH=old\n"
+                "PATH=\"$PWD/lib\" source dep.sh\n"
+                "printf 'after:%s\\n' \"$PATH\"\n",
+            )
+            project.write("lib/dep.sh", "printf 'dep:%s\\n' \"$PATH\"\n")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, f"dep:{project.root}/lib\nafter:old\n")
+
+    def test_runtime_compiler_preserves_assignment_command_substitution_source_entry_status(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "false\n"
+                "VAR=$(false) source ./dep.sh\n",
+            )
+            project.write("dep.sh", "printf 'inside:%s var:%s\\n' \"$?\" \"$VAR\"\n")
+            compiled, graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(graph["edges"][0]["source_entry_status"], 1)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "inside:1 var:\n")
+
     def test_runtime_compiler_fails_closed_on_sourcepath_path_drift(self):
         with ScriptProject() as project:
             one = project.mkdir("lib1")
@@ -352,6 +420,34 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                 code="runtime.compile.dynamic_state",
             )
 
+    def test_runtime_compiler_rejects_attached_printf_v_replay_state_mutation(self):
+        cases = {
+            "direct": 'printf -v"$target" 1\n',
+            "command": 'command printf -v"$target" 1\n',
+        }
+        for name, mutation in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write(
+                    "main.sh",
+                    "source ./one.sh\n"
+                    "if [[ ${RUN_TWO:-yes} == yes ]]; then\n"
+                    "  source ./two.sh\n"
+                    "fi\n"
+                    "if [[ ${MUTATE:-} ]]; then\n"
+                    "  p=__mod\n"
+                    "  q='ash_edge_consumed[p0:__entrypoint__:3:0|0]'\n"
+                    "  target=$p$q\n"
+                    f"  {mutation}"
+                    "fi\n",
+                )
+                project.write("one.sh", "printf 'one\\n'\n")
+                project.write("two.sh", "printf 'two\\n'\n")
+                self.assert_compile_observed_error(
+                    project,
+                    "main.sh",
+                    code="runtime.compile.dynamic_state",
+                )
+
     def test_runtime_compiler_guards_inert_function_dynamic_eval_source_dispatch(self):
         with ScriptProject() as project:
             project.write(
@@ -449,7 +545,7 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(actual.stdout, expected.stdout)
         self.assertEqual(actual.stderr, expected.stderr)
 
-    def test_runtime_compiler_rejects_external_computed_trace_environment_probe(self):
+    def test_runtime_compiler_hides_trace_environment_from_external_computed_probe(self):
         cases = {
             "computed getenv": 'os.getenv("BASH"+"_ENV")',
             "getattr environ": 'getattr(os,"en"+"viron").get("BA"+"SH"+"_ENV")',
@@ -460,17 +556,17 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                 project.write(
                     "main.sh",
                     f"if python3 -c 'import os,sys; sys.exit(0 if {probe} else 1)'; then\n"
-                    "  DEP=./dep.sh\n"
+                    "  source ./dep.sh\n"
                     "fi\n"
-                    "source \"$DEP\" || true\n"
                     "printf 'done\\n'\n",
                 )
                 project.write("dep.sh", "printf 'dep-traceonly\\n'\n")
-                self.assert_compile_observed_error(
-                    project,
-                    "main.sh",
-                    code="runtime.compile.instrumentation_sensitive",
-                )
+                compiled, _graph = self.compile_observed(project, "main.sh")
+                result = project.run(compiled)
+
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertNotIn("dep-traceonly", result.stdout)
+            self.assertTrue(result.stdout.endswith("done\n"), result.stdout)
 
     def test_runtime_compiler_rejects_find_exec_non_bash_shell_source_payload(self):
         with ScriptProject() as project:
@@ -557,6 +653,11 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
             "builtin": "if [[ ${RUN_KILL:-} ]]; then builtin kill \"$$\"; fi\nsource ./dep.sh\n",
             "command": "if [[ ${RUN_KILL:-} ]]; then command kill \"$$\"; fi\nsource ./dep.sh\n",
             "env": "if [[ ${RUN_KILL:-} ]]; then env kill \"$$\"; fi\nsource ./dep.sh\n",
+            "command env": "if [[ ${RUN_KILL:-} ]]; then command env kill \"$$\"; fi\nsource ./dep.sh\n",
+            "nice": "if [[ ${RUN_KILL:-} ]]; then nice kill \"$$\"; fi\nsource ./dep.sh\n",
+            "timeout": "if [[ ${RUN_KILL:-} ]]; then timeout 5 kill \"$$\"; fi\nsource ./dep.sh\n",
+            "setsid": "if [[ ${RUN_KILL:-} ]]; then setsid kill \"$$\"; fi\nsource ./dep.sh\n",
+            "nohup": "if [[ ${RUN_KILL:-} ]]; then nohup kill \"$$\"; fi\nsource ./dep.sh\n",
             "absolute": "if [[ ${RUN_KILL:-} ]]; then /bin/kill \"$$\"; fi\nsource ./dep.sh\n",
         }
         for name, script in cases.items():
@@ -1113,7 +1214,7 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                 "  printf 'arr:%s\\n' \"${arr[*]}\"\n"
                 "fi\n"
                 "printf 'done\\n'\n",
-                "runtime.compile.source_redirection",
+                "runtime.compile.unrewritten_source",
             ),
             "heredoc command substitution": (
                 "if [[ ${RUN:-} ]]; then\n"
@@ -1826,7 +1927,23 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertIn("dep.sh: No such file or directory\n", result.stdout)
         self.assertTrue(result.stdout.endswith("status:1\n"), result.stdout)
 
-    def test_runtime_compiler_rejects_source_redirections(self):
+    def test_runtime_compiler_fails_closed_when_observed_missing_source_appears_later(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source ./missing.sh || true\n"
+                "printf 'done\\n'\n",
+            )
+            compiled, graph = self.compile_observed(project, "main.sh")
+            project.write("missing.sh", "printf 'now-present\\n'\n")
+            result = project.run(compiled)
+
+        self.assertTrue(graph["edges"][0]["to"].startswith("missing-source:"))
+        self.assertEqual(result.returncode, 125, result.stdout)
+        self.assertNotIn("now-present", result.stdout)
+        self.assertIn("observed missing source drift", result.stdout)
+
+    def test_runtime_compiler_preserves_source_redirections(self):
         with ScriptProject() as project:
             project.write(
                 "main.sh",
@@ -1835,11 +1952,11 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                 "cat out.txt\n",
             )
             project.write("dep.sh", "printf 'dep\\n'\n")
-            self.assert_compile_observed_error(
-                project,
-                "main.sh",
-                code="runtime.compile.source_redirection",
-            )
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "after\ndep\n")
 
     def test_runtime_compiler_rejects_source_bearing_untrusted_shell_c_payloads(self):
         cases = {
@@ -2742,6 +2859,7 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
             "absolute printenv": "v=BASH_ENV\nif /usr/bin/printenv | grep -q \"$v\"; then DEP=./dep.sh; fi\nsource \"$DEP\"\n",
             "proc environ": "v=BASH_ENV\nif tr '\\0' '\\n' < /proc/$$/environ | grep -q \"$v\"; then DEP=./dep.sh; fi\nsource \"$DEP\"\n",
             "proc cmdline": "v=BASH_ENV\nif tr '\\0' '\\n' < /proc/$$/cmdline | grep -q \"$v\"; then DEP=./dep.sh; fi\nsource \"$DEP\"\n",
+            "external fd probe": "if python3 -c 'import os,sys; sys.exit(0 if \"19\" in os.listdir(\"/proc/self/fd\") else 1)'; then DEP=./dep.sh; fi\nsource \"$DEP\"\n",
             "external heredoc env probe": "DEP=./dep.sh\nif python3 - <<'PYENV'\nimport os, sys\nsys.exit(0 if any(k.startswith('BASH_') or k.startswith('MODASH_TRACE_') for k in os.environ) else 1)\nPYENV\nthen :; fi\nsource \"$DEP\"\n",
         }
         for name, script in cases.items():
