@@ -674,6 +674,37 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(context.exception.code, "runtime.trace.incomplete")
         self.assertIn("builtin source ./dep.sh", str(context.exception))
 
+    def test_trace_reports_errexit_source_exit_as_targeted_limitation(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "set -e\n"
+                "source ./dep.sh\n"
+                "printf 'after\\n'\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\nreturn 1\n")
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh")
+
+        self.assertEqual(context.exception.code, "runtime.trace.errexit_source_exit")
+        self.assertIn("could not finalize source command before shell exit", str(context.exception))
+
+    def test_trace_preserves_errexit_suppressed_nonzero_source(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "set -e\n"
+                "source ./dep.sh || true\n"
+                "printf 'after:%s\\n' \"$?\"\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\nreturn 1\n")
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "dep\nafter:0\n")
+        self.assertEqual(result.observation.sources[0].status, 1)
+
     def test_trace_resolves_source_from_runtime_cwd(self):
         with ScriptProject() as project:
             entrypoint = project.write("main.sh", 'cd subdir\nsource ./dep.sh\n')

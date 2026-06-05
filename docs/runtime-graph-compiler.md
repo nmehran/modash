@@ -22,8 +22,9 @@ the generated source operation at the original call site. Bash preserves normal 
 semantics for supported trusted edges: caller locals, no-argument positional
 inheritance, explicit source arguments, top-level `return`, nested observed
 sources, assignment-prefixed source scope/export/array behavior, simple source
-redirections including target command-substitution source-entry status, simple
-`LINENO` references, and child `bash -c` argv.
+redirections including target command-substitution source-entry status, dynamic
+external commands with process-substitution arguments, simple `LINENO`
+references, and child `bash -c` argv.
 
 ## Trust boundary
 
@@ -70,7 +71,10 @@ unsupported hidden source operations, repeated observations of the same source
 path with different file fingerprints, and trace instrumentation failures are
 rejected before executable output is promoted. A target command's own nonzero
 exit status is recorded as graph data and should be preserved by generated
-output; it is not a graph-trust failure by itself.
+output; it is not a graph-trust failure by itself. Source commands that
+terminate the traced shell through `set -e` before the trace wrapper can
+finalize the event remain an explicit trace limitation and fail closed with a
+targeted diagnostic instead of producing a trusted graph.
 
 The compiler also rejects shapes that can make a trusted graph lie about what
 will run: reserved `__modash_` names, trace-instrumentation-sensitive shell

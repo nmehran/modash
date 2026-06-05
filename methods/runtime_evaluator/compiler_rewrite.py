@@ -292,9 +292,23 @@ def _render_replay_group(
         if redirection_sets_status
         else "__modash_validate_source_argv \"$__modash_source_entry_status\" \"${__modash_source_argv[@]}\"; "
     )
+    missing_status_capture = "__modash_replay_missing_status=$?; "
     if redirection_suffix:
-        file_source_operation = f"{{ {file_source_operation}}} {redirection_suffix}; "
-        missing_source_operation = f"{{ {missing_source_operation}}} {redirection_suffix}; "
+        file_source_operation = (
+            "unset __modash_replay_actual_status; "
+            f"{{ {file_source_operation}}} {redirection_suffix}; "
+            "if [[ ! ${__modash_replay_actual_status+x} ]]; then "
+            "__modash_abort \"observed source redirection drift\"; "
+            "fi; "
+        )
+        missing_source_operation = (
+            "unset __modash_replay_missing_status; "
+            f"{{ {missing_source_operation}__modash_replay_missing_status=$?; }} {redirection_suffix}; "
+            "if [[ ! ${__modash_replay_missing_status+x} ]]; then "
+            "__modash_abort \"observed source redirection drift\"; "
+            "fi; "
+        )
+        missing_status_capture = ""
     group = (
         f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {source_expression} ); "
         "__modash_source_expansion_status=$?; "
@@ -314,7 +328,7 @@ def _render_replay_group(
         "( exit \"$__modash_replay_actual_status\" ); "
         "else "
         f"{missing_source_operation}"
-        "__modash_replay_missing_status=$?; "
+        f"{missing_status_capture}"
         "( exit \"$__modash_replay_missing_status\" ); "
         "fi; }"
     )
@@ -330,7 +344,13 @@ def _render_assignment_prefixed_replay_group(
     negated: bool = False,
 ) -> str:
     _source_assignment_names(assignment_words)
-    shim = _render_assignment_prefixed_replay_shim(candidate.base_id, redirection_suffix)
+    shim = _render_assignment_prefixed_replay_shim(
+        candidate.base_id,
+        redirection_suffix,
+        source_expression_sets_status=_has_command_substitution(source_expression),
+        assignment_sets_status=any(_has_command_substitution(word) for word in assignment_words),
+        redirection_sets_status=_has_command_substitution(redirection_suffix),
+    )
     group = (
         f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {source_expression} ); "
         "__modash_source_expansion_status=$?; "
@@ -342,22 +362,64 @@ def _render_assignment_prefixed_replay_group(
     return f"! {group}" if negated else group
 
 
-def _render_assignment_prefixed_replay_shim(base_id: str, redirection_suffix: str) -> str:
+def _render_assignment_prefixed_replay_shim(
+    base_id: str,
+    redirection_suffix: str,
+    *,
+    source_expression_sets_status: bool,
+    assignment_sets_status: bool,
+    redirection_sets_status: bool,
+) -> str:
+    status_initializer = [
+        "__modash_assignment_source_entry_status=$?",
+        "__modash_source_entry_status=$__modash_assignment_source_entry_status",
+    ]
+    if source_expression_sets_status and not assignment_sets_status and not redirection_sets_status:
+        status_initializer.append("__modash_source_entry_status=$__modash_source_expansion_status")
+    redirected_validation = ""
+    validation_before_source = (
+        ""
+        if redirection_sets_status
+        else "__modash_validate_source_argv \"$__modash_source_entry_status\" \"${__modash_source_argv[@]}\""
+    )
+    if redirection_sets_status:
+        redirected_validation = (
+            "__modash_source_redirection_status=$?; "
+            "__modash_source_entry_status=$__modash_source_redirection_status; "
+            "__modash_validate_source_argv \"$__modash_source_entry_status\" \"${__modash_source_argv[@]}\"; "
+        )
     file_source = (
-        "( exit \"$__modash_replay_source_entry_status\" ); "
-        "command source <(__modash_emit_embedded_file \"$__modash_replay_target\") \"${__modash_replay_args[@]}\""
+        f"{redirected_validation}"
+        "( exit \"$__modash_source_entry_status\" ); "
+        "command source <(__modash_emit_embedded_file \"$__modash_replay_target\") \"${__modash_replay_args[@]}\"; "
+        "__modash_replay_actual_status=$?"
     )
     missing_source = (
+        f"{redirected_validation}"
         "builtin printf '%s: line %s: %s\\n' \"$__modash_replay_diag_file\" \"$__modash_replay_diag_line\" \"$__modash_replay_diag_message\" >&2; "
-        "( exit \"$__modash_replay_status\" )"
+        "( exit \"$__modash_replay_status\" ); "
+        "__modash_replay_missing_status=$?"
     )
     if redirection_suffix:
-        file_source = f"{{ {file_source}; }} {redirection_suffix}"
-        missing_source = f"{{ {missing_source}; }} {redirection_suffix}"
+        file_source = (
+            "unset __modash_replay_actual_status; "
+            f"{{ {file_source}; }} {redirection_suffix}; "
+            "if [[ ! ${__modash_replay_actual_status+x} ]]; then "
+            "__modash_abort \"observed source redirection drift\"; "
+            "fi"
+        )
+        missing_source = (
+            "unset __modash_replay_missing_status; "
+            f"{{ {missing_source}; }} {redirection_suffix}; "
+            "if [[ ! ${__modash_replay_missing_status+x} ]]; then "
+            "__modash_abort \"observed source redirection drift\"; "
+            "fi"
+        )
     lines = [
+        *status_initializer,
         f"__modash_replay_select_active=1; __modash_select_source_edge {shlex.quote(base_id)}; __modash_replay_select_active=0",
         "__modash_replay_select_status=$?",
-        "__modash_validate_source_argv \"$__modash_replay_source_entry_status\" \"${__modash_source_argv[@]}\"",
+        validation_before_source,
         "if (( __modash_replay_select_status != 0 )); then",
         "  return \"$__modash_replay_select_status\"",
         "elif [[ $__modash_replay_kind == file ]]; then",
@@ -370,10 +432,10 @@ def _render_assignment_prefixed_replay_shim(base_id: str, redirection_suffix: st
         "  return \"$__modash_replay_actual_status\"",
         "else",
         f"  {missing_source}",
-        "  __modash_replay_missing_status=$?",
         "  return \"$__modash_replay_missing_status\"",
         "fi",
     ]
+    lines = [line for line in lines if line]
     return "builtin printf '%s\\n' " + " ".join(shlex.quote(line) for line in lines)
 
 
@@ -1570,12 +1632,19 @@ def _dynamic_command_guarded_replacement(command: str) -> str | None:
     start = spans[simple_start][0]
     end = spans[simple_end - 1][1]
     prefix_words = raw_words[simple_start:index]
+    command_prefix = " ".join(prefix_words)
     argv_words, redirection_words = _split_dynamic_command_redirections(raw_words[index:simple_end])
     if not argv_words:
         return None
+    if _dynamic_argv_has_process_substitution(argv_words):
+        return command[:start] + _dynamic_command_guarded_process_substitution_replacement(
+            command_prefix=command_prefix,
+            command_name=raw_name,
+            command_tail=argv_words[1:],
+            command_redirections=redirection_words,
+        ) + command[end:]
     argv_expression = " ".join(argv_words)
     status_variable = "__modash_dynamic_argv_status" if _has_command_substitution(argv_expression) else "__modash_dynamic_prior_status"
-    command_prefix = " ".join(prefix_words)
     command_redirections = " ".join(redirection_words)
     actual_command = " ".join(part for part in (command_prefix, '"${__modash_dynamic_argv[@]}"', command_redirections) if part)
     guarded = (
@@ -1587,6 +1656,38 @@ def _dynamic_command_guarded_replacement(command: str) -> str | None:
         f"{actual_command}; }}"
     )
     return command[:start] + guarded + command[end:]
+
+
+def _dynamic_command_guarded_process_substitution_replacement(
+    *,
+    command_prefix: str,
+    command_name: str,
+    command_tail: tuple[str, ...],
+    command_redirections: tuple[str, ...],
+) -> str:
+    command_name_status = "__modash_dynamic_name_status" if _has_command_substitution(command_name) else "__modash_dynamic_prior_status"
+    actual_command = " ".join(
+        part
+        for part in (
+            command_prefix,
+            '"${__modash_dynamic_command_name[@]}"',
+            " ".join(command_tail),
+            " ".join(command_redirections),
+        )
+        if part
+    )
+    return (
+        "{ __modash_dynamic_prior_status=$?; __modash_dynamic_command_name=(); "
+        f"__modash_dynamic_command_name=( {command_name} ); "
+        "__modash_dynamic_name_status=$?; "
+        f"( exit \"${command_name_status}\" ); "
+        '__modash_guard_dynamic_command_preserve_status "${__modash_dynamic_command_name[@]}"; '
+        f"{actual_command}; }}"
+    )
+
+
+def _dynamic_argv_has_process_substitution(argv_words: tuple[str, ...]) -> bool:
+    return any(_is_process_substitution_word(word) for word in argv_words)
 
 
 def _dynamic_simple_command_start(raw_words: tuple[str, ...], words: tuple[str, ...], command_index: int) -> int:

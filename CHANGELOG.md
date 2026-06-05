@@ -96,6 +96,11 @@
   export/array/readonly behavior, redirection target source-entry status, and
   simple `LINENO` references in generated entrypoints and child `bash -c`
   payloads.
+- Added review-driven regressions for assignment-prefixed source-entry status
+  drift from source arguments, assignment RHS, and redirection targets; dynamic
+  command process-substitution arguments in entrypoint and child `bash -c`
+  payloads; source redirection setup drift; and explicit `set -e`
+  source-finalization trace diagnostics.
 
 ### Changed
 
@@ -137,22 +142,31 @@
   source edges at runtime.
 - Runtime graph replay now preserves assignment-prefixed source commands with
   Bash-native temporary export, array replacement, readonly diagnostic, and
-  sourcepath behavior. Simple source redirections are scoped to the emulated
-  source operation, and redirection target command-substitution status is
-  included in source-entry status validation.
+  sourcepath behavior. Replay validates assignment-prefixed source-entry status
+  against replay-time source argument, assignment RHS, and redirection target
+  expansion outcomes. Simple source redirections are scoped to the emulated
+  source operation, redirection target command-substitution status is included
+  in source-entry status validation, and replay aborts cleanly when runtime
+  redirection drift prevents the observed source operation from running.
 - Runtime graph replay now wraps dynamic command guards in place without
-  double-evaluating command arguments or redirection targets, allows inert
-  source-looking text for ordinary dynamic external commands, validates symlinked
-  file-backed source paths by file identity, rewrites simple `LINENO` references
-  to original line constants, and restores ordinary Bash mode for source-free
-  rewritten child `bash -c` payloads without shifting child payload line numbers.
+  double-evaluating command arguments or redirection targets, keeps
+  process-substitution arguments live for the actual command invocation, allows
+  inert source-looking text for ordinary dynamic external commands, validates
+  symlinked file-backed source paths by file identity, rewrites simple `LINENO`
+  references to original line constants, and restores ordinary Bash mode for
+  source-free rewritten child `bash -c` payloads without shifting child payload
+  line numbers.
   External interpreter environment reads are allowed when trace-owned state is
   hidden and the payload does not inspect trace/replay-owned names, `/proc`
   process state, or trace file descriptors.
+- Runtime tracing now reports source commands that terminate under `set -e`
+  before trace finalization with the targeted
+  `runtime.trace.errexit_source_exit` diagnostic. `errexit`-suppressed source
+  contexts remain traceable and replayable.
 
 ### Validation
 
-- Full unit suite: `771` tests, `9` skipped.
+- Full unit suite: `780` tests, `9` skipped.
 - Runtime-focused graph/source/replay safety suites passed.
 - Opt-in real-world suite with runtime parity, trace, supplement replay,
   trusted graph replay, and observe-compile gates: `17` tests passed. Runtime

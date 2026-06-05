@@ -77,19 +77,11 @@ def _reconcile_xtrace_source_coverage(raw_events, xtrace_commands):
 
     if command_groups:
         missed = command_groups[sorted(command_groups, key=_loose_source_key_sort_tuple)[0]][0]
-        raise RuntimeSourceTraceError(
-            "runtime source trace missed source-like command: "
-            f"{missed.file}:{missed.line}: {missed.command}",
-            code="runtime.trace.incomplete",
-        )
+        _raise_missed_source_trace_error(missed)
 
     if dynamic_command_groups:
         missed = dynamic_command_groups[sorted(dynamic_command_groups)[0]][0]
-        raise RuntimeSourceTraceError(
-            "runtime source trace missed source-like command: "
-            f"{missed.file}:{missed.line}: {missed.command}",
-            code="runtime.trace.incomplete",
-        )
+        _raise_missed_source_trace_error(missed)
 
     for key, events, commands in matched_groups:
         if len(events) > len(commands):
@@ -101,11 +93,7 @@ def _reconcile_xtrace_source_coverage(raw_events, xtrace_commands):
             )
         if len(commands) > len(events):
             missed = commands[len(events)]
-            raise RuntimeSourceTraceError(
-                "runtime source trace missed source-like command: "
-                f"{missed.file}:{missed.line}: {missed.command}",
-                code="runtime.trace.incomplete",
-            )
+            _raise_missed_source_trace_error(missed)
 
     if len(xtrace_commands) != len(ordered_events):
         # Defensive fallback; key-level diagnostics above should normally catch this.
@@ -146,6 +134,21 @@ def _reconcile_xtrace_source_coverage(raw_events, xtrace_commands):
         raw_events_by_xtrace_index=raw_events_by_xtrace_index,
         source_identities_by_source_index=source_identities_by_source_index,
         source_identities_by_xtrace_index=source_identities_by_xtrace_index,
+    )
+
+
+def _raise_missed_source_trace_error(missed: _XtraceSourceCommand) -> None:
+    if "__modash_trace_source_alias" in missed.command:
+        raise RuntimeSourceTraceError(
+            "runtime source trace could not finalize source command before shell exit; "
+            "this can happen when set -e terminates immediately after a nonzero source command: "
+            f"{missed.file}:{missed.line}: {missed.command}",
+            code="runtime.trace.errexit_source_exit",
+        )
+    raise RuntimeSourceTraceError(
+        "runtime source trace missed source-like command: "
+        f"{missed.file}:{missed.line}: {missed.command}",
+        code="runtime.trace.incomplete",
     )
 
 

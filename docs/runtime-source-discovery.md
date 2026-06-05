@@ -240,6 +240,10 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - Nonzero target exit status is recorded in the observation/graph and is not
   itself a trust failure. `observe-compile` may return that same nonzero status
   after writing graph, report, observation, and compiled output.
+- Source commands that terminate the traced shell through `set -e` before the
+  trace wrapper can finalize the source event fail closed with a targeted trace
+  diagnostic. `set -e`-suppressed contexts such as `source ./dep.sh || true`
+  remain traceable.
 - Trace instrumentation failures still stop promotion before graph or executable
   output is written.
 - Runtime graph compile is limited to observed source edges whose call site can
@@ -251,9 +255,10 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - Runtime graph compile supports simple source redirections by applying them to
   the generated source operation after source argument and assignment-prefix
   expansion. Redirection target command substitutions participate in the
-  source-entry status validated against the trusted graph. Heredoc source
-  redirections, dynamic or multiline
-  child `bash -c` payloads, reserved `__modash_` names, and scripts that inspect
+  source-entry status validated against the trusted graph, and replay aborts on
+  runtime redirection drift before treating an observed edge as successfully
+  replayed. Heredoc source redirections, dynamic or multiline child `bash -c`
+  payloads, reserved `__modash_` names, and scripts that inspect
   trace-instrumentation-sensitive shell state remain fail-closed.
 - Runtime graph construction rejects sourced files with top-level
   function-context-sensitive Bash such as `local`, `caller`, `FUNCNAME`, or

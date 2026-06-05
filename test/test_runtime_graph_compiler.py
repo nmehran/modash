@@ -264,6 +264,58 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "inside:1 var:\n")
 
+    def test_runtime_compiler_fails_closed_on_assignment_source_argument_status_drift(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "VAR=foo source \"$(printf './dep.sh'; [[ -f flag ]])\"\n"
+                "printf 'after:%s\\n' \"$?\"\n",
+            )
+            project.write("dep.sh", "printf 'inside:%s var:%s\\n' \"$?\" \"$VAR\"\n")
+            project.write("flag", "")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            project.path("flag").unlink()
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 125, result.stdout)
+        self.assertIn("observed source argument status drift", result.stdout)
+        self.assertNotIn("inside:1", result.stdout)
+
+    def test_runtime_compiler_fails_closed_on_assignment_rhs_status_drift(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "VAR=\"$(printf foo; [[ -f flag ]])\" source ./dep.sh\n"
+                "printf 'after:%s\\n' \"$?\"\n",
+            )
+            project.write("dep.sh", "printf 'inside:%s var:%s\\n' \"$?\" \"$VAR\"\n")
+            project.write("flag", "")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            project.path("flag").unlink()
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 125, result.stdout)
+        self.assertIn("observed source argument status drift", result.stdout)
+        self.assertNotIn("inside:1", result.stdout)
+
+    def test_runtime_compiler_fails_closed_on_assignment_source_redirection_status_drift(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "VAR=foo source ./dep.sh > \"$(printf out.txt; [[ -f flag ]])\"\n"
+                "cat out.txt\n",
+            )
+            project.write("dep.sh", "printf 'inside:%s var:%s\\n' \"$?\" \"$VAR\"\n")
+            project.write("flag", "")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            project.path("flag").unlink()
+            project.path("out.txt").unlink()
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 125, result.stdout)
+        self.assertIn("observed source argument status drift", result.stdout)
+        self.assertNotIn("inside:1", result.stdout)
+
     def test_runtime_compiler_preserves_redirection_target_source_entry_status(self):
         with ScriptProject() as project:
             project.write(
@@ -280,6 +332,40 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(graph["edges"][0]["source_entry_status"], 0)
         self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
         self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_runtime_compiler_fails_closed_on_source_output_redirection_drift(self):
+        with ScriptProject() as project:
+            project.mkdir("outdir")
+            project.write(
+                "main.sh",
+                "source ./dep.sh > outdir/out.txt\n"
+                "printf 'after:%s\\n' \"$?\"\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            shutil.rmtree(project.path("outdir"))
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 125, result.stdout)
+        self.assertIn("observed source redirection drift", result.stdout)
+        self.assertNotIn("numeric argument required", result.stdout)
+
+    def test_runtime_compiler_fails_closed_on_source_input_redirection_drift(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source ./dep.sh < \"$INPUT\"\n"
+                "printf 'after:%s\\n' \"$?\"\n",
+            )
+            project.write("dep.sh", "read -r value\nprintf 'dep:%s\\n' \"$value\"\n")
+            project.write("input.txt", "value\n")
+            compiled, _graph = self.compile_observed(project, "main.sh", env={"INPUT": "input.txt"})
+            project.path("input.txt").unlink()
+            result = project.run(compiled, env={"INPUT": "input.txt"})
+
+        self.assertEqual(result.returncode, 125, result.stdout)
+        self.assertIn("observed source redirection drift", result.stdout)
+        self.assertNotIn("numeric argument required", result.stdout)
 
     def test_runtime_compiler_fails_closed_on_sourcepath_path_drift(self):
         with ScriptProject() as project:
@@ -480,6 +566,37 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
             compiled, _graph = self.compile_observed(project, "main.sh")
             project.write("count", "0")
             project.path("out.txt").unlink()
+            actual = project.run(compiled)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_runtime_compiler_preserves_dynamic_command_process_substitution_arguments(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source ./dep.sh\n"
+                "cmd=cat\n"
+                "\"$cmd\" <(printf 'psub\\n')\n"
+                "printf 'after:%s\\n' \"$?\"\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            expected = project.run("main.sh")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            actual = project.run(compiled)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_runtime_compiler_preserves_dynamic_command_process_substitution_arguments_in_child_bash(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "bash -c 'source ./dep.sh; cmd=cat; \"$cmd\" <(printf \"psub\\\\n\"); printf \"after:%s\\\\n\" \"$?\"'\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            expected = project.run("main.sh")
+            compiled, _graph = self.compile_observed(project, "main.sh")
             actual = project.run(compiled)
 
         self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
