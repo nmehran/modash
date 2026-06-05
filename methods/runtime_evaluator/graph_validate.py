@@ -123,6 +123,7 @@ def validate_observed_source_graph(data):
             raise RuntimeSourceGraphError("edges[].source_identity values must be unique")
         source_identities.add(source_identity)
         resolved_path = _absolute_path(edge.get("resolved_path"), "edges[].resolved_path")
+        _nonnegative_int(edge.get("source_entry_status"), "edges[].source_entry_status")
         status = _nonnegative_int(edge.get("status"), "edges[].status")
         _string_list(edge.get("arguments"), "edges[].arguments")
         call_site = _call_site(edge.get("call_site"))

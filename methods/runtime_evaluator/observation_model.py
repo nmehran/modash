@@ -6,7 +6,7 @@ from functools import partial
 
 from methods.runtime_evaluator import schema as runtime_schema
 
-OBSERVATION_VERSION = 8
+OBSERVATION_VERSION = 9
 TOP_LEVEL_KEYS = frozenset({
     "version",
     "entrypoint",
@@ -53,6 +53,7 @@ SOURCE_EVENT_KEYS = frozenset({
     "xtrace_index",
     "resolved_path",
     "arguments",
+    "source_entry_status",
     "status",
 })
 CALL_SITE_KEYS = frozenset({"file", "line", "command"})
@@ -331,6 +332,7 @@ class RuntimeSourceEvent:
     arguments: tuple[str, ...] = field(default_factory=tuple)
     function_stack: tuple[str, ...] = field(default_factory=tuple)
     function_call: RuntimeFunctionCall | None = None
+    source_entry_status: int = 0
     status: int = 0
     process_index: int = 0
     xtrace_index: int | None = None
@@ -376,6 +378,11 @@ class RuntimeSourceEvent:
             raise _schema_error("sources[].function_call must be null or a RuntimeFunctionCall")
         if self.function_call is not None and self.function_call.function not in self.function_stack:
             raise _schema_error("sources[].function_call.function must be present in sources[].function_stack")
+        object.__setattr__(
+            self,
+            "source_entry_status",
+            _nonnegative_int(self.source_entry_status, "sources[].source_entry_status"),
+        )
         object.__setattr__(self, "status", _nonnegative_int(self.status, "sources[].status"))
 
     @classmethod
@@ -395,6 +402,7 @@ class RuntimeSourceEvent:
             ),
             resolved_path=data["resolved_path"],
             arguments=_string_list(data["arguments"], "sources[].arguments"),
+            source_entry_status=data["source_entry_status"],
             status=data["status"],
         )
 
@@ -409,6 +417,7 @@ class RuntimeSourceEvent:
             "function_call": self.function_call.to_dict() if self.function_call is not None else None,
             "resolved_path": self.resolved_path,
             "arguments": list(self.arguments),
+            "source_entry_status": self.source_entry_status,
             "status": self.status,
         }
 

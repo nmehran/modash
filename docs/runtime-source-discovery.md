@@ -65,7 +65,7 @@ The separation matters:
 
 ## Observation Schema
 
-Current observations use schema `8`. They record:
+Current observations use schema `9`. They record:
 
 - entrypoint, cwd, argv, Bash version, trace implementation version
 - run metadata: observed timestamp, modash version, platform, Python version,
@@ -78,7 +78,8 @@ Current observations use schema `8`. They record:
 - source call-site provenance
 - source function stacks and file-backed observed helper-call provenance for
   review and compatibility with graph validation
-- resolved source paths, source arguments, and source status
+- resolved source paths, source arguments, source-entry status, and source
+  completion status
 - trace-time file fingerprints for the entrypoint, file-backed source files,
   and file-backed call sites, including sourced files that return non-zero
   status
@@ -92,7 +93,7 @@ Small example:
 
 ```json
 {
-  "version": 8,
+  "version": 9,
   "entrypoint": "/abs/project/entry.sh",
   "cwd": "/abs/project",
   "argv": ["--flag"],
@@ -100,7 +101,7 @@ Small example:
     "version": "GNU bash, version 5.2.21"
   },
   "trace": {
-    "version": "runtime-wrapper-v10"
+    "version": "runtime-wrapper-v11"
   },
   "environment": {
     "policy": "overlay",
@@ -178,15 +179,16 @@ Small example:
 
 ## Trusted Source Graph
 
-`modash graph` consumes a schema `8` observation and writes a graph artifact.
+`modash graph` consumes a schema `9` observation and writes a schema `3` graph
+artifact.
 The graph is still data, not executable shell code. It contains:
 
 - process nodes
 - file nodes with fingerprint roles
 - process-command nodes for child `bash -c` style source sites
-- source edges with call-site text, resolved paths, source arguments, status,
-  source identity, helper-call provenance when needed, and linked xtrace
-  provenance
+- source edges with call-site text, resolved paths, source arguments,
+  source-entry status, completion status, source identity, helper-call
+  provenance when needed, and linked xtrace provenance
 - the file fingerprints needed for stale graph rejection
 
 Graph construction fails closed when source events lack xtrace provenance, when
@@ -279,8 +281,9 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - child Bash process propagation and parent/child process provenance
 - persisted xtrace provenance linked to wrapper-observed source events
 - observed helper-call provenance for trusted runtime graph replay
-- schema `8` source identities, file fingerprints, and stale observation
-  rejection
+- schema `9` source identities, source-entry status, file fingerprints, and
+  stale observation rejection
+- schema `3` trusted runtime graphs
 - trusted runtime source graph construction
 - strict graph invariant validation for reviewed graph replay
 - compact human-readable graph review reports

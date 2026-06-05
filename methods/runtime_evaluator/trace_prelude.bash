@@ -52,8 +52,8 @@ __modash_source_function_stack() {
 }
 
 __modash_emit_source_event_with_stack() {
-  local index=$1 pid=$2 kind=$3 caller_file=$4 caller_line=$5 cwd=$6 source_path=$7 resolved_path=$8 source_size=$9 source_mtime_ns=${10} source_sha256=${11} status=${12}
-  shift 12
+  local index=$1 pid=$2 kind=$3 caller_file=$4 caller_line=$5 cwd=$6 source_path=$7 resolved_path=$8 source_size=$9 source_mtime_ns=${10} source_sha256=${11} status=${12} source_entry_status=${13}
+  shift 13
   __modash_source_function_stack
   printf '%s\0' \
     'MODASH_SOURCE_EVENT' \
@@ -69,6 +69,7 @@ __modash_emit_source_event_with_stack() {
     "$source_mtime_ns" \
     "$source_sha256" \
     "$status" \
+    "$source_entry_status" \
     "${#__modash_function_stack[@]}" \
     "${__modash_function_stack[@]}" \
     "$#" \
@@ -108,7 +109,7 @@ __modash_resolve_source_path() {
   local directory
 
   if [[ -z $source_path ]]; then
-    printf ''
+    printf '%s/' "$PWD"
     return
   fi
 
@@ -504,15 +505,15 @@ __modash_trace_source_common() {
     unset '__modash_source_stack[-1]'
   fi
 
-  if [[ -n $source_path ]]; then
+  if ((source_arg_count > 0)) || ((status == 2)); then
     if ((source_arg_count > 1)); then
       explicit_source_args=("${source_args[@]:1}")
       __modash_emit_source_event_with_stack \
-        "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$source_size" "$source_mtime_ns" "$source_sha256" "$status" \
+        "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$source_size" "$source_mtime_ns" "$source_sha256" "$status" "$prior_status" \
         "${explicit_source_args[@]}"
     else
       __modash_emit_source_event_with_stack \
-        "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$source_size" "$source_mtime_ns" "$source_sha256" "$status"
+        "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$source_size" "$source_mtime_ns" "$source_sha256" "$status" "$prior_status"
     fi
   fi
 
@@ -592,11 +593,94 @@ __modash_trace_command() {
     .)
       __modash_trace_source_common "$prior_status" dot . "${__modash_source_call_args[@]:1}"
       ;;
+    bash|/bin/bash|/usr/bin/bash)
+      __modash_trace_run_child_bash "${__modash_source_call_args[@]}"
+      ;;
     *)
       command "${__modash_source_call_args[@]}"
       ;;
   esac
 }
+
+__modash_trace_run_child_bash() {
+  BASH_ENV=$BASH_ENV \
+  MODASH_TRACE_ENTRYPOINT=$MODASH_TRACE_ENTRYPOINT \
+  MODASH_TRACE_INITIAL_CWD=$MODASH_TRACE_INITIAL_CWD \
+  MODASH_TRACE_FILE=$MODASH_TRACE_FILE \
+  MODASH_TRACE_COUNTER_FILE=$MODASH_TRACE_COUNTER_FILE \
+  MODASH_TRACE_XTRACE_FILE=$MODASH_TRACE_XTRACE_FILE \
+  MODASH_TRACE_FAILURE_FILE=$MODASH_TRACE_FAILURE_FILE \
+  MODASH_TRACE_POSITIONAL_SCANNER=$MODASH_TRACE_POSITIONAL_SCANNER \
+  MODASH_TRACE_FUNCTION_SCANNER=$MODASH_TRACE_FUNCTION_SCANNER \
+  MODASH_TRACE_FINGERPRINT_SCANNER=$MODASH_TRACE_FINGERPRINT_SCANNER \
+  MODASH_TRACE_PYTHON=$MODASH_TRACE_PYTHON \
+  command "$@"
+}
+
+bash() {
+  local prior_status=$?
+  ( exit "$prior_status" )
+  __modash_trace_run_child_bash bash "$@"
+}
+
+__modash_env_launches_child_bash() {
+  local index=0 word
+  local -a args=("$@")
+  while ((index < ${#args[@]})); do
+    word=${args[$index]}
+    case "$word" in
+      -u|--unset)
+        ((index += 2))
+        continue
+        ;;
+      --unset=*)
+        ((index++))
+        continue
+        ;;
+      -i|--ignore-environment|-0|--null)
+        ((index++))
+        continue
+        ;;
+      -*)
+        return 1
+        ;;
+      *=*)
+        ((index++))
+        continue
+        ;;
+    esac
+    case "$word" in
+      bash|/bin/bash|/usr/bin/bash)
+        return 0
+        ;;
+    esac
+    return 1
+  done
+  return 1
+}
+
+env() {
+  local prior_status=$?
+  ( exit "$prior_status" )
+  if __modash_env_launches_child_bash "$@"; then
+    __modash_trace_run_child_bash env "$@"
+    return
+  fi
+  command env "$@"
+}
+
+export -n \
+  BASH_ENV \
+  MODASH_TRACE_ENTRYPOINT \
+  MODASH_TRACE_INITIAL_CWD \
+  MODASH_TRACE_FILE \
+  MODASH_TRACE_COUNTER_FILE \
+  MODASH_TRACE_XTRACE_FILE \
+  MODASH_TRACE_FAILURE_FILE \
+  MODASH_TRACE_POSITIONAL_SCANNER \
+  MODASH_TRACE_FUNCTION_SCANNER \
+  MODASH_TRACE_FINGERPRINT_SCANNER \
+  MODASH_TRACE_PYTHON
 
 alias source='__modash_trace_source_alias source source "$#" "$@" --'
 alias .='__modash_trace_source_alias dot . "$#" "$@" --'

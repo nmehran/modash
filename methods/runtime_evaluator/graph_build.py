@@ -48,6 +48,7 @@ def build_observed_source_graph(entrypoint: str | os.PathLike, observation, *, v
             "from": from_node["id"],
             "to": to_node["id"],
             "resolved_path": event.resolved_path,
+            "source_entry_status": event.source_entry_status,
             "status": event.status,
             "arguments": list(event.arguments),
             "call_site": event.call_site.to_dict(),

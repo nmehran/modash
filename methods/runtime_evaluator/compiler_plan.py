@@ -42,6 +42,7 @@ def _coerce_edge(edge: dict) -> _ReplayEdge:
         site_line=edge["call_site"]["line"],
         site_command=edge["call_site"]["command"],
         resolved_path=edge["resolved_path"],
+        source_entry_status=edge.get("source_entry_status", 0),
         status=edge["status"],
         arguments=tuple(edge["arguments"]),
         xtrace_command=edge["xtrace"]["command"],

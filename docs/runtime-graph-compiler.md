@@ -15,8 +15,10 @@ The compiler treats the graph as an execution tape:
    leaves a trusted edge unused.
 
 The original script still decides whether a source site runs. modash replaces
-only the operation that would source the file. The generated replay group calls
-`builtin source` at the original call site, so Bash preserves normal source
+only the operation that would source the file. The generated replay group first
+expands the original source arguments exactly once, validates the selected path,
+arguments, and source-entry status against the trusted graph edge, then calls
+`builtin source` at the original call site. Bash preserves normal source
 semantics for supported trusted edges: caller locals, no-argument positional
 inheritance, explicit source arguments, top-level `return`, nested observed
 sources, and child `bash -c` argv.
@@ -38,8 +40,12 @@ host tools such as `mktemp`, `mkdir`, `base64`, `rm`, `kill`, and the launch
 diagnostic `printf`, so hostile runtime `PATH` entries do not change how the
 bundle is unpacked, cleaned up, or aborted. Generated replay infrastructure uses
 Bash builtins for its own `printf` operations after privileged startup. Replay
-clears trace-owned Bash startup state such as `BASH_ENV`, while preserving
-ordinary user variables such as `ENV`.
+clears trace-owned Bash startup state such as `BASH_ENV`, then leaves
+privileged mode before user content so ordinary Bash behavior such as `CDPATH`
+is preserved. Runtime tracing keeps trace-owned variables out of the exported
+environment for user commands, while explicitly re-exporting them only for
+supported child Bash launches that need to be traced. Ordinary user variables
+such as `ENV` are preserved.
 
 Static `modash` compile remains deterministic and trace-free. Runtime graph
 compilation is used only by the explicit `compile-observed` and
@@ -90,8 +96,8 @@ from short-lived replay files and are not placed in the child command line or
 exported environment. Generated selectors abort when called outside generated
 replay groups.
 
-Replay-critical function overrides are rejected for `source`, `.`, `exec`,
-`trap`, `command`, `builtin`, `shopt`, `env`, `enable`, and `exit`. The
+Replay-critical function overrides are rejected for `source`, `.`, `eval`,
+`exec`, `trap`, `kill`, `command`, `builtin`, `shopt`, `env`, `enable`, and `exit`. The
 compiler also rejects or guards runtime shapes that can bypass validation indirectly,
 including unsafe nameref targets, `unset -f` forms that can remove replay
 guards, positional `read` targets that could point at generated replay state,
@@ -102,12 +108,15 @@ instrumentation variables, absolute or PATH-based environment dumps,
 and dynamic command dispatch that can become `builtin source ...`,
 `command source ...`, `eval`, replay-state mutation, or shell `-c` execution.
 Source-bearing shell payloads hidden behind direct non-Bash shells, BusyBox
-shell applets, common command-tail wrappers such as `nice`, `timeout`, `setsid`,
-`nohup`, and `stdbuf`, or exec-style utilities such as `find -exec sh -c` are
-also rejected instead of being left live.
+shell applets, `env -S` / `env --split-string`, common command-tail wrappers
+such as `nice`, `timeout`, `setsid`, `nohup`, and `stdbuf`, or exec-style
+utilities such as `find -exec sh -c` are also rejected instead of being left
+live.
 Source command recognition covers source-capable `time` and `coproc` prefixes so
 they fail closed instead of live-sourcing; observed `time`-prefixed source sites
 are rejected until timing output can be replayed precisely.
+Source-free external interpreter heredocs are allowed, but heredoc bodies that
+probe trace-owned environment remain rejected.
 Direct `kill` calls are guarded at runtime so normal background-helper cleanup
 can work, but attempts to target the replay shell or bypass the guard with
 `builtin kill`, `command kill`, `env kill`, or absolute kill paths are rejected.

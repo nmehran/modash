@@ -47,7 +47,7 @@ from methods.source_resolver import (
     strip_shell_word_quotes,
 )
 
-TRACE_VERSION = "runtime-wrapper-v10"
+TRACE_VERSION = "runtime-wrapper-v11"
 PROCESS_MARKER = "MODASH_PROCESS_EVENT"
 TRACE_MARKER = "MODASH_SOURCE_EVENT"
 DEFAULT_TRACE_TIMEOUT_SECONDS = 30
@@ -89,6 +89,7 @@ class _RawSourceEvent:
     source_size: int | None
     source_mtime_ns: int | None
     source_sha256: str | None
+    source_entry_status: int
     status: int
     function_stack: tuple[str, ...]
     arguments: tuple[str, ...]
@@ -586,6 +587,7 @@ def _observation_events(
             function_call=function_calls_by_source_index.get(event.index),
             resolved_path=event.resolved_path,
             arguments=event.arguments,
+            source_entry_status=event.source_entry_status,
             status=event.status,
         ))
     return tuple(events)
@@ -827,7 +829,7 @@ def _parse_raw_trace(raw_trace: bytes):
 
         if marker != TRACE_MARKER:
             raise RuntimeSourceTraceError(f"invalid runtime trace marker: {marker!r}")
-        if offset + 13 > len(fields):
+        if offset + 14 > len(fields):
             raise RuntimeSourceTraceError("truncated runtime source trace event")
 
         index = _parse_int(fields[offset], "source event index")
@@ -842,8 +844,9 @@ def _parse_raw_trace(raw_trace: bytes):
         source_mtime_ns = _parse_optional_int(fields[offset + 9], "source event source mtime_ns")
         source_sha256 = fields[offset + 10] or None
         status = _parse_int(fields[offset + 11], "source event status")
-        function_count = _parse_int(fields[offset + 12], "source event function stack count")
-        offset += 13
+        source_entry_status = _parse_int(fields[offset + 12], "source event source entry status")
+        function_count = _parse_int(fields[offset + 13], "source event function stack count")
+        offset += 14
 
         if function_count < 0:
             raise RuntimeSourceTraceError("source event function stack count must be non-negative")
@@ -866,8 +869,6 @@ def _parse_raw_trace(raw_trace: bytes):
 
         if kind not in {"source", "dot"}:
             raise RuntimeSourceTraceError(f"unsupported runtime source event kind: {kind!r}")
-        if not source_path:
-            raise RuntimeSourceTraceError("runtime source event missing source path")
         sources.append(_RawSourceEvent(
             index=index,
             pid=pid,
@@ -880,6 +881,7 @@ def _parse_raw_trace(raw_trace: bytes):
             source_size=source_size,
             source_mtime_ns=source_mtime_ns,
             source_sha256=source_sha256,
+            source_entry_status=source_entry_status,
             status=status,
             function_stack=function_stack,
             arguments=arguments,

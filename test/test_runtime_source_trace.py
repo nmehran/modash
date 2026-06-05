@@ -41,7 +41,7 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(event.arguments, ())
         self.assertEqual(event.status, 0)
         fingerprints = {Path(file.path).name: file for file in result.observation.files}
-        self.assertEqual(result.observation.version, 8)
+        self.assertEqual(result.observation.version, 9)
         self.assertEqual(result.observation.run.target_status, 0)
         self.assertEqual(result.observation.environment.policy, "inherit")
         self.assertEqual(result.observation.run.timeout_seconds, 30.0)
@@ -1644,6 +1644,26 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(event.call_site.file, str(child.resolve(strict=False)))
         self.assertEqual(event.call_site.command, "source ./dep.sh")
         self.assertEqual(event.resolved_path, str(dependency.resolve(strict=False)))
+
+    def test_trace_hides_trace_environment_from_external_interpreter(self):
+        with ScriptProject() as project:
+            project.write("dep.sh", "printf 'trace-only\\n'\n")
+            project.write(
+                "main.sh",
+                "if python3 -c 'import os,sys; "
+                'e=getattr(os,"".join(map(chr,[101,110,118,105,114,111,110]))); '
+                'k="".join(map(chr,[66,65,83,72,95,69,78,86])); '
+                "sys.exit(0 if e.get(k) else 1)'; then\n"
+                "  source ./dep.sh\n"
+                "fi\n"
+                "printf 'done\\n'\n",
+            )
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "done\n")
+        self.assertEqual(result.observation.sources, ())
 
     def test_trace_rejects_missing_entrypoint(self):
         with ScriptProject() as project:

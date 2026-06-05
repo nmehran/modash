@@ -93,6 +93,151 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(drifted.returncode, 125, drifted.stdout)
         self.assertIn("observed environment drift: DEP", drifted.stdout)
 
+    def test_runtime_compiler_evaluates_original_source_argv_side_effects(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source \"$(printf './dep.sh'; touch side-effect)\"\n"
+                "[[ -f side-effect ]] && printf 'side:yes\\n' || printf 'side:no\\n'\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            project.path("side-effect").unlink()
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "dep\nside:yes\n")
+
+    def test_runtime_compiler_preserves_source_argument_expansion_status(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "false\nsource \"$(printf './dep.sh')\"\n")
+            project.write("dep.sh", "printf 'inside:%s\\n' \"$?\"\n")
+            compiled, graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(graph["edges"][0]["source_entry_status"], 0)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "inside:0\n")
+
+    def test_runtime_compiler_fails_closed_when_source_expression_selects_new_target(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "if [[ ${USE_TWO:-} ]]; then\n"
+                "  DEP=./two.sh\n"
+                "else\n"
+                "  DEP=./one.sh\n"
+                "fi\n"
+                "source \"$DEP\"\n"
+                "printf 'done\\n'\n",
+            )
+            project.write("one.sh", "printf 'one\\n'\n")
+            project.write("two.sh", "printf 'two\\n'\n")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            matched = project.run(compiled)
+            drifted = project.run(compiled, env={"USE_TWO": "1"})
+
+        self.assertEqual(matched.returncode, 0, matched.stdout)
+        self.assertEqual(matched.stdout, "one\ndone\n")
+        self.assertEqual(drifted.returncode, 125, drifted.stdout)
+        self.assertIn("observed source path drift", drifted.stdout)
+        self.assertNotIn("two\n", drifted.stdout)
+
+    def test_runtime_compiler_fails_closed_on_sourcepath_path_drift(self):
+        with ScriptProject() as project:
+            one = project.mkdir("lib1")
+            two = project.mkdir("lib2")
+            project.write("main.sh", "source dep.sh\nprintf 'done\\n'\n")
+            project.write("lib1/dep.sh", "printf 'one\\n'\n")
+            project.write("lib2/dep.sh", "printf 'two\\n'\n")
+            base_path = os.environ.get("PATH", "")
+            compiled, _graph = self.compile_observed(
+                project,
+                "main.sh",
+                env={"PATH": f"{one}:{base_path}"},
+            )
+            matched = project.run(compiled, env={"PATH": f"{one}:{base_path}"})
+            drifted = project.run(compiled, env={"PATH": f"{two}:{base_path}"})
+
+        self.assertEqual(matched.returncode, 0, matched.stdout)
+        self.assertEqual(matched.stdout, "one\ndone\n")
+        self.assertEqual(drifted.returncode, 125, drifted.stdout)
+        self.assertIn("observed environment drift: PATH", drifted.stdout)
+        self.assertNotIn("two\n", drifted.stdout)
+
+    def test_runtime_compiler_fails_closed_on_home_tilde_source_drift(self):
+        with ScriptProject() as project:
+            home1 = project.mkdir("home1")
+            home2 = project.mkdir("home2")
+            project.write("main.sh", "source ~/dep.sh\nprintf 'done\\n'\n")
+            project.write("home1/dep.sh", "printf 'one\\n'\n")
+            project.write("home2/dep.sh", "printf 'two\\n'\n")
+            compiled, _graph = self.compile_observed(project, "main.sh", env={"HOME": str(home1)})
+            matched = project.run(compiled, env={"HOME": str(home1)})
+            drifted = project.run(compiled, env={"HOME": str(home2)})
+
+        self.assertEqual(matched.returncode, 0, matched.stdout)
+        self.assertEqual(matched.stdout, "one\ndone\n")
+        self.assertEqual(drifted.returncode, 125, drifted.stdout)
+        self.assertIn("observed environment drift: HOME", drifted.stdout)
+        self.assertNotIn("two\n", drifted.stdout)
+
+    def test_runtime_compiler_fails_closed_on_unset_default_source_drift(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "source \"${DEP:-./one.sh}\"\nprintf 'done\\n'\n")
+            project.write("one.sh", "printf 'one\\n'\n")
+            project.write("two.sh", "printf 'two\\n'\n")
+            old_dep = os.environ.pop("DEP", None)
+            try:
+                compiled, _graph = self.compile_observed(project, "main.sh")
+            finally:
+                if old_dep is not None:
+                    os.environ["DEP"] = old_dep
+            matched = project.run(compiled)
+            drifted = project.run(compiled, env={"DEP": "./two.sh"})
+
+        self.assertEqual(matched.returncode, 0, matched.stdout)
+        self.assertEqual(matched.stdout, "one\ndone\n")
+        self.assertEqual(drifted.returncode, 125, drifted.stdout)
+        self.assertIn("observed source path drift", drifted.stdout)
+        self.assertNotIn("two\n", drifted.stdout)
+
+    def test_runtime_compiler_restores_cdpath_behavior_after_secure_startup(self):
+        with ScriptProject() as project:
+            cdpath_root = project.mkdir("cdpath")
+            project.mkdir("cdpath/target")
+            project.write(
+                "main.sh",
+                "cd target\n"
+                "source dep.sh\n"
+                "printf 'pwd:%s\\n' \"$PWD\"\n",
+            )
+            project.write("cdpath/target/dep.sh", "printf 'depA\\n'\n")
+            env = {"CDPATH": str(cdpath_root)}
+            expected = project.run("main.sh", env=env)
+            compiled, _graph = self.compile_observed(project, "main.sh", env=env)
+            actual = project.run(compiled, env=env)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_runtime_compiler_preserves_prior_status_before_dynamic_command_guard(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "helper() { printf 'prior:%s\\n' \"$?\"; }\n"
+                "cmd=helper\n"
+                "false\n"
+                "\"$cmd\"\n"
+                "source ./dep.sh\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "prior:1\ndep\n")
+
     def test_runtime_compiler_fails_closed_when_unobserved_source_branch_runs_later(self):
         with ScriptProject() as project:
             project.write("extra.sh", 'printf "extra\\n"\n')
@@ -308,6 +453,7 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         cases = {
             "computed getenv": 'os.getenv("BASH"+"_ENV")',
             "getattr environ": 'getattr(os,"en"+"viron").get("BA"+"SH"+"_ENV")',
+            "chr environ": 'getattr(os,"".join(map(chr,[101,110,118,105,114,111,110]))).get("".join(map(chr,[66,65,83,72,95,69,78,86])))',
         }
         for name, probe in cases.items():
             with self.subTest(name=name), ScriptProject() as project:
@@ -1615,7 +1761,6 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
             "set option": "if set -o | grep -q '^xtrace'; then DEP=./dep.sh; fi\nsource \"$DEP\"\n",
             "bash env": "if [[ -v BASH_ENV ]]; then DEP=./dep.sh; fi\nsource \"$DEP\"\n",
             "dynamic variable probe": "v=BASH_ENV\nif [[ -v $v ]]; then DEP=./dep.sh; fi\nsource \"$DEP\"\n",
-            "printenv dynamic bash env": "v=BASH_ENV\nif printenv \"$v\" >/dev/null; then DEP=./dep.sh; fi\nsource \"$DEP\"\n",
             "dynamic shopt option": "opt=expand_aliases\nif shopt -q \"$opt\"; then DEP=./dep.sh; fi\nsource \"$DEP\"\n",
             "declare print": "if declare -p BASH_ENV >/dev/null 2>&1; then DEP=./dep.sh; fi\nsource \"$DEP\"\n",
             "compgen variables": "if compgen -v | grep -qx BASH_ENV; then DEP=./dep.sh; fi\nsource \"$DEP\"\n",
@@ -1718,6 +1863,16 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                 {"PAYLOAD": "echo child"},
                 "runtime.compile.unrewritten_source",
             ),
+            "env split sh": (
+                "env -S \"sh -c '. ./dep.sh'\"\nprintf 'done\\n'\n",
+                {},
+                "runtime.compile.unrewritten_source",
+            ),
+            "env split string sh": (
+                "env --split-string=\"sh -c '. ./dep.sh'\"\nprintf 'done\\n'\n",
+                {},
+                "runtime.compile.unrewritten_source",
+            ),
         }
         for name, (script, env, code) in cases.items():
             with self.subTest(name=name), ScriptProject() as project:
@@ -1729,6 +1884,36 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                     code=code,
                     env=env,
                 )
+
+    def test_runtime_compiler_allows_env_split_string_without_source_payload(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "env -S \"printf env-ok\\\\n\"\n"
+                "source ./dep.sh\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "env-ok\ndep\n")
+
+    def test_runtime_compiler_allows_source_free_external_interpreter_heredoc(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "python3 - <<'PY'\n"
+                "print('helper')\n"
+                "PY\n"
+                "source ./dep.sh\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "helper\ndep\n")
 
     def test_runtime_compiler_preserves_top_level_negated_source_status(self):
         with ScriptProject() as project:
@@ -1771,6 +1956,44 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                     "main.sh",
                     code="runtime.compile.dynamic_eval",
                     env={"CMD": "printf trace\\n"},
+                )
+
+    def test_runtime_compiler_rejects_eval_guard_override_or_removal(self):
+        cases = {
+            "override": "eval() { builtin eval \"$@\"; }\n",
+            "unset": "unset -f eval\n",
+        }
+        for name, prefix in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write(
+                    "main.sh",
+                    prefix
+                    + "i=${I:-01}\n"
+                    + "result=\"$(eval echo \\${TEST_CASE_\"$i\"})\"\n"
+                    + "printf 'result:%s\\n' \"$result\"\n"
+                    + "source ./base.sh\n",
+                )
+                project.write("base.sh", "printf 'base\\n'\n")
+                self.assert_compile_observed_error(
+                    project,
+                    "main.sh",
+                    code="runtime.compile.dynamic_state",
+                    env={"TEST_CASE_01": "hello"},
+                )
+
+    def test_runtime_compiler_rejects_kill_guard_override_or_removal(self):
+        cases = {
+            "override": "kill() { builtin kill -KILL \"$$\"; }\n",
+            "unset": "unset -f kill\n",
+        }
+        for name, prefix in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("main.sh", prefix + "source ./dep.sh\n")
+                project.write("dep.sh", "printf 'dep\\n'\n")
+                self.assert_compile_observed_error(
+                    project,
+                    "main.sh",
+                    code="runtime.compile.dynamic_state",
                 )
 
     def test_runtime_compiler_rejects_mutated_or_comment_only_shopt_restore_eval(self):

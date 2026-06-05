@@ -72,6 +72,14 @@
   probes, and source-relevant inherited environment drift.
 - Added guarded direct-`kill` replay support for ordinary background-helper
   cleanup while rejecting guard-bypassing kill forms and current-shell targets.
+- Added review-driven replay validation for original source argument expansion,
+  source-entry status, selected source path/argument drift, sourcepath `PATH`
+  drift, tilde `HOME` drift, unset-default parameter drift, generated dynamic
+  guard `$?` preservation, `CDPATH` parity after secure startup, `eval` / `kill`
+  guard override rejection, `env -S` source-bearing payload rejection, and
+  trace-environment hiding from external interpreter probes.
+- Added source-free external interpreter heredoc replay coverage while keeping
+  heredoc bodies that inspect trace-owned environment fail-closed.
 
 ### Changed
 
@@ -100,10 +108,17 @@
 - Child replay tokens are no longer injected into child `bash -c` command-line
   payloads; generated child setup reads them from short-lived replay files before
   user payload execution.
+- Runtime observations now use schema `9` and trusted runtime graphs use schema
+  `3`. Graph edges record source-entry status so replay can validate the status
+  Bash exposes to sourced files after source argument expansion.
+- Runtime graph replay now expands the original source argument words before
+  selecting the trusted edge, validates the selected source path and arguments
+  against the graph, and aborts on replay-time drift instead of blindly replaying
+  the observed target.
 
 ### Validation
 
-- Full unit suite: `724` tests, `9` skipped.
+- Full unit suite: `753` tests, `9` skipped.
 - Runtime-focused graph/source/replay safety suites passed.
 - Opt-in real-world suite with runtime parity, trace, supplement replay,
   trusted graph replay, and observe-compile gates: `17` tests passed. Runtime

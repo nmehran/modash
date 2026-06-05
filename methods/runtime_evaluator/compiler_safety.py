@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass
 
 from methods.runtime_evaluator.compiler_model import RuntimeObservedCompileError, _CompilePlan
@@ -32,7 +33,7 @@ TRACE_VARIABLES = {
 INSTRUMENTATION_VARIABLES = {"BASH_ENV", "BASH_XTRACEFD", "PS4", "SHELLOPTS", "BASHOPTS", "BASH_ALIASES", *TRACE_VARIABLES}
 DECLARATION_COMMANDS = {"declare", "typeset", "local", "export", "readonly"}
 DYNAMIC_STATE_COMMANDS = {"unset", "read", "mapfile", "readarray", "let", "((", *DECLARATION_COMMANDS}
-REPLAY_CRITICAL_FUNCTIONS = {"source", ".", "exec", "trap", "command", "builtin", "shopt", "env", "exit", "enable"}
+REPLAY_CRITICAL_FUNCTIONS = {"source", ".", "eval", "exec", "trap", "kill", "command", "builtin", "shopt", "env", "exit", "enable"}
 SHELL_C_COMMANDS = {"bash", "sh", "dash", "ksh", "ksh93", "mksh", "zsh", "ash", "busybox"}
 EXTERNAL_ENV_PROBE_COMMANDS = {"python", "python3", "perl", "ruby", "node", "php", "lua"}
 SAFE_LITERAL_EVAL_COMMANDS = {"echo", ":"}
@@ -267,9 +268,15 @@ def _code_lines(
                 inert_heredocs.pop(0)
             continue
         if active_heredocs:
-            if is_heredoc_end(line, active_heredocs[0]):
+            delimiter, scan_body = active_heredocs[0]
+            if is_heredoc_end(line, delimiter):
                 active_heredocs.pop(0)
-            elif not active_heredocs[0].quoted and _scan_shell_fragments_for_dynamic_bypass(line, {}, depth=0):
+            elif scan_body and _heredoc_body_introspects_instrumented_environment(line):
+                raise RuntimeObservedCompileError(
+                    f"runtime graph compiler input observes instrumentation-sensitive shell state at {label}:{line_number}",
+                    code="runtime.compile.instrumentation_sensitive",
+                )
+            elif not delimiter.quoted and _scan_shell_fragments_for_dynamic_bypass(line, {}, depth=0):
                 raise RuntimeObservedCompileError(
                     f"runtime graph compiler input uses dynamic validation-bypassing heredoc expansion at {label}:{line_number}",
                     code="runtime.compile.dynamic_command",
@@ -278,7 +285,8 @@ def _code_lines(
         inert_body_line = line_number in inert_body_lines
         yield line_number, line, inert_body_line
         if not inert_body_line:
-            active_heredocs.extend(extract_heredoc_delimiters(line))
+            scan_body = _line_has_external_interpreter_heredoc(line)
+            active_heredocs.extend((delimiter, scan_body) for delimiter in extract_heredoc_delimiters(line))
         else:
             inert_heredocs.extend(extract_heredoc_delimiters(line))
 
@@ -470,7 +478,7 @@ def _parse_command(command: str) -> _Command:
 
 
 def _defines_replay_critical_function(line: str) -> bool:
-    names = r"(?:source|\.|exec|trap|command|builtin|shopt|env|exit|enable)"
+    names = r"(?:source|\.|eval|exec|trap|kill|command|builtin|shopt|env|exit|enable)"
     return bool(
         re.search(rf"(^|[;&|])\s*(?:function\s+)?{names}\s*(?:\(\s*\))?\s*\{{", line)
         or re.search(rf"(^|[;&|])\s*{names}\s*\(\s*\)\s*\{{", line)
@@ -658,9 +666,21 @@ def _introspects_instrumented_environment(command: _Command) -> bool:
     if command.name == "set" and (len(words) == 1 or "|" in words):
         return True
     if command.name in EXTERNAL_ENV_PROBE_COMMANDS:
-        if any(word.startswith("<<") for word in words[1:]):
-            return True
         if "-c" in words[1:] and any(_external_interpreter_payload_can_probe_environment(word) for word in words[1:]):
+            return True
+    return False
+
+
+def _heredoc_body_introspects_instrumented_environment(line: str) -> bool:
+    if any(variable in line for variable in INSTRUMENTATION_VARIABLES):
+        return True
+    return _external_interpreter_payload_can_probe_environment(line)
+
+
+def _line_has_external_interpreter_heredoc(line: str) -> bool:
+    for command in get_commands(line):
+        parsed = _parse_command(command)
+        if parsed.name in EXTERNAL_ENV_PROBE_COMMANDS and any(word.startswith("<<") for word in parsed.words[1:]):
             return True
     return False
 
@@ -676,6 +696,9 @@ def _external_interpreter_payload_can_probe_environment(word: str) -> bool:
         or "getenv" in collapsed
         or "BASH_ENV" in collapsed
         or "MODASH_TRACE" in collapsed
+        or re.search(r"chr\(\s*(?:66|77|95)", word)
+        or "map(chr" in collapsed
+        or "getattr(os," in collapsed
         or re.search(r"BASH[\"']?\s*\+\s*[\"']?_ENV", word)
         or re.search(r"MODASH[\"']?\s*\+\s*[\"']?_TRACE", word)
     )
@@ -936,11 +959,91 @@ def _words_have_source_bearing_shell_payload(command: str) -> bool:
     except UnsupportedSourceError:
         return False
     words = [strip_shell_word_quotes(word) for word in raw_words]
+    words = _expand_env_split_words(words)
     return (
-        _direct_non_bash_shell_payload_contains_source(words)
+        _shell_payload_contains_source(words)
+        or _direct_non_bash_shell_payload_contains_source(words)
         or _busybox_shell_payload_contains_source(words)
         or _exec_style_shell_payload_contains_source(words)
     )
+
+
+def _shell_payload_contains_source(words: list[str]) -> bool:
+    index = _shell_command_index_after_wrappers(words)
+    if index is None or _path_basename(words[index]) not in SHELL_C_COMMANDS:
+        return False
+    payload_index = _shell_c_payload_index(words, index + 1)
+    return payload_index is not None and _payload_contains_source(words[payload_index])
+
+
+def _expand_env_split_words(words: list[str]) -> list[str]:
+    index = 0
+    while index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[index]):
+        index += 1
+    if index < len(words) and words[index] == "command":
+        index += 1
+        while index < len(words):
+            if words[index] == "--":
+                index += 1
+                break
+            if words[index] == "-p":
+                index += 1
+                continue
+            if words[index].startswith("-"):
+                return words
+            break
+    if index >= len(words) or _path_basename(words[index]) != "env":
+        return words
+    env_index = index
+    index += 1
+    split_words: list[str] | None = None
+    while index < len(words):
+        word = words[index]
+        if word == "--":
+            index += 1
+            break
+        if word in {"-i", "--ignore-environment"}:
+            index += 1
+            continue
+        if word == "-u":
+            index += 2
+            continue
+        if word.startswith("--unset=") or ASSIGNMENT_WORD_PATTERN.match(word):
+            index += 1
+            continue
+        if word == "-S":
+            if index + 1 >= len(words):
+                return words[:env_index] + ["sh", "-c", "source __modash_env_split_parse_error__"]
+            split_words = _split_env_s(words[index + 1])
+            index += 2
+            break
+        if word.startswith("-S") and word != "-S":
+            split_words = _split_env_s(word[2:])
+            index += 1
+            break
+        if word == "--split-string":
+            if index + 1 >= len(words):
+                return words[:env_index] + ["sh", "-c", "source __modash_env_split_parse_error__"]
+            split_words = _split_env_s(words[index + 1])
+            index += 2
+            break
+        if word.startswith("--split-string="):
+            split_words = _split_env_s(word.split("=", 1)[1])
+            index += 1
+            break
+        if word.startswith("-"):
+            return words
+        break
+    if split_words is None:
+        return words
+    return words[:env_index] + split_words + words[index:]
+
+
+def _split_env_s(value: str) -> list[str]:
+    try:
+        return shlex.split(value)
+    except ValueError:
+        return ["sh", "-c", "source __modash_env_split_parse_error__"]
 
 
 def _direct_non_bash_shell_payload_contains_source(words: list[str]) -> bool:

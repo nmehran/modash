@@ -80,7 +80,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
 
         self.assertEqual(loaded, observation)
         self.assertTrue(text.endswith("\n"))
-        self.assertTrue(text.startswith('{\n  "version": 8,\n  "entrypoint": '))
+        self.assertTrue(text.startswith('{\n  "version": 9,\n  "entrypoint": '))
         self.assertEqual(data["environment"]["recorded_keys"], ["A_VAR", "Z_VAR"])
         self.assertEqual(data["run"]["shell"], "bash")
         self.assertEqual(data["run"]["target_status"], 0)
@@ -89,6 +89,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
         self.assertIsNone(data["processes"][0]["parent_index"])
         self.assertEqual(data["sources"][0]["process_index"], 0)
         self.assertEqual(data["sources"][0]["arguments"], ["arg"])
+        self.assertEqual(data["sources"][0]["source_entry_status"], 0)
         self.assertEqual(
             {tuple(file["roles"]) for file in data["files"]},
             {("entrypoint", "call-site"), ("source",)},
@@ -101,7 +102,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             dependency = project.write("dep.sh", "echo dep\n")
 
             observation = validate_observation({
-                "version": 8,
+                "version": 9,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
@@ -136,6 +137,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                         "function_call": None,
                         "resolved_path": str(dependency),
                         "arguments": [],
+                        "source_entry_status": 0,
                         "status": 0,
                     }
                 ],
@@ -183,7 +185,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             entrypoint = project.write("main.sh", "source ./dep.sh\n")
             dependency = project.write("dep.sh", "echo dep\n")
             valid = {
-                "version": 8,
+                "version": 9,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
@@ -218,6 +220,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                         "function_call": None,
                         "resolved_path": str(dependency),
                         "arguments": [],
+                        "source_entry_status": 0,
                         "status": 0,
                     }
                 ],
@@ -229,7 +232,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             }
 
             cases = [
-                ("wrong version", {**valid, "version": 1}, "version must be 8"),
+                ("wrong version", {**valid, "version": 1}, "version must be 9"),
                 ("unknown top-level key", {**valid, "extra": True}, "unknown keys"),
                 (
                     "missing argv",
@@ -311,7 +314,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
     def test_write_observation_validates_plain_json_before_writing(self):
         with ScriptProject() as project:
             with self.assertRaises(RuntimeSourceObservationError):
-                write_observation(project.observation_path(), {"version": 8})
+                write_observation(project.observation_path(), {"version": 9})
 
             self.assertFalse(project.observation_path().exists())
 
@@ -381,7 +384,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
             entrypoint = project.write("main.sh", "source ./dep.sh\n")
             dependency = project.write("dep.sh", "echo dep\n")
             valid = {
-                "version": 8,
+                "version": 9,
                 "entrypoint": str(entrypoint),
                 "cwd": str(project.root),
                 "argv": [],
@@ -416,6 +419,7 @@ class RuntimeSourceObservationTestCase(unittest.TestCase):
                         "function_call": None,
                         "resolved_path": str(dependency),
                         "arguments": [],
+                        "source_entry_status": 0,
                         "status": 0,
                     },
                 ],

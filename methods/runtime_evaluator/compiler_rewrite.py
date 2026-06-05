@@ -15,6 +15,7 @@ from methods.runtime_evaluator.compiler_model import (
     _EmbeddedFile,
     _ReplayEdge,
     _RewriteUnit,
+    _SourceCandidate,
 )
 from methods.runtime_evaluator.compiler_plan import _process_logical_path
 from methods.runtime_evaluator.compiler_prelude import _render_replay_prelude, _target_logical_paths
@@ -222,22 +223,42 @@ def _candidate_replacements_by_line(unit: _RewriteUnit) -> dict[int, list[tuple[
             )
         end = start + len(needle)
         search_start_by_line[candidate.line] = end
-        replacement = _render_replay_group(candidate.base_id, negated=_source_site_is_negated(needle, candidate.separator))
+        replacement = _render_replay_group(
+            candidate,
+            source_expression=_source_expression_for_candidate(candidate),
+            source_expression_sets_status=_source_expression_sets_status(candidate),
+            negated=_source_site_is_negated(needle, candidate.separator),
+        )
         if candidate.separator and candidate.text.lstrip().startswith(candidate.separator):
             replacement = f"{candidate.separator} {replacement}"
         replacements_by_line.setdefault(candidate.line, []).append((start, end, replacement))
     return replacements_by_line
 
-def _render_replay_group(base_id: str, *, negated: bool = False) -> str:
+def _render_replay_group(
+    candidate: _SourceCandidate,
+    *,
+    source_expression: str,
+    source_expression_sets_status: bool,
+    negated: bool = False,
+) -> str:
+    source_entry_status = (
+        "__modash_source_expansion_status"
+        if source_expression_sets_status
+        else "__modash_source_command_prior_status"
+    )
     group = (
-        f"{{ __modash_source_prior_status=$?; __modash_replay_select_active=1; __modash_select_source_edge {shlex.quote(base_id)}; "
+        f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {source_expression} ); "
+        "__modash_source_expansion_status=$?; "
+        f"__modash_source_entry_status=${source_entry_status}; "
+        f"__modash_replay_select_active=1; __modash_select_source_edge {shlex.quote(candidate.base_id)}; "
         "__modash_replay_select_active=0; "
         "__modash_replay_select_status=$?; "
+        "__modash_validate_source_argv \"$__modash_source_entry_status\" \"${__modash_source_argv[@]}\"; "
         "if (( __modash_replay_select_status != 0 )); then "
         "( exit \"$__modash_replay_select_status\" ); "
         "elif [[ $__modash_replay_kind == file ]]; then "
         "__modash_require_embedded_file \"$__modash_replay_target\"; "
-        "( exit \"$__modash_source_prior_status\" ); "
+        "( exit \"$__modash_source_entry_status\" ); "
         "builtin source <(__modash_emit_embedded_file \"$__modash_replay_target\") \"${__modash_replay_args[@]}\"; "
         "__modash_replay_actual_status=$?; "
         "if (( __modash_replay_actual_status != __modash_replay_status )); then "
@@ -250,6 +271,51 @@ def _render_replay_group(base_id: str, *, negated: bool = False) -> str:
         "fi; }"
     )
     return f"! {group}" if negated else group
+
+
+def _source_expression_for_candidate(candidate: _SourceCandidate) -> str:
+    probe = candidate.text.strip()
+    if candidate.separator and probe.startswith(candidate.separator):
+        probe = probe[len(candidate.separator):].strip()
+    invocation = source_command_invocation(probe, stop_at_shell_control=True)
+    if invocation is None:
+        raise RuntimeObservedCompileError(
+            f"could not render source argv validation for observed source site: {candidate.text!r}",
+            code="runtime.compile.mapping_failed",
+        )
+    return invocation.source_expression
+
+
+def _source_expression_sets_status(candidate: _SourceCandidate) -> bool:
+    expression = _source_expression_for_candidate(candidate)
+    return _has_command_substitution(expression)
+
+
+def _has_command_substitution(text: str) -> bool:
+    in_single_quote = False
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and not in_single_quote:
+            escaped = True
+            index += 1
+            continue
+        if char == "'":
+            in_single_quote = not in_single_quote
+            index += 1
+            continue
+        if in_single_quote:
+            index += 1
+            continue
+        if char == "`" or text.startswith("$(", index):
+            return True
+        index += 1
+    return False
 
 
 def _source_site_has_redirection(line: str, source_site: str) -> bool:
@@ -1198,6 +1264,8 @@ def _positional_read_guard(command: str) -> str | None:
 
 
 def _guard_dynamic_command_sites(line: str) -> str:
+    if "__modash_select_source_edge" in line:
+        return line
     search_start = 0
     rewritten = line
     for command in get_commands(line):
@@ -1231,7 +1299,7 @@ def _dynamic_command_guard(command: str) -> str | None:
     if not (_has_dynamic_shell_expansion(raw_name) or _has_dynamic_shell_expansion(name)):
         return None
     guard_args = " ".join(raw_words[index:])
-    return f"__modash_guard_dynamic_command {guard_args}; "
+    return f"__modash_guard_dynamic_command_preserve_status {guard_args}; "
 
 
 def _dynamic_command_index(words: tuple[str, ...]) -> int | None:

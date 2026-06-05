@@ -252,10 +252,18 @@ __modash_guard_dynamic_command() {{
   done
 }}
 
+__modash_guard_dynamic_command_preserve_status() {{
+  local prior_status=$?
+  __modash_guard_dynamic_command "$@"
+  ( exit "$prior_status" )
+}}
+
 declare -a __modash_edge_keys=({" ".join(shlex.quote(key) for key in edge_keys)})
 declare -a __modash_process_keys=({" ".join(shlex.quote(key) for key in process_keys)})
 declare -A __modash_edge_target=()
+declare -A __modash_edge_resolved_path=()
 declare -A __modash_edge_kind=()
+declare -A __modash_edge_source_entry_status=()
 declare -A __modash_edge_status=()
 declare -A __modash_edge_argc=()
 declare -A __modash_edge_arg=()
@@ -268,7 +276,10 @@ declare -A __modash_process_expected=()
 declare -A __modash_process_seen=()
 declare -A __modash_process_consumed=()
 __modash_replay_kind=
+__modash_replay_resolved_path=
+__modash_replay_source_entry_status=0
 __modash_replay_status=0
+__modash_replay_argc=0
 __modash_replay_args=()
 __modash_replay_diag_file=
 __modash_replay_diag_line=
@@ -280,14 +291,75 @@ __modash_verify_trap_active=0
 {chr(10).join(map_setup)}
 {chr(10).join(f"__modash_process_expected[{shlex.quote(key)}]=1" for key in process_keys)}
 readonly -a __modash_edge_keys __modash_process_keys
-readonly -A __modash_edge_target __modash_edge_kind __modash_edge_status __modash_edge_argc __modash_edge_arg
+readonly -A __modash_edge_target __modash_edge_resolved_path __modash_edge_kind __modash_edge_source_entry_status __modash_edge_status __modash_edge_argc __modash_edge_arg
 readonly -A __modash_edge_diag_file __modash_edge_diag_line __modash_edge_diag_message __modash_process_expected
+
+__modash_resolve_source_path() {{
+  local source_path=${{1-}} directory old_ifs
+  if [[ -z $source_path ]]; then
+    builtin printf '%s/' "$PWD"
+    return
+  fi
+  if [[ $source_path == */* ]]; then
+    if [[ $source_path == /* ]]; then
+      builtin printf '%s' "$source_path"
+    else
+      builtin printf '%s/%s' "$PWD" "$source_path"
+    fi
+    return
+  fi
+  if ! builtin shopt -q sourcepath; then
+    builtin printf '%s/%s' "$PWD" "$source_path"
+    return
+  fi
+  old_ifs=$IFS
+  IFS=:
+  for directory in $PATH; do
+    if [[ -z $directory ]]; then
+      directory=.
+    fi
+    if [[ -f $directory/$source_path ]]; then
+      if [[ $directory == /* ]]; then
+        builtin printf '%s/%s' "$directory" "$source_path"
+      else
+        builtin printf '%s/%s/%s' "$PWD" "$directory" "$source_path"
+      fi
+      IFS=$old_ifs
+      return
+    fi
+  done
+  IFS=$old_ifs
+  builtin printf '%s/%s' "$PWD" "$source_path"
+}}
+
+__modash_normalize_source_path() {{
+  local path=${{1-}} directory basename
+  if [[ -z $path ]]; then
+    builtin printf ''
+    return
+  fi
+  directory=${{path%/*}}
+  basename=${{path##*/}}
+  if [[ $directory == "$path" ]]; then
+    directory=$PWD
+  elif [[ -z $directory ]]; then
+    directory=/
+  fi
+  if [[ -d $directory ]]; then
+    ( builtin cd -P -- "$directory" && builtin printf '%s/%s' "$PWD" "$basename" )
+    return
+  fi
+  builtin printf '%s' "$path"
+}}
 
 __modash_select_source_edge() {{
   local base=$1 seen key argc index arg_key
   [[ $__modash_replay_select_active == 1 ]] || __modash_abort "generated source selector called outside replay group"
   __modash_replay_kind=
+  __modash_replay_resolved_path=
+  __modash_replay_source_entry_status=0
   __modash_replay_status=0
+  __modash_replay_argc=0
   __modash_replay_args=()
   __modash_replay_diag_file=
   __modash_replay_diag_line=
@@ -301,15 +373,47 @@ __modash_select_source_edge() {{
   __modash_edge_seen[$base]=$((seen + 1))
   __modash_edge_consumed[$key]=1
   __modash_replay_kind=${{__modash_edge_kind[$key]}}
+  __modash_replay_resolved_path=${{__modash_edge_resolved_path[$key]}}
+  __modash_replay_source_entry_status=${{__modash_edge_source_entry_status[$key]:-0}}
   __modash_replay_status=${{__modash_edge_status[$key]:-0}}
   __modash_replay_target=${{__modash_edge_target[$key]}}
   __modash_replay_diag_file=${{__modash_edge_diag_file[$key]:-}}
   __modash_replay_diag_line=${{__modash_edge_diag_line[$key]:-}}
   __modash_replay_diag_message=${{__modash_edge_diag_message[$key]:-}}
   argc=${{__modash_edge_argc[$key]:-0}}
+  __modash_replay_argc=$argc
   for ((index = 0; index < argc; index++)); do
     arg_key="${{key}}"$'\x1f'"${{index}}"
     __modash_replay_args+=("${{__modash_edge_arg[$arg_key]}}")
+  done
+}}
+
+__modash_validate_source_argv() {{
+  local expansion_status=$1 source_path actual_resolved expected_arg actual_arg index
+  shift
+  if (( expansion_status != __modash_replay_source_entry_status )); then
+    __modash_abort "observed source argument status drift"
+  fi
+  if (( $# == 0 )); then
+    source_path=
+  else
+    source_path=$1
+  fi
+  actual_resolved=$(__modash_normalize_source_path "$(__modash_resolve_source_path "$source_path")")
+  if [[ $actual_resolved != "$__modash_replay_resolved_path" ]]; then
+    __modash_abort "observed source path drift"
+  fi
+  if (( $# != __modash_replay_argc + 1 )); then
+    __modash_abort "observed source argument drift"
+  fi
+  shift
+  for ((index = 0; index < __modash_replay_argc; index++)); do
+    expected_arg=${{__modash_replay_args[$index]}}
+    actual_arg=${{1-}}
+    if [[ $actual_arg != "$expected_arg" ]]; then
+      __modash_abort "observed source argument drift"
+    fi
+    shift
   done
 }}
 
@@ -408,6 +512,7 @@ __modash_verify_replay_consumed() {{
 }}
 
 builtin trap '__modash_trap_status=$?; __modash_verify_trap_active=1; __modash_verify_replay_consumed "$__modash_trap_status"' EXIT
+set +p
 '''
 
 
@@ -454,6 +559,8 @@ def _edge_map_lines(base_id: str, occurrence: int, edge: _ReplayEdge, target_log
     key = f"{base_id}|{occurrence}"
     lines = [
         f"__modash_edge_kind[{shlex.quote(key)}]={shlex.quote('file' if edge.is_file else 'missing')}",
+        f"__modash_edge_resolved_path[{shlex.quote(key)}]={shlex.quote(edge.resolved_path)}",
+        f"__modash_edge_source_entry_status[{shlex.quote(key)}]={edge.source_entry_status}",
         f"__modash_edge_status[{shlex.quote(key)}]={edge.status}",
         f"__modash_edge_argc[{shlex.quote(key)}]={len(edge.arguments)}",
     ]

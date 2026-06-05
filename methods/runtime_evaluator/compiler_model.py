@@ -31,6 +31,7 @@ class _ReplayEdge:
     site_line: int
     site_command: str
     resolved_path: str
+    source_entry_status: int
     status: int
     arguments: tuple[str, ...]
     xtrace_command: str

@@ -251,8 +251,6 @@ def _source_command_invocation_from_words(
 
 def _source_path_and_arguments(words: Sequence[str], source_index: int, stop_at_shell_control: bool):
     source_path = clean_shell_word(words[source_index + 1])
-    if not source_path:
-        return None
     arguments = []
     for word in words[source_index + 2:]:
         cleaned = clean_shell_word(word)
