@@ -120,6 +120,43 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "inside:0\n")
 
+    def test_runtime_compiler_preserves_source_entry_status_under_errexit(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "set -e\n"
+                "! true\n"
+                "source ./dep.sh\n"
+                "printf 'after\\n'\n",
+            )
+            project.write("dep.sh", "printf 'depstatus:%s\\n' \"$?\"\n")
+            expected = project.run("main.sh")
+            compiled, graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(expected.returncode, 0, expected.stderr)
+        self.assertEqual(graph["edges"][0]["source_entry_status"], 1)
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
+
+    def test_runtime_compiler_preserves_source_argument_status_under_errexit(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "set -e\n"
+                "source \"$(printf './dep.sh'; false)\"\n"
+                "printf 'after\\n'\n",
+            )
+            project.write("dep.sh", "printf 'depstatus:%s\\n' \"$?\"\n")
+            expected = project.run("main.sh")
+            compiled, graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(expected.returncode, 0, expected.stderr)
+        self.assertEqual(graph["edges"][0]["source_entry_status"], 1)
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
+
     def test_runtime_compiler_fails_closed_when_source_expression_selects_new_target(self):
         with ScriptProject() as project:
             project.write(
@@ -919,6 +956,13 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                 "printf 'arr:%s\\n' \"${arr[0]}\"\n"
                 "source ./dep.sh\n"
             ),
+            "literal associative array element target": (
+                "cmd=printf\n"
+                "declare -A m=()\n"
+                "\"$cmd\" -v 'm[key]' 'hello'\n"
+                "printf 'm:%s\\n' \"${m[key]}\"\n"
+                "source ./dep.sh\n"
+            ),
         }
         for name, script in cases.items():
             with self.subTest(name=name), ScriptProject() as project:
@@ -946,6 +990,26 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                 "main.sh",
                 code="runtime.compile.dynamic_state",
             )
+
+    def test_runtime_compiler_preserves_dynamic_command_prior_status_under_errexit(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "set -e\n"
+                "helper() { printf 'prior:%s\\n' \"$?\"; }\n"
+                "cmd=helper\n"
+                "! true\n"
+                "\"$cmd\"\n"
+                "source ./dep.sh\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            expected = project.run("main.sh")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(expected.returncode, 0, expected.stderr)
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
 
     def test_runtime_compiler_rejects_dynamic_printf_v_replay_state_targets(self):
         with ScriptProject() as project:
@@ -2870,9 +2934,69 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
             result = project.run(compiled)
 
         self.assertTrue(graph["edges"][0]["to"].startswith("missing-source:"))
+        self.assertEqual(graph["edges"][0]["failure_kind"], "missing")
         self.assertEqual(result.returncode, 125, result.stdout)
         self.assertNotIn("now-present", result.stdout)
         self.assertIn("observed missing source drift", result.stdout)
+
+    def test_runtime_compiler_replays_directory_source_failure(self):
+        with ScriptProject() as project:
+            project.mkdir("dir")
+            project.write(
+                "main.sh",
+                "source ./dir 2>err.txt || true\n"
+                "cat err.txt\n"
+                "printf 'done\\n'\n",
+            )
+            expected = project.run("main.sh")
+            compiled, graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertTrue(graph["edges"][0]["to"].startswith("missing-source:"))
+        self.assertEqual(graph["edges"][0]["failure_kind"], "directory")
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
+        self.assertNotIn("modash-trace", result.stdout)
+
+    def test_runtime_compiler_directory_source_diagnostic_does_not_create_false_graph_edge(self):
+        with ScriptProject() as project:
+            project.mkdir("dir")
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            project.write(
+                "main.sh",
+                "source ./dir 2>err.txt || true\n"
+                "if grep -q modash-trace err.txt; then\n"
+                "  source ./dep.sh\n"
+                "fi\n"
+                "cat err.txt\n"
+                "printf 'done\\n'\n",
+            )
+            expected = project.run("main.sh")
+            compiled, graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(len(graph["edges"]), 1)
+        self.assertEqual(graph["edges"][0]["failure_kind"], "directory")
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
+        self.assertNotIn("dep\n", result.stdout)
+        self.assertNotIn("modash-trace", result.stdout)
+
+    def test_runtime_compiler_replays_no_argument_source_failure(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source 2>err.txt || true\n"
+                "cat err.txt\n"
+                "printf 'done\\n'\n",
+            )
+            expected = project.run("main.sh")
+            compiled, graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(graph["edges"][0]["failure_kind"], "no-argument")
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
 
     def test_runtime_compiler_preserves_source_redirections(self):
         with ScriptProject() as project:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from functools import partial
 from pathlib import Path
 
@@ -30,7 +31,7 @@ from methods.runtime_evaluator.observations import (
 )
 from methods.compile_renderer import find_unquoted_substring
 from methods.shell.line import get_commands
-from methods.source_commands import is_trace_wrapper_source_command, source_command_invocation
+from methods.source_commands import is_source_like_command_text, is_trace_wrapper_source_command, source_command_invocation
 from methods.source_resolver import parse_shell_words_preserving_quotes, strip_shell_word_quotes
 def load_observed_source_graph(path: str | os.PathLike):
     graph_path = Path(path)
@@ -126,6 +127,7 @@ def validate_observed_source_graph(data):
         resolved_path = _absolute_path(edge.get("resolved_path"), "edges[].resolved_path")
         _nonnegative_int(edge.get("source_entry_status"), "edges[].source_entry_status")
         status = _nonnegative_int(edge.get("status"), "edges[].status")
+        failure_kind = _source_failure_kind(edge.get("failure_kind"))
         _string_list(edge.get("arguments"), "edges[].arguments")
         call_site = _call_site(edge.get("call_site"))
         function_stack = _string_list(edge.get("function_stack"), "edges[].function_stack")
@@ -134,7 +136,7 @@ def validate_observed_source_graph(data):
         xtrace = _xtrace(edge.get("xtrace"))
         xtrace_indexes.append(xtrace["index"])
         _validate_edge_from_node(edge, node_ids[edge["from"]], process_index, call_site, file_roles)
-        _validate_edge_to_node(edge, node_ids[edge["to"]], resolved_path, status, file_roles)
+        _validate_edge_to_node(edge, node_ids[edge["to"]], resolved_path, status, failure_kind, file_roles)
         _validate_edge_xtrace(edge, xtrace, process_index, call_site, source_identity)
         if node_ids[edge["from"]]["kind"] == "process-command":
             referenced_process_command_nodes.add(edge["from"])
@@ -159,7 +161,7 @@ def ensure_graph_fingerprints_current(graph):
                 format_fingerprint_mismatch("runtime source graph", fingerprint, mismatch),
                 code="runtime.graph.stale_observation",
             )
-    _ensure_missing_source_edges_still_missing(graph)
+    _ensure_source_failure_edges_still_current(graph)
     return graph
 
 def _schema_error(message: str):
@@ -175,6 +177,14 @@ _nonempty_string = partial(runtime_schema.nonempty_string, error_factory=_schema
 _positive_int = partial(runtime_schema.positive_int, error_factory=_schema_error)
 _nonnegative_int = partial(runtime_schema.nonnegative_int, error_factory=_schema_error)
 _integer = partial(runtime_schema.integer, error_factory=_schema_error)
+
+SOURCE_FAILURE_KINDS = frozenset({"file", "missing", "directory", "unreadable", "no-argument"})
+
+def _source_failure_kind(value):
+    failure_kind = _exact_string(value, "edges[].failure_kind")
+    if failure_kind not in SOURCE_FAILURE_KINDS:
+        raise RuntimeSourceGraphError(f"edges[].failure_kind contains unsupported value: {failure_kind}")
+    return failure_kind
 
 def _summary(value):
     _require_keys(value, GRAPH_SUMMARY_KEYS, "summary")
@@ -309,14 +319,18 @@ def _validate_edge_from_node(edge, from_node, process_index, call_site, file_rol
         return
     raise RuntimeSourceGraphError("edges[].from must reference a file or process-command node")
 
-def _validate_edge_to_node(edge, to_node, resolved_path, status, file_roles):
+def _validate_edge_to_node(edge, to_node, resolved_path, status, failure_kind, file_roles):
     kind = to_node["kind"]
     if kind == "file":
+        if failure_kind != "file":
+            raise RuntimeSourceGraphError("file edge target requires failure_kind=file")
         if to_node["path"] != resolved_path:
             raise RuntimeSourceGraphError("file edge target must match resolved_path")
         _require_fingerprint_role(file_roles, resolved_path, "source", "edges[].resolved_path")
         return
     if kind == "missing-source":
+        if failure_kind == "file":
+            raise RuntimeSourceGraphError("missing-source edge target cannot use failure_kind=file")
         if edge["to"] != f"missing-source:{edge['index']}":
             raise RuntimeSourceGraphError("missing-source edge target id must match edge index")
         if to_node["path"] != resolved_path:
@@ -340,23 +354,52 @@ def _validate_edge_xtrace(edge, xtrace, process_index, call_site, source_identit
     if not _is_trusted_xtrace_source_command(xtrace["command"]):
         raise RuntimeSourceGraphError("edges[].xtrace.command must be a source-like command")
 
-def _ensure_missing_source_edges_still_missing(graph):
+def _ensure_source_failure_edges_still_current(graph):
     for edge in graph["edges"]:
-        if not edge["to"].startswith("missing-source:"):
+        failure_kind = edge["failure_kind"]
+        if failure_kind == "file":
             continue
-        if Path(edge["resolved_path"]).is_file():
-            raise RuntimeSourceGraphError(
-                "runtime source graph is stale for "
-                f"{edge['resolved_path']}: source_presence mismatch; "
-                "expected absent missing-source edge target; current file exists",
-                code="runtime.graph.stale_observation",
-            )
+        path = Path(edge["resolved_path"])
+        if failure_kind == "no-argument":
+            continue
+        if failure_kind == "missing":
+            if path.exists() or path.is_symlink():
+                raise RuntimeSourceGraphError(
+                    "runtime source graph is stale for "
+                    f"{edge['resolved_path']}: source_presence mismatch; "
+                    "expected absent missing-source edge target; current path exists",
+                    code="runtime.graph.stale_observation",
+                )
+            continue
+        if failure_kind == "directory":
+            if not path.is_dir():
+                raise RuntimeSourceGraphError(
+                    "runtime source graph is stale for "
+                    f"{edge['resolved_path']}: source_failure_kind mismatch; "
+                    "expected directory source failure",
+                    code="runtime.graph.stale_observation",
+                )
+            continue
+        if failure_kind == "unreadable":
+            if not (path.exists() or path.is_symlink()) or os.access(path, os.R_OK):
+                raise RuntimeSourceGraphError(
+                    "runtime source graph is stale for "
+                    f"{edge['resolved_path']}: source_failure_kind mismatch; "
+                    "expected unreadable source failure",
+                    code="runtime.graph.stale_observation",
+                )
+            continue
+        raise RuntimeSourceGraphError(f"edges[].failure_kind contains unsupported value: {failure_kind}")
 
 def _ensure_source_presence_matches_fingerprints(observation: RuntimeSourceObservation):
     source_paths = _source_fingerprint_paths(observation.files)
     for event in observation.sources:
         resolved_path = str(Path(event.resolved_path).resolve(strict=False))
-        if resolved_path not in source_paths and Path(resolved_path).is_file():
+        if (
+            resolved_path not in source_paths
+            and Path(resolved_path).is_file()
+            and os.access(resolved_path, os.R_OK)
+        ):
             raise RuntimeSourceGraphError(
                 f"runtime source observation is stale for {resolved_path}: source_presence mismatch",
                 code="runtime.graph.stale_observation",
@@ -380,7 +423,7 @@ def _file_roles(value, label: str):
     return tuple(roles)
 
 def _is_source_like_command(command: str):
-    return source_command_invocation(command.strip()) is not None
+    return is_source_like_command_text(command.strip())
 
 def _is_replayable_source_call_site(command: str, xtrace_command: str):
     stripped = command.strip()

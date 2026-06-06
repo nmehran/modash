@@ -40,7 +40,7 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
 
             graph = build_observed_source_graph(entrypoint, observation)
 
-        self.assertEqual(graph["version"], 3)
+        self.assertEqual(graph["version"], 4)
         self.assertEqual(graph["observation_version"], 9)
         self.assertEqual(graph["environment"]["policy"], "inherit")
         self.assertIn("shell", graph["run"])
@@ -466,8 +466,8 @@ class RuntimeSourceGraphTestCase(unittest.TestCase):
             payload = json.loads(text)
             loaded = load_observed_source_graph(path)
 
-            self.assertEqual(payload["version"], 3)
-            self.assertEqual(loaded["version"], 3)
+            self.assertEqual(payload["version"], 4)
+            self.assertEqual(loaded["version"], 4)
             self.assertTrue(text.endswith("\n"))
 
     def test_writes_human_readable_graph_review_report(self):

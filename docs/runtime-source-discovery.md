@@ -179,7 +179,7 @@ Small example:
 
 ## Trusted Source Graph
 
-`modash graph` consumes a schema `9` observation and writes a schema `3` graph
+`modash graph` consumes a schema `9` observation and writes a schema `4` graph
 artifact.
 The graph is still data, not executable shell code. It contains:
 
@@ -187,8 +187,8 @@ The graph is still data, not executable shell code. It contains:
 - file nodes with fingerprint roles
 - process-command nodes for observed child Bash source sites
 - source edges with call-site text, resolved paths, source arguments,
-  source-entry status, completion status, source identity, helper-call
-  provenance when needed, and linked xtrace provenance
+  source-entry status, completion status, source failure kind, source identity,
+  helper-call provenance when needed, and linked xtrace provenance
 - the file fingerprints needed for stale graph rejection
 
 Graph construction fails closed when source events lack xtrace provenance, when
@@ -241,9 +241,9 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
   itself a trust failure. `observe-compile` may return that same nonzero status
   after writing graph, report, observation, and compiled output.
 - Source commands that terminate the traced shell before the trace wrapper can
-  finalize the source event, for example through `set -e` or explicit `exit`,
-  fail closed with a targeted trace diagnostic. `set -e`-suppressed contexts
-  such as `source ./dep.sh || true` remain traceable.
+  finalize the source event, for example through explicit `exit` or a source
+  body that trips `errexit`, fail closed with a targeted trace diagnostic.
+  `set -e`-suppressed contexts and nonzero source-entry status remain traceable.
 - Trace instrumentation failures still stop promotion before graph or executable
   output is written.
 - Runtime graph compile is limited to observed source edges whose call site can
@@ -300,7 +300,9 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - observed helper-call provenance for trusted runtime graph replay
 - schema `9` source identities, source-entry status, file fingerprints, and
   stale observation rejection
-- schema `3` trusted runtime graphs
+- schema `4` trusted runtime graphs with explicit source failure kinds
+- replayable failed source operations for missing paths, directory paths,
+  unreadable paths, and no-argument source calls
 - trusted runtime source graph construction
 - strict graph invariant validation for reviewed graph replay
 - compact human-readable graph review reports

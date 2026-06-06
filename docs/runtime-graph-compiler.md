@@ -25,6 +25,10 @@ sources, assignment-prefixed source scope/export/array behavior, simple source
 redirections including target command-substitution source-entry status, dynamic
 external commands with process-substitution arguments, simple `LINENO`
 references, child `bash -c` argv, and observed child Bash script invocations.
+Observed failed source operations are graph edges too. Missing paths, directory
+paths, unreadable paths, and no-argument source calls carry an explicit failure
+kind; generated replay verifies that the same failure condition still holds
+before replaying the observed Bash-shaped diagnostic and status.
 
 ## Trust boundary
 
@@ -73,8 +77,10 @@ rejected before executable output is promoted. A target command's own nonzero
 exit status is recorded as graph data and should be preserved by generated
 output; it is not a graph-trust failure by itself. Source commands that
 terminate the traced shell before the trace wrapper can finalize the event, for
-example through `set -e` or explicit `exit`, remain an explicit trace limitation
-and fail closed with a targeted diagnostic instead of producing a trusted graph.
+example through explicit `exit` or a source body that trips `errexit`, remain an
+explicit trace limitation and fail closed with a targeted diagnostic instead of
+producing a trusted graph. Nonzero source-entry status is preserved without
+tripping `errexit` before the observed source operation runs.
 
 The compiler also rejects shapes that can make a trusted graph lie about what
 will run: reserved `__modash_` names, trace-instrumentation-sensitive shell
@@ -165,8 +171,10 @@ should be reviewed directly.
 
 Relative source paths are resolved against the shell's physical current working
 directory, not a user-assigned `PWD` string. Missing-source edges are replayed
-only while the resolved missing path remains absent; if that file appears before
-generated execution, replay aborts as graph drift.
+only while the resolved missing path remains absent; directory, unreadable, and
+no-argument source failure edges likewise validate that the same failure kind
+still holds before replay. If the failure kind changes before generated
+execution, replay aborts as graph drift.
 File-backed source path validation accepts symlink spelling when the runtime
 path and observed path still identify the same file, and fails closed if that
 symlink is retargeted.

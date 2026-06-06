@@ -15,6 +15,7 @@ from methods.runtime_evaluator.graph_validate import (
     validate_observed_source_graph,
 )
 from methods.runtime_evaluator.scanners import function_context_sensitive_top_level_lines
+from methods.source_commands import source_command_invocation
 
 def build_observed_source_graph(entrypoint: str | os.PathLike, observation, *, validate_fingerprints=True):
     entrypoint_path = Path(entrypoint).resolve(strict=False)
@@ -48,6 +49,7 @@ def build_observed_source_graph(entrypoint: str | os.PathLike, observation, *, v
             "from": from_node["id"],
             "to": to_node["id"],
             "resolved_path": event.resolved_path,
+            "failure_kind": _source_failure_kind(event, xtrace, source_fingerprint_paths),
             "source_entry_status": event.source_entry_status,
             "status": event.status,
             "arguments": list(event.arguments),
@@ -141,6 +143,20 @@ def _edge_to_node(event, source_fingerprint_paths):
     if event.resolved_path in source_fingerprint_paths:
         return _file_node(event.resolved_path)
     return _missing_source_node(event)
+
+
+def _source_failure_kind(event, xtrace, source_fingerprint_paths):
+    resolved_path = str(Path(event.resolved_path).resolve(strict=False))
+    if resolved_path in source_fingerprint_paths:
+        return "file"
+    if not event.arguments and source_command_invocation(xtrace.command, normalize_trace_wrappers=True) is None:
+        return "no-argument"
+    resolved = Path(resolved_path)
+    if resolved.is_dir():
+        return "directory"
+    if (resolved.exists() or resolved.is_symlink()) and not os.access(resolved, os.R_OK):
+        return "unreadable"
+    return "missing"
 
 
 def _ensure_no_function_context_sensitive_sources(observation):

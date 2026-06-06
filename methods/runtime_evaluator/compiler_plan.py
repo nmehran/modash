@@ -16,7 +16,7 @@ from methods.runtime_evaluator.compiler_model import (
     _base_id,
     _validate_logical_path,
 )
-from methods.source_commands import shell_word_start, source_command_invocation
+from methods.source_commands import is_source_like_command_text, shell_word_start, source_command_invocation
 from methods.source_conditions import (
     condition_exit_status_not,
     literal_command_condition_exit_status,
@@ -44,6 +44,7 @@ def _coerce_edge(edge: dict) -> _ReplayEdge:
         site_line=edge["call_site"]["line"],
         site_command=edge["call_site"]["command"],
         resolved_path=edge["resolved_path"],
+        failure_kind=edge["failure_kind"],
         source_entry_status=edge.get("source_entry_status", 0),
         status=edge["status"],
         arguments=tuple(edge["arguments"]),
@@ -159,7 +160,12 @@ def _source_candidates(unit: _RewriteUnit) -> tuple[_SourceCandidate, ...]:
         if not stripped:
             return
         probe = stripped.lstrip(";&| ")
-        if source_command_invocation(stripped) is None and source_command_invocation(probe) is None:
+        if (
+            source_command_invocation(stripped) is None
+            and source_command_invocation(probe) is None
+            and not is_source_like_command_text(stripped)
+            and not is_source_like_command_text(probe)
+        ):
             return
         raw_sites.append((line, stripped, separator, status_before, repeatable, end_line, physical_lines))
 

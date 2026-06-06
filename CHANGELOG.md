@@ -144,8 +144,10 @@
   payloads; generated child setup reads them from short-lived replay files before
   user payload execution.
 - Runtime observations now use schema `9` and trusted runtime graphs use schema
-  `3`. Graph edges record source-entry status so replay can validate the status
-  Bash exposes to sourced files after source argument expansion.
+  `4`. Graph edges record source-entry status and source failure kind so replay
+  can validate the status Bash exposes to sourced files after source argument
+  expansion and can faithfully replay missing, directory, unreadable, and
+  no-argument source failures.
 - Runtime graph replay now expands the original source argument words before
   selecting the trusted edge, validates the selected source path and arguments
   against the graph, and aborts on replay-time drift instead of blindly replaying
@@ -174,9 +176,14 @@
   hidden and the payload does not inspect trace/replay-owned names, `/proc`
   process state, or trace file descriptors.
 - Runtime tracing now reports source commands that terminate the shell before
-  trace finalization, for example through `set -e` or explicit `exit`, with the
-  targeted `runtime.trace.errexit_source_exit` diagnostic. `errexit`-suppressed
-  source contexts remain traceable and replayable.
+  trace finalization, for example through explicit `exit` or a source body that
+  trips `errexit`, with the targeted `runtime.trace.errexit_source_exit`
+  diagnostic. `errexit`-suppressed source contexts and nonzero source-entry
+  status remain traceable and replayable.
+- Runtime graph replay now restores nonzero source-entry and dynamic-command
+  prior status without tripping `errexit` before the observed command runs, and
+  dynamic `printf -v` guards now allow safe literal associative-array targets
+  while still rejecting computed or generated-state targets.
 - Runtime tracing now reports source commands in unsupported child-shell
   contexts with `runtime.trace.unsupported_child_shell_source`, and
   process-substitution-backed source inputs with
@@ -184,7 +191,7 @@
 
 ### Validation
 
-- Full unit suite: `798` tests, `9` skipped.
+- Full unit suite: `828` tests, `9` skipped.
 - Runtime-focused graph/source/replay safety suites passed.
 - Opt-in real-world suite with runtime parity, trace, supplement replay,
   trusted graph replay, and observe-compile gates: `17` tests passed. Runtime

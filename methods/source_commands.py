@@ -337,8 +337,6 @@ def normalized_trace_wrapper_words(words: Sequence[str]):
         if separator is None:
             return None
         source_words = tuple(words[separator + 1:])
-        if not source_words:
-            return None
         return (command_name, *source_words)
 
     if words[0] not in {TRACE_BUILTIN_WRAPPER, TRACE_COMMAND_WRAPPER}:

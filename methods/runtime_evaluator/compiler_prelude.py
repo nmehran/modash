@@ -323,17 +323,11 @@ __modash_validate_printf_v_target() {{
     [[ $target != __modash_* ]] || __modash_abort "runtime replay cannot allow dynamic printf -v target"
     return
   fi
-  if [[ $target =~ ^([A-Za-z_][A-Za-z0-9_]*)\\[[0-9]+\\]$ ]]; then
+  if [[ $target =~ ^([A-Za-z_][A-Za-z0-9_]*)\\[[A-Za-z0-9_./:+,@%-]+\\]$ ]]; then
     [[ ${{BASH_REMATCH[1]}} != __modash_* ]] || __modash_abort "runtime replay cannot allow dynamic printf -v target"
     return
   fi
   __modash_abort "runtime replay cannot allow dynamic printf -v target"
-}}
-
-__modash_guard_dynamic_command_preserve_status() {{
-  local prior_status=$?
-  __modash_guard_dynamic_command "$@"
-  ( exit "$prior_status" )
 }}
 
 declare -a __modash_edge_keys=({" ".join(shlex.quote(key) for key in edge_keys)})
@@ -341,6 +335,7 @@ declare -a __modash_process_keys=({" ".join(shlex.quote(key) for key in process_
 declare -A __modash_edge_target=()
 declare -A __modash_edge_resolved_path=()
 declare -A __modash_edge_kind=()
+declare -A __modash_edge_failure_kind=()
 declare -A __modash_edge_source_entry_status=()
 declare -A __modash_edge_status=()
 declare -A __modash_edge_argc=()
@@ -354,6 +349,7 @@ declare -A __modash_process_expected=()
 declare -A __modash_process_seen=()
 declare -A __modash_process_consumed=()
 __modash_replay_kind=
+__modash_replay_failure_kind=
 __modash_replay_resolved_path=
 __modash_replay_source_entry_status=0
 __modash_replay_status=0
@@ -369,7 +365,7 @@ __modash_verify_trap_active=0
 {chr(10).join(map_setup)}
 {chr(10).join(f"__modash_process_expected[{shlex.quote(key)}]=1" for key in process_keys)}
 readonly -a __modash_edge_keys __modash_process_keys
-readonly -A __modash_edge_target __modash_edge_resolved_path __modash_edge_kind __modash_edge_source_entry_status __modash_edge_status __modash_edge_argc __modash_edge_arg
+readonly -A __modash_edge_target __modash_edge_resolved_path __modash_edge_kind __modash_edge_failure_kind __modash_edge_source_entry_status __modash_edge_status __modash_edge_argc __modash_edge_arg
 readonly -A __modash_edge_diag_file __modash_edge_diag_line __modash_edge_diag_message __modash_process_expected
 
 __modash_resolve_source_path() {{
@@ -445,6 +441,7 @@ __modash_select_source_edge() {{
   local base=$1 seen key argc index arg_key
   [[ $__modash_replay_select_active == 1 ]] || __modash_abort "generated source selector called outside replay group"
   __modash_replay_kind=
+  __modash_replay_failure_kind=
   __modash_replay_resolved_path=
   __modash_replay_source_entry_status=0
   __modash_replay_status=0
@@ -462,6 +459,7 @@ __modash_select_source_edge() {{
   __modash_edge_seen[$base]=$((seen + 1))
   __modash_edge_consumed[$key]=1
   __modash_replay_kind=${{__modash_edge_kind[$key]}}
+  __modash_replay_failure_kind=${{__modash_edge_failure_kind[$key]:-$__modash_replay_kind}}
   __modash_replay_resolved_path=${{__modash_edge_resolved_path[$key]}}
   __modash_replay_source_entry_status=${{__modash_edge_source_entry_status[$key]:-0}}
   __modash_replay_status=${{__modash_edge_status[$key]:-0}}
@@ -478,7 +476,7 @@ __modash_select_source_edge() {{
 }}
 
 __modash_validate_source_argv() {{
-  local expansion_status=$1 source_path actual_resolved expected_arg actual_arg index
+  local expansion_status=$1 source_path actual_resolved expected_arg actual_arg expected_word_count index
   shift
   if (( expansion_status != __modash_replay_source_entry_status )); then
     __modash_abort "observed source argument status drift"
@@ -489,18 +487,18 @@ __modash_validate_source_argv() {{
     source_path=$1
   fi
   actual_resolved=$(__modash_normalize_source_path "$(__modash_resolve_source_path "$source_path")")
-  if [[ $actual_resolved != "$__modash_replay_resolved_path" ]]; then
+  if [[ $__modash_replay_failure_kind != no-argument && $actual_resolved != "$__modash_replay_resolved_path" ]]; then
     if [[ $__modash_replay_kind != file || ! -e $actual_resolved || ! -e $__modash_replay_resolved_path || ! $actual_resolved -ef $__modash_replay_resolved_path ]]; then
       __modash_abort "observed source path drift"
     fi
   fi
-  if [[ $__modash_replay_kind == missing && -n $source_path && ( -e $actual_resolved || -L $actual_resolved ) ]]; then
-    __modash_abort "observed missing source drift"
-  fi
-  if (( $# != __modash_replay_argc + 1 )); then
+  __modash_validate_source_failure_kind "$source_path" "$actual_resolved"
+  expected_word_count=$((__modash_replay_argc + 1))
+  [[ $__modash_replay_failure_kind != no-argument ]] || expected_word_count=$__modash_replay_argc
+  if (( $# != expected_word_count )); then
     __modash_abort "observed source argument drift"
   fi
-  shift
+  (( $# == 0 )) || shift
   for ((index = 0; index < __modash_replay_argc; index++)); do
     expected_arg=${{__modash_replay_args[$index]}}
     actual_arg=${{1-}}
@@ -512,7 +510,7 @@ __modash_validate_source_argv() {{
 }}
 
 __modash_validate_source_argv_masked() {{
-  local expansion_status=$1 skip_mask=$2 source_path actual_resolved expected_arg actual_arg index
+  local expansion_status=$1 skip_mask=$2 source_path actual_resolved expected_arg actual_arg expected_word_count index
   shift 2
   if (( expansion_status != __modash_replay_source_entry_status )); then
     __modash_abort "observed source argument status drift"
@@ -523,18 +521,18 @@ __modash_validate_source_argv_masked() {{
     source_path=$1
   fi
   actual_resolved=$(__modash_normalize_source_path "$(__modash_resolve_source_path "$source_path")")
-  if [[ $actual_resolved != "$__modash_replay_resolved_path" ]]; then
+  if [[ $__modash_replay_failure_kind != no-argument && $actual_resolved != "$__modash_replay_resolved_path" ]]; then
     if [[ $__modash_replay_kind != file || ! -e $actual_resolved || ! -e $__modash_replay_resolved_path || ! $actual_resolved -ef $__modash_replay_resolved_path ]]; then
       __modash_abort "observed source path drift"
     fi
   fi
-  if [[ $__modash_replay_kind == missing && -n $source_path && ( -e $actual_resolved || -L $actual_resolved ) ]]; then
-    __modash_abort "observed missing source drift"
-  fi
-  if (( $# != __modash_replay_argc + 1 )); then
+  __modash_validate_source_failure_kind "$source_path" "$actual_resolved"
+  expected_word_count=$((__modash_replay_argc + 1))
+  [[ $__modash_replay_failure_kind != no-argument ]] || expected_word_count=$__modash_replay_argc
+  if (( $# != expected_word_count )); then
     __modash_abort "observed source argument drift"
   fi
-  shift
+  (( $# == 0 )) || shift
   for ((index = 0; index < __modash_replay_argc; index++)); do
     expected_arg=${{__modash_replay_args[$index]}}
     actual_arg=${{1-}}
@@ -557,17 +555,42 @@ __modash_validate_source_path_and_argc() {{
     source_path=$1
   fi
   actual_resolved=$(__modash_normalize_source_path "$(__modash_resolve_source_path "$source_path")")
-  if [[ $actual_resolved != "$__modash_replay_resolved_path" ]]; then
+  if [[ $__modash_replay_failure_kind != no-argument && $actual_resolved != "$__modash_replay_resolved_path" ]]; then
     if [[ $__modash_replay_kind != file || ! -e $actual_resolved || ! -e $__modash_replay_resolved_path || ! $actual_resolved -ef $__modash_replay_resolved_path ]]; then
       __modash_abort "observed source path drift"
     fi
   fi
-  if [[ $__modash_replay_kind == missing && -n $source_path && ( -e $actual_resolved || -L $actual_resolved ) ]]; then
-    __modash_abort "observed missing source drift"
-  fi
+  __modash_validate_source_failure_kind "$source_path" "$actual_resolved"
   if (( __modash_replay_argc != expected_argc )); then
     __modash_abort "observed source argument drift"
   fi
+}}
+
+__modash_validate_source_failure_kind() {{
+  local source_path=$1 actual_resolved=$2
+  case "$__modash_replay_failure_kind" in
+    file)
+      return
+      ;;
+    missing)
+      if [[ -n $source_path && ( -e $actual_resolved || -L $actual_resolved ) ]]; then
+        __modash_abort "observed missing source drift"
+      fi
+      ;;
+    directory)
+      [[ -d $actual_resolved ]] || __modash_abort "observed directory source drift"
+      ;;
+    unreadable)
+      [[ -e $actual_resolved || -L $actual_resolved ]] || __modash_abort "observed unreadable source drift"
+      [[ ! -r $actual_resolved ]] || __modash_abort "observed unreadable source drift"
+      ;;
+    no-argument)
+      [[ -z $source_path ]] || __modash_abort "observed no-argument source drift"
+      ;;
+    *)
+      __modash_abort "observed source failure kind drift"
+      ;;
+  esac
 }}
 
 source() {{
@@ -729,6 +752,7 @@ def _edge_map_lines(base_id: str, occurrence: int, edge: _ReplayEdge, target_log
     key = f"{base_id}|{occurrence}"
     lines = [
         f"__modash_edge_kind[{shlex.quote(key)}]={shlex.quote('file' if edge.is_file else 'missing')}",
+        f"__modash_edge_failure_kind[{shlex.quote(key)}]={shlex.quote(edge.failure_kind)}",
         f"__modash_edge_resolved_path[{shlex.quote(key)}]={shlex.quote(edge.resolved_path)}",
         f"__modash_edge_source_entry_status[{shlex.quote(key)}]={edge.source_entry_status}",
         f"__modash_edge_status[{shlex.quote(key)}]={edge.status}",
@@ -748,7 +772,7 @@ def _edge_map_lines(base_id: str, occurrence: int, edge: _ReplayEdge, target_log
             f"__modash_edge_target[{shlex.quote(key)}]=''",
             f"__modash_edge_diag_file[{shlex.quote(key)}]={shlex.quote(edge.site_file)}",
             f"__modash_edge_diag_line[{shlex.quote(key)}]={edge.site_line}",
-            f"__modash_edge_diag_message[{shlex.quote(key)}]={shlex.quote(_missing_source_message(edge))}",
+            f"__modash_edge_diag_message[{shlex.quote(key)}]={shlex.quote(_source_failure_message(edge))}",
         ])
     for index, argument in enumerate(edge.arguments):
         arg_key = f"{key}\x1f{index}"
@@ -773,13 +797,23 @@ def _verify_consumed_lines(array_name: str, label: str, keys: list[str]) -> list
         ])
     return lines
 
-def _missing_source_message(edge: _ReplayEdge) -> str:
+def _source_failure_message(edge: _ReplayEdge) -> str:
     value = edge.source_value
-    if edge.status == 2 and not value:
-        command_name = _missing_source_command_name(edge)
-        return f"{command_name}: filename argument required"
+    if edge.failure_kind == "no-argument":
+        command_name = _source_failure_command_name(edge)
+        return f"{command_name}: filename argument required\n{command_name}: usage: {command_name} filename [arguments]"
+    if edge.failure_kind == "directory":
+        return f"{_source_failure_command_name(edge)}: {value}: is a directory"
+    if edge.failure_kind == "unreadable":
+        return f"{value}: Permission denied"
     return f"{value}: No such file or directory"
 
-def _missing_source_command_name(edge: _ReplayEdge) -> str:
-    invocation = source_command_invocation(_first_source_segment(edge.xtrace_command) or "")
-    return invocation.command_name if invocation is not None else "source"
+def _source_failure_command_name(edge: _ReplayEdge) -> str:
+    source_segment = _first_source_segment(edge.xtrace_command) or ""
+    invocation = source_command_invocation(source_segment)
+    if invocation is not None:
+        return invocation.command_name
+    for word in source_segment.split():
+        if word in {"source", "."}:
+            return word
+    return "source"

@@ -47,7 +47,7 @@ class RuntimeSupplementCliTestCase(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn("modash: runtime source graph:", result.stderr)
         self.assertIn("modash: runtime graph review report:", result.stderr)
-        self.assertEqual(graph["version"], 3)
+        self.assertEqual(graph["version"], 4)
         self.assertEqual(graph["observation_version"], 9)
         self.assertEqual(graph["environment"]["policy"], "inherit")
         self.assertIn("shell", graph["run"])

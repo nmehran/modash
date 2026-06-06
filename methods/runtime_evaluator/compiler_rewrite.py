@@ -24,7 +24,14 @@ from methods.runtime_evaluator.compiler_prelude import _render_replay_prelude, _
 from methods.runtime_evaluator.compiler_safety import _shell_command_index_after_wrappers, _words_have_source_bearing_shell_payload
 from methods.shell.line import get_commands
 from methods.shell.scan import read_backtick_body, read_balanced_body
-from methods.source_commands import contains_nested_source_command, contains_source_command, source_command_invocation
+from methods.source_commands import (
+    clean_shell_word,
+    contains_nested_source_command,
+    contains_source_command,
+    is_source_like_command_text,
+    source_command_invocation,
+    source_command_position,
+)
 from methods.source_resolver import (
     ASSIGNMENT_WORD_PATTERN,
     UnsupportedSourceError,
@@ -43,6 +50,36 @@ class _BashCInvocation:
     payload: str
     raw_payload_word: str
     dynamic_payload: bool = False
+
+
+def _source_with_entry_status(command: str) -> str:
+    return (
+        "if (( __modash_source_entry_status == 0 )); then "
+        f"{command}; "
+        "else "
+        f"( exit \"$__modash_source_entry_status\" ) || {command}; "
+        "fi; "
+    )
+
+
+def _command_with_restored_status(status_variable: str, command: str) -> str:
+    return (
+        f"if (( {status_variable} == 0 )); then "
+        f"{command}; "
+        "else "
+        f"( exit \"${status_variable}\" ) || {command}; "
+        "fi; "
+    )
+
+
+def _array_assignment_with_status(array_name: str, expression: str, status_variable: str) -> str:
+    return (
+        f"if {array_name}=( {expression} ); then "
+        f"{status_variable}=0; "
+        "else "
+        f"{status_variable}=$?; "
+        "fi; "
+    )
 
 
 def _rewrite_process_payloads(plan: _CompilePlan) -> None:
@@ -342,9 +379,10 @@ def _render_replay_group(
             "__modash_validate_source_argv \"$__modash_source_entry_status\" \"${__modash_source_argv[@]}\"; "
         )
     file_source_operation = redirected_validation + (
-        "( exit \"$__modash_source_entry_status\" ); "
-        "builtin source <(__modash_emit_embedded_file \"$__modash_replay_target\") \"${__modash_replay_args[@]}\"; "
-        "__modash_replay_actual_status=$?; "
+        _source_with_entry_status(
+            "builtin source <(__modash_emit_embedded_file \"$__modash_replay_target\") \"${__modash_replay_args[@]}\""
+        )
+        + "__modash_replay_actual_status=$?; "
     )
     missing_source_operation = redirected_validation + (
         "builtin printf '%s: line %s: %s\\n' \"$__modash_replay_diag_file\" \"$__modash_replay_diag_line\" \"$__modash_replay_diag_message\" >&2; "
@@ -373,8 +411,8 @@ def _render_replay_group(
         )
         missing_status_capture = ""
     group = (
-        f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {source_expression} ); "
-        "__modash_source_expansion_status=$?; "
+        "{ __modash_source_command_prior_status=$?; __modash_source_argv=(); "
+        f"{_array_assignment_with_status('__modash_source_argv', source_expression, '__modash_source_expansion_status')}"
         f"__modash_source_entry_status=${source_entry_status}; "
         f"__modash_replay_select_active=1; __modash_select_source_edge {shlex.quote(candidate.base_id)}; "
         "__modash_replay_select_active=0; "
@@ -451,9 +489,8 @@ def _render_process_substitution_argument_replay_group(
     live_arguments = f" {argument_expression}" if argument_expression else ""
     file_source_operation = redirected_validation + (
         "__modash_live_source_path=$(__modash_materialize_embedded_file \"$__modash_replay_target\"); "
-        "( exit \"$__modash_source_entry_status\" ); "
-        f"builtin source \"$__modash_live_source_path\"{live_arguments}; "
-        "__modash_replay_actual_status=$?; "
+        + _source_with_entry_status(f"builtin source \"$__modash_live_source_path\"{live_arguments}")
+        + "__modash_replay_actual_status=$?; "
     )
     missing_source_operation = redirected_validation + (
         "builtin printf '%s: line %s: %s\\n' \"$__modash_replay_diag_file\" \"$__modash_replay_diag_line\" \"$__modash_replay_diag_message\" >&2; "
@@ -477,8 +514,8 @@ def _render_process_substitution_argument_replay_group(
         )
         missing_status_capture = ""
     group = (
-        f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {validation_expression} ); "
-        "__modash_source_expansion_status=$?; "
+        "{ __modash_source_command_prior_status=$?; __modash_source_argv=(); "
+        f"{_array_assignment_with_status('__modash_source_argv', validation_expression, '__modash_source_expansion_status')}"
         f"__modash_source_entry_status=${source_entry_status}; "
         f"__modash_replay_select_active=1; __modash_select_source_edge {shlex.quote(candidate.base_id)}; "
         "__modash_replay_select_active=0; "
@@ -547,9 +584,8 @@ def _render_assignment_prefixed_process_substitution_argument_replay_group(
     assignment_prefix = " ".join(assignment_words)
     file_source_operation = redirected_validation + (
         "__modash_live_source_path=$(__modash_materialize_embedded_file \"$__modash_replay_target\"); "
-        "( exit \"$__modash_source_entry_status\" ); "
-        f"{assignment_prefix} command source \"$__modash_live_source_path\"{live_arguments}; "
-        "__modash_replay_actual_status=$?; "
+        + _source_with_entry_status(f"{assignment_prefix} command source \"$__modash_live_source_path\"{live_arguments}")
+        + "__modash_replay_actual_status=$?; "
     )
     missing_source_operation = redirected_validation + (
         "builtin printf '%s: line %s: %s\\n' \"$__modash_replay_diag_file\" \"$__modash_replay_diag_line\" \"$__modash_replay_diag_message\" >&2; "
@@ -573,8 +609,8 @@ def _render_assignment_prefixed_process_substitution_argument_replay_group(
         )
         missing_status_capture = ""
     group = (
-        f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {validation_expression} ); "
-        "__modash_source_expansion_status=$?; "
+        "{ __modash_source_command_prior_status=$?; __modash_source_argv=(); "
+        f"{_array_assignment_with_status('__modash_source_argv', validation_expression, '__modash_source_expansion_status')}"
         f"__modash_source_entry_status=${source_entry_status}; "
         f"__modash_replay_select_active=1; __modash_select_source_edge {shlex.quote(candidate.base_id)}; "
         "__modash_replay_select_active=0; "
@@ -615,8 +651,8 @@ def _render_assignment_prefixed_replay_group(
         redirection_sets_status=_has_command_substitution(redirection_suffix),
     )
     group = (
-        f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {source_expression} ); "
-        "__modash_source_expansion_status=$?; "
+        "{ __modash_source_command_prior_status=$?; __modash_source_argv=(); "
+        f"{_array_assignment_with_status('__modash_source_argv', source_expression, '__modash_source_expansion_status')}"
         f"{' '.join(assignment_words)} command source <({shim}); "
         "__modash_replay_actual_status=$?; "
         "( exit \"$__modash_replay_actual_status\" ); "
@@ -653,9 +689,10 @@ def _render_assignment_prefixed_replay_shim(
         )
     file_source = (
         f"{redirected_validation}"
-        "( exit \"$__modash_source_entry_status\" ); "
-        "command source <(__modash_emit_embedded_file \"$__modash_replay_target\") \"${__modash_replay_args[@]}\"; "
-        "__modash_replay_actual_status=$?"
+        + _source_with_entry_status(
+            "command source <(__modash_emit_embedded_file \"$__modash_replay_target\") \"${__modash_replay_args[@]}\""
+        )
+        + "__modash_replay_actual_status=$?"
     )
     missing_source = (
         f"{redirected_validation}"
@@ -713,6 +750,8 @@ def _source_expression_and_redirections_for_candidate(candidate: _SourceCandidat
 
 def _source_path_and_argument_expression_for_candidate(candidate: _SourceCandidate) -> tuple[str, str, int]:
     argv_words, _redirection_words = _source_argv_words_and_redirections_for_candidate(candidate)
+    if not argv_words:
+        return "", "", 0
     path_expression = argv_words[0]
     argument_words = argv_words[1:]
     argument_expression = " ".join(argument_words)
@@ -748,11 +787,6 @@ def _source_argv_words_and_redirections_for_candidate(candidate: _SourceCandidat
     if candidate.separator and probe.startswith(candidate.separator):
         probe = probe[len(candidate.separator):].strip()
     invocation = source_command_invocation(probe, stop_at_shell_control=True)
-    if invocation is None:
-        raise RuntimeObservedCompileError(
-            f"could not render source argv validation for observed source site: {candidate.text!r}",
-            code="runtime.compile.mapping_failed",
-        )
     try:
         raw_words = tuple(parse_shell_words_preserving_quotes(probe))
     except UnsupportedSourceError as exc:
@@ -760,10 +794,21 @@ def _source_argv_words_and_redirections_for_candidate(candidate: _SourceCandidat
             f"could not parse source argv validation for observed source site: {candidate.text!r}",
             code="runtime.compile.mapping_failed",
         ) from exc
-    source_word_count = 1 + len(invocation.arguments)
-    source_words = raw_words[invocation.source_index + 1:invocation.source_index + 1 + source_word_count]
+    if invocation is None:
+        clean_words = tuple(clean_shell_word(word) for word in raw_words)
+        position = source_command_position(clean_words)
+        if position is None or not is_source_like_command_text(probe):
+            raise RuntimeObservedCompileError(
+                f"could not render source argv validation for observed source site: {candidate.text!r}",
+                code="runtime.compile.mapping_failed",
+            )
+        _command_start, source_index = position
+        source_words = raw_words[source_index + 1:source_index + 1]
+    else:
+        source_word_count = 1 + len(invocation.arguments)
+        source_words = raw_words[invocation.source_index + 1:invocation.source_index + 1 + source_word_count]
     argv_words, redirection_words = _split_source_redirections(source_words)
-    if not argv_words:
+    if not argv_words and not is_source_like_command_text(probe):
         raise RuntimeObservedCompileError(
             f"could not render source argv validation for observed source site: {candidate.text!r}",
             code="runtime.compile.mapping_failed",
@@ -2077,7 +2122,7 @@ def _ensure_no_unrewritten_source(line: str, unit: _RewriteUnit, line_index: int
 def _is_generated_dynamic_command_guard(command: str) -> bool:
     stripped = command.strip()
     return (
-        "__modash_guard_dynamic_command_preserve_status" in stripped
+        "__modash_guard_dynamic_command" in stripped
         or stripped.startswith("__modash_dynamic_argv=")
         or stripped.startswith("__modash_dynamic_command_name=")
     )
@@ -2727,11 +2772,9 @@ def _dynamic_command_guarded_replacement(command: str) -> str | None:
     actual_command = " ".join(part for part in (command_prefix, '"${__modash_dynamic_argv[@]}"', command_redirections) if part)
     guarded = (
         "{ __modash_dynamic_prior_status=$?; __modash_dynamic_argv=(); "
-        f"__modash_dynamic_argv=( {argv_expression} ); "
-        "__modash_dynamic_argv_status=$?; "
-        f"( exit \"${status_variable}\" ); "
-        '__modash_guard_dynamic_command_preserve_status "${__modash_dynamic_argv[@]}"; '
-        f"{actual_command}; }}"
+        f"{_array_assignment_with_status('__modash_dynamic_argv', argv_expression, '__modash_dynamic_argv_status')}"
+        '__modash_guard_dynamic_command "${__modash_dynamic_argv[@]}"; '
+        f"{_command_with_restored_status(status_variable, actual_command)}}}"
     )
     return command[:start] + guarded + command[end:]
 
@@ -2754,11 +2797,9 @@ def _dynamic_command_guarded_process_substitution_replacement(
     )
     return (
         "{ __modash_dynamic_prior_status=$?; __modash_dynamic_command_name=(); "
-        f"__modash_dynamic_command_name=( {command_name} ); "
-        "__modash_dynamic_name_status=$?; "
-        f"( exit \"${command_name_status}\" ); "
-        '__modash_guard_dynamic_command_preserve_status "${__modash_dynamic_command_name[@]}"; '
-        f"{actual_command}; }}"
+        f"{_array_assignment_with_status('__modash_dynamic_command_name', command_name, '__modash_dynamic_name_status')}"
+        '__modash_guard_dynamic_command "${__modash_dynamic_command_name[@]}"; '
+        f"{_command_with_restored_status(command_name_status, actual_command)}}}"
     )
 
 def _dynamic_simple_command_start(raw_words: tuple[str, ...], words: tuple[str, ...], command_index: int) -> int:

@@ -5,7 +5,7 @@ from pathlib import PurePosixPath
 
 from methods.runtime_evaluator.graph import RuntimeSourceGraphError
 from methods.shell.line import get_commands
-from methods.source_commands import source_command_invocation
+from methods.source_commands import is_source_like_command_text, source_command_invocation
 from methods.source_resolver import (
     UnsupportedSourceError,
     parse_shell_words_preserving_quotes,
@@ -31,6 +31,7 @@ class _ReplayEdge:
     site_line: int
     site_command: str
     resolved_path: str
+    failure_kind: str
     source_entry_status: int
     status: int
     arguments: tuple[str, ...]
@@ -42,6 +43,8 @@ class _ReplayEdge:
 
     @property
     def source_value(self) -> str:
+        if self.failure_kind == "no-argument":
+            return ""
         invocation = source_command_invocation(_first_source_segment(self.xtrace_command) or "")
         if invocation is None:
             return self.resolved_path
@@ -107,9 +110,9 @@ class _CompilePlan:
 
 def _first_source_segment(command: str) -> str | None:
     for segment in get_commands(command):
-        if source_command_invocation(segment) is not None:
+        if source_command_invocation(segment) is not None or is_source_like_command_text(segment):
             return segment
-    return command if source_command_invocation(command) is not None else None
+    return command if source_command_invocation(command) is not None or is_source_like_command_text(command) else None
 
 def _base_id(process_index: int, logical_path: str, line: int, ordinal: int) -> str:
     return f"p{process_index}:{logical_path}:{line}:{ordinal}"

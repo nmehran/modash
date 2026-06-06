@@ -12,6 +12,7 @@ from methods.source_commands import (
     normalized_trace_wrapper_words,
     shell_quote as quote_runtime_shell_word,
     source_command_invocation,
+    source_command_position,
     source_invocation_from_command as runtime_source_invocation_from_command,
 )
 from methods.shell.line import get_commands
@@ -175,7 +176,8 @@ def _group_xtrace_commands_by_source_key(xtrace_commands):
     for command in xtrace_commands:
         invocation = _parse_xtrace_source_invocation(command.command)
         if invocation is None:
-            key = _loose_source_key(_xtrace_unknown_source_key(command))
+            no_arg_key = _xtrace_no_arg_source_key(command)
+            key = _loose_source_key(no_arg_key if no_arg_key is not None else _xtrace_unknown_source_key(command))
         elif _is_dynamic_xtrace_invocation(invocation):
             key = _dynamic_xtrace_match_key(_xtrace_source_key(command, invocation))
             dynamic_groups.setdefault(key, []).append(command)
@@ -212,6 +214,30 @@ def _xtrace_unknown_source_key(command: _XtraceSourceCommand):
         file=_normalized_xtrace_file(command, None),
         line=command.line,
         source_path=f"<unparsed:{command.command}>",
+        arguments=(),
+    )
+
+
+def _xtrace_no_arg_source_key(command: _XtraceSourceCommand):
+    try:
+        quoted_words = parse_shell_words_preserving_quotes(command.command)
+    except Exception:
+        return None
+    words = tuple(clean_shell_word(word) for word in quoted_words)
+    normalized_words = normalized_trace_wrapper_words(words)
+    if normalized_words is not None:
+        words = tuple(normalized_words)
+    position = source_command_position(words)
+    if position is None:
+        return None
+    _, source_index = position
+    if source_index + 1 < len(words):
+        return None
+    return _SourceInvocationKey(
+        pid=command.pid,
+        file=_normalized_xtrace_file(command, None),
+        line=command.line,
+        source_path="",
         arguments=(),
     )
 

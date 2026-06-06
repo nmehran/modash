@@ -509,19 +509,38 @@ __modash_trace_source_common() {
   if [[ -n $source_path && ! -e $resolved_path && ! -L $resolved_path ]]; then
     builtin printf '%s: line %s: %s: No such file or directory\n' "$caller_file" "$caller_line" "$source_path" >&2
     status=1
+  elif ((source_arg_count == 0)); then
+    builtin printf '%s: line %s: %s: filename argument required\n' "$caller_file" "$caller_line" "$builtin_name" >&2
+    builtin printf '%s: usage: %s filename [arguments]\n' "$builtin_name" "$builtin_name" >&2
+    status=2
+  elif [[ -n $source_path && -d $resolved_path ]]; then
+    builtin printf '%s: line %s: %s: %s: is a directory\n' "$caller_file" "$caller_line" "$builtin_name" "$source_path" >&2
+    status=1
+  elif [[ -n $source_path && -e $resolved_path && ! -r $resolved_path ]]; then
+    builtin printf '%s: line %s: %s: Permission denied\n' "$caller_file" "$caller_line" "$source_path" >&2
+    status=1
   elif ((source_arg_count == 1)); then
     if ((${#__modash_caller_positionals[@]} > 0)); then
-      ( exit "$prior_status" )
-      builtin "$builtin_name" "$source_path" "${__modash_caller_positionals[@]}"
+      if ((prior_status == 0)); then
+        builtin "$builtin_name" "$source_path" "${__modash_caller_positionals[@]}"
+      else
+        ( exit "$prior_status" ) || builtin "$builtin_name" "$source_path" "${__modash_caller_positionals[@]}"
+      fi
     else
       set --
-      ( exit "$prior_status" )
-      builtin "$builtin_name" "$source_path"
+      if ((prior_status == 0)); then
+        builtin "$builtin_name" "$source_path"
+      else
+        ( exit "$prior_status" ) || builtin "$builtin_name" "$source_path"
+      fi
     fi
     status=$?
   else
-    ( exit "$prior_status" )
-    builtin "$builtin_name" "${source_args[@]}"
+    if ((prior_status == 0)); then
+      builtin "$builtin_name" "${source_args[@]}"
+    else
+      ( exit "$prior_status" ) || builtin "$builtin_name" "${source_args[@]}"
+    fi
     status=$?
   fi
 
