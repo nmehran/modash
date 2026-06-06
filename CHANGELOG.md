@@ -91,6 +91,9 @@
   redirection expansion order; symlinked source path validation; source-free
   child Bash `CDPATH` behavior; and inert source-looking text passed to safe
   dynamic external commands.
+- Added guarded direct-`exec` replay support so final process replacement can
+  run after observed source setup while still validating consumed graph edges
+  before the shell is replaced.
 - Added review-driven replay parity regressions for dynamic command argv and
   redirection expansion exactly-once behavior, full assignment-prefixed source
   export/array/readonly behavior, redirection target source-entry status, and

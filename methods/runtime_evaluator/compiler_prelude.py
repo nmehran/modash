@@ -269,6 +269,54 @@ __modash_guard_dynamic_command() {{
   done
 }}
 
+__modash_guard_exec_argv() {{
+  local command=${{1-}} word basename skip_next=0 saw_shell_c=0
+  (( $# )) || __modash_abort "runtime replay cannot allow exec without command"
+  basename=${{command##*/}}
+  case "$basename" in
+    bash|sh|dash|ksh|ksh93|mksh|zsh|ash|busybox)
+      ;;
+    *)
+      return
+      ;;
+  esac
+  shift
+  if [[ $basename == busybox ]]; then
+    (( $# )) || return
+    case "${{1##*/}}" in
+      bash|sh|dash|ksh|ksh93|mksh|zsh|ash)
+        shift
+        ;;
+      *)
+        return
+        ;;
+    esac
+  fi
+  while (( $# )); do
+    if (( skip_next )); then
+      skip_next=0
+      shift
+      continue
+    fi
+    word=$1
+    if (( saw_shell_c )); then
+      __modash_word_contains_source_payload "$word" && __modash_abort "runtime replay cannot allow exec source payload"
+      saw_shell_c=0
+      shift
+      continue
+    fi
+    case "$word" in
+      -c|-[!-]*c*)
+        saw_shell_c=1
+        ;;
+      -O|+O|-o|+o)
+        skip_next=1
+        ;;
+    esac
+    shift
+  done
+}}
+
 __modash_validate_printf_v_target() {{
   local target=$1
   if [[ $target =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
@@ -521,7 +569,15 @@ source() {{
 }}
 
 exec() {{
-  __modash_abort "runtime replay cannot allow live exec"
+  local status
+  __modash_guard_exec_argv "$@"
+  __modash_check_replay_consumed
+  __modash_mark_child_replay_complete
+  "$__modash_rm" -rf -- "$__modash_tmp"
+  builtin trap - EXIT
+  builtin exec "$@"
+  status=$?
+  builtin exit "$status"
 }}
 
 trap() {{
@@ -590,17 +646,26 @@ __modash_reject_function_override() {{
   fi
 }}
 
+__modash_check_replay_consumed() {{
+  local key
+{edge_verify}
+{process_verify}
+}}
+
+__modash_mark_child_replay_complete() {{
+  if [[ -n ${{__modash_child_replay_marker:-}} ]]; then
+    builtin printf '%s\\n' "${{__modash_child_replay_token:-}}" > "$__modash_child_replay_marker" || builtin exit {REPLAY_FAILURE_STATUS}
+  fi
+}}
+
 __modash_verify_replay_consumed() {{
-  local status=${{1:-$?}} key
+  local status=${{1:-$?}}
   [[ $__modash_verify_trap_active == 1 ]] || __modash_abort "generated replay verifier called outside EXIT trap"
   if [[ -s "$__modash_tmp/replay-failure" ]]; then
     status={REPLAY_FAILURE_STATUS}
   fi
-{edge_verify}
-{process_verify}
-  if [[ -n ${{__modash_child_replay_marker:-}} ]]; then
-    builtin printf '%s\\n' "${{__modash_child_replay_token:-}}" > "$__modash_child_replay_marker" || builtin exit {REPLAY_FAILURE_STATUS}
-  fi
+  __modash_check_replay_consumed
+  __modash_mark_child_replay_complete
   "$__modash_rm" -rf -- "$__modash_tmp"
   builtin trap - EXIT
   builtin exit "$status"
@@ -693,10 +758,7 @@ def _verify_consumed_lines(array_name: str, label: str, keys: list[str]) -> list
         quoted_key = shlex.quote(key)
         lines.extend([
             f"  if [[ -z ${{{array_name}[{quoted_key}]+set}} ]]; then",
-            f"    builtin printf 'modash runtime replay error: unconsumed observed {label}: %s\\n' {quoted_key} >&2",
-            '    "$__modash_rm" -rf -- "$__modash_tmp"',
-            "    builtin trap - EXIT",
-            f"    builtin exit {REPLAY_FAILURE_STATUS}",
+            f"    __modash_abort {shlex.quote('unconsumed observed ' + label + ': ' + key)}",
             "  fi",
         ])
     return lines

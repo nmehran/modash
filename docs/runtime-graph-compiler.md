@@ -81,8 +81,8 @@ will run: reserved `__modash_` names, trace-instrumentation-sensitive shell
 state, aliases, dynamic or source-capable `eval`, source commands in
 subshells, pipelines, or command substitutions, process-substitution-backed
 source input, dynamic or multiline child `bash -c` payloads, unsupported child
-`bash -c` wrappers that hide source operations, `exec`, trap manipulation,
-computed mutation of
+`bash -c` wrappers that hide source operations, wrapper-bypassing or
+source-bearing `exec` forms, trap manipulation, computed mutation of
 generated replay state, runtime `$0` / `BASH_SOURCE` references inside heredocs
 or multiline strings, complex `LINENO` parameter operations, and runtime `$0` /
 `BASH_SOURCE` references on parent lines that also contain child `bash -c`
@@ -127,6 +127,11 @@ shell applets, `env -S` / `env --split-string`, common command-tail wrappers
 such as `nice`, `timeout`, `setsid`, `nohup`, and `stdbuf`, or exec-style
 utilities such as `find -exec sh -c` are also rejected instead of being left
 live.
+Direct final `exec` is allowed when generated replay can validate all observed
+source edges and child-process markers before replacing the shell. `command exec`
+and `builtin exec` remain rejected because they bypass the generated validation
+wrapper, and source-bearing shell payloads behind `exec` remain fail-closed until
+that path is modeled explicitly.
 Source command recognition covers source-capable `time` and `coproc` prefixes so
 they fail closed instead of live-sourcing; observed `time`-prefixed source sites
 are rejected until timing output can be replayed precisely.
@@ -169,7 +174,8 @@ symlink is retargeted.
 Sourced library files may define functions that were not executed by the traced
 command. Those inert function bodies are not treated as top-level replay actions,
 but literal `builtin source`, `command source`, generated replay-token access,
-computed replay-state mutation, `eval`, `exec`, `trap`, `enable`, source-capable
+computed replay-state mutation, `eval`, wrapper-bypassing or source-bearing
+`exec`, `trap`, `enable`, source-capable
 dynamic command tails, `mapfile` / `readarray` callbacks, source-bearing shell
 payloads, and similar replay-bypass commands remain rejected or guarded. Plain
 unobserved `source` / `.` in an inert function body remains guarded by generated

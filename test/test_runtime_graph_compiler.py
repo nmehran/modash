@@ -2344,6 +2344,63 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
         self.assertEqual(actual.stdout, expected.stdout)
 
+    def test_runtime_compiler_allows_validated_final_exec_after_observed_sources(self):
+        with ScriptProject() as project:
+            project.write("env.sh", "export VALUE=ok\n")
+            project.write(
+                "main.sh",
+                "source ./env.sh\n"
+                "exec printf 'VALUE=%s\\n' \"$VALUE\"\n",
+            )
+            expected = project.run("main.sh")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            actual = project.run(compiled)
+
+        self.assertEqual(expected.returncode, 0, expected.stdout)
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_runtime_compiler_exec_validates_observed_edges_before_replacing_shell(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source ./one.sh\n"
+                "if [[ ${RUN_TWO:-yes} == yes ]]; then source ./two.sh; fi\n"
+                "exec printf 'final\\n'\n",
+            )
+            project.write("one.sh", "printf 'one\\n'\n")
+            project.write("two.sh", "printf 'two\\n'\n")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            matched = project.run(compiled)
+            drifted = project.run(compiled, env={"RUN_TWO": "no"})
+
+        self.assertEqual(matched.returncode, 0, matched.stdout)
+        self.assertEqual(matched.stdout, "one\ntwo\nfinal\n")
+        self.assertEqual(drifted.returncode, 125, drifted.stdout)
+        self.assertIn("unconsumed observed source edge", drifted.stdout)
+        self.assertNotIn("final\n", drifted.stdout)
+
+    def test_runtime_compiler_rejects_exec_forms_that_bypass_validation_wrapper(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source ./dep.sh\n"
+                "command exec bash -c 'printf done\\n'\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            self.assert_compile_observed_error(project, "main.sh", code="runtime.compile.exec")
+
+    def test_runtime_compiler_rejects_exec_source_bearing_shell_payloads(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source ./env.sh\n"
+                "exec bash -c 'source ./dep.sh; printf done\\n'\n",
+            )
+            project.write("env.sh", "printf 'env\\n'\n")
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            self.assert_compile_observed_error(project, "main.sh", code="runtime.compile.dynamic_command")
+
     def test_runtime_compiler_runtime_guards_fixed_arg_dynamic_exec_and_trap_dispatch(self):
         cases = {
             "exec": (
