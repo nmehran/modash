@@ -654,6 +654,13 @@ def _validate_fingerprint_coverage(entrypoint: str, processes, sources, files):
     _require_fingerprint_role(roles_by_path, entrypoint, "entrypoint", "entrypoint")
     for event in sources:
         if event.status == 0:
+            if "source" not in roles_by_path.get(event.resolved_path, ()):
+                if _looks_like_process_substitution_source_path(event.resolved_path):
+                    raise RuntimeSourceObservationError(
+                        "runtime source trace cannot yet bundle process-substitution-backed "
+                        f"source input because it has no stable source file fingerprint: {event.resolved_path}",
+                        code="runtime.trace.unsupported_process_substitution_source",
+                    )
             _require_fingerprint_role(
                 roles_by_path,
                 event.resolved_path,
@@ -702,6 +709,15 @@ def _validate_xtrace_links(sources, xtrace):
 def _is_process_command_call_site(event: RuntimeSourceEvent, processes):
     process = processes[event.process_index]
     return event.call_site.file == process.entrypoint and process.command != process.entrypoint
+
+
+def _looks_like_process_substitution_source_path(path: str) -> bool:
+    return (
+        path.startswith("/dev/fd/")
+        or path.startswith("/proc/self/fd/")
+        or "/fd/" in path and (path.startswith("/proc/") or path.startswith("/dev/"))
+    )
+
 
 def _require_fingerprint_role(roles_by_path, path: str, role: str, label: str):
     roles = roles_by_path.get(path)

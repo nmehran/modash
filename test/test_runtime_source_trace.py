@@ -13,6 +13,7 @@ from methods.runtime_evaluator.trace import (  # noqa: E402
     default_observation_path,
     trace_sources,
 )
+from methods.runtime_evaluator.observations import RuntimeSourceObservationError  # noqa: E402
 from test.support import ScriptProject  # noqa: E402
 
 
@@ -408,6 +409,44 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(result.stdout, expected.stdout)
         self.assertEqual(result.observation.sources[0].arguments, ("X", "Y"))
 
+    def test_trace_fails_closed_for_explicit_source_args_set_positionals(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write(
+                "main.sh",
+                'set -- orig\nsource "$DEP" temp\nprintf "after:%s\\n" "$1"\n',
+            )
+            dependency = project.write(
+                "dep.sh",
+                f'touch {str(sentinel)!r}\nprintf "in:%s\\n" "$1"\nset -- changed\n',
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh", env={"DEP": str(dependency)})
+
+        self.assertEqual(context.exception.code, "runtime.trace.nontransparent-source-positionals")
+        self.assertIn("explicit-argument source", str(context.exception))
+        self.assertFalse(sentinel.exists())
+
+    def test_trace_fails_closed_for_explicit_source_args_eval_set_positionals(self):
+        with ScriptProject() as project:
+            sentinel = project.path("executed")
+            project.write(
+                "main.sh",
+                'set -- orig\nsource "$DEP" temp\nprintf "after:%s\\n" "$1"\n',
+            )
+            dependency = project.write(
+                "dep.sh",
+                f'touch {str(sentinel)!r}\nprintf "in:%s\\n" "$1"\neval "set -- changed"\n',
+            )
+
+            with self.assertRaises(RuntimeSourceTraceError) as context:
+                project.trace("main.sh", env={"DEP": str(dependency)})
+
+        self.assertEqual(context.exception.code, "runtime.trace.nontransparent-source-positionals")
+        self.assertIn("explicit-argument source", str(context.exception))
+        self.assertFalse(sentinel.exists())
+
     def test_trace_fails_closed_for_child_bash_c_inherited_source_shift(self):
         with ScriptProject() as project:
             sentinel = project.path("executed")
@@ -704,6 +743,36 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "dep\nafter:0\n")
         self.assertEqual(result.observation.sources[0].status, 1)
+
+    def test_trace_reports_child_shell_sources_as_targeted_limitation(self):
+        cases = {
+            "subshell": "( source ./dep.sh )\n",
+            "pipeline": "source ./dep.sh | cat\n",
+            "command substitution": "value=$(source ./dep.sh)\nprintf 'value:%s\\n' \"$value\"\n",
+        }
+        for name, script in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("main.sh", script)
+                project.write("dep.sh", "printf 'dep\\n'\n")
+
+                with self.assertRaises(RuntimeSourceTraceError) as context:
+                    project.trace("main.sh")
+
+            self.assertEqual(context.exception.code, "runtime.trace.unsupported_child_shell_source")
+            self.assertIn("child-shell contexts", str(context.exception))
+
+    def test_trace_reports_process_substitution_source_as_targeted_limitation(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source <(printf 'printf process-sub-source\\\\n\\n')\n",
+            )
+
+            with self.assertRaises(RuntimeSourceObservationError) as context:
+                project.trace("main.sh")
+
+        self.assertEqual(context.exception.code, "runtime.trace.unsupported_process_substitution_source")
+        self.assertIn("process-substitution-backed source", str(context.exception))
 
     def test_trace_resolves_source_from_runtime_cwd(self):
         with ScriptProject() as project:

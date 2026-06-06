@@ -141,7 +141,8 @@ def _raise_missed_source_trace_error(missed: _XtraceSourceCommand) -> None:
     if "__modash_trace_source_alias" in missed.command:
         raise RuntimeSourceTraceError(
             "runtime source trace could not finalize source command before shell exit; "
-            "this can happen when set -e terminates immediately after a nonzero source command: "
+            "this can happen when the sourced command exits the shell before trace finalization, "
+            "for example through set -e or exit: "
             f"{missed.file}:{missed.line}: {missed.command}",
             code="runtime.trace.errexit_source_exit",
         )
@@ -418,4 +419,33 @@ def _source_line(path: str, line: int):
         return "<unknown>"
     if line < 1 or line > len(lines):
         return "<unknown>"
-    return lines[line - 1].strip()
+    return _logical_source_line(lines, line - 1).strip()
+
+
+def _logical_source_line(lines: list[str], start_index: int) -> str:
+    line = lines[start_index]
+    if not _line_has_continuation(line):
+        return line
+    logical = line.rstrip()[:-1]
+    index = start_index + 1
+    while index < len(lines):
+        current = lines[index]
+        if _line_has_continuation(current):
+            logical += current.rstrip()[:-1]
+            index += 1
+            continue
+        logical += current
+        break
+    return logical
+
+
+def _line_has_continuation(line: str) -> bool:
+    stripped = line.rstrip()
+    if not stripped.endswith("\\"):
+        return False
+    backslashes = 0
+    index = len(stripped) - 1
+    while index >= 0 and stripped[index] == "\\":
+        backslashes += 1
+        index -= 1
+    return backslashes % 2 == 1

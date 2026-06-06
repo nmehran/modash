@@ -80,7 +80,8 @@ class RuntimeObservedCompilerTestCase(unittest.TestCase):
             project.write(
                 "dep.sh",
                 'printf "dep:%s:%s:%s\\n" "${1-unset}" "${2-unset}" "${3-unset}"\n'
-                'set -- dep changed\n',
+                'shift\n'
+                'printf "dep-after-shift:%s:%s:%s\\n" "${1-unset}" "${2-unset}" "${3-unset}"\n',
             )
             compiled = self._compile_from_trace(project)
             expected = self._bash("main.sh", project)

@@ -209,11 +209,17 @@ def _candidate_replacements_by_line(unit: _RewriteUnit) -> dict[int, list[tuple[
             )
         line = lines[candidate.line - 1]
         search_start = search_start_by_line.get(candidate.line, 0)
-        needle = candidate.text
-        start = find_unquoted_substring(line, needle, search_start)
-        if start < 0:
-            needle = candidate.text.lstrip(";&| ")
+        if candidate.physical_lines:
+            needle = candidate.physical_lines[0].strip()
             start = find_unquoted_substring(line, needle, search_start)
+            if start < 0:
+                start = line.find(needle, search_start)
+        else:
+            needle = candidate.text
+            start = find_unquoted_substring(line, needle, search_start)
+            if start < 0:
+                needle = candidate.text.lstrip(";&| ")
+                start = find_unquoted_substring(line, needle, search_start)
         if start < 0:
             raise RuntimeObservedCompileError(
                 f"could not locate source site {candidate.text!r} in {unit.physical_path or unit.logical_path}:{candidate.line}",
@@ -243,7 +249,14 @@ def _candidate_replacements_by_line(unit: _RewriteUnit) -> dict[int, list[tuple[
         )
         if candidate.separator and candidate.text.lstrip().startswith(candidate.separator):
             replacement = f"{candidate.separator} {replacement}"
-        replacements_by_line.setdefault(candidate.line, []).append((start, end, replacement))
+        if candidate.physical_lines:
+            end_line = candidate.end_line or candidate.line
+            replacements_by_line.setdefault(candidate.line, []).append((start, len(line), replacement))
+            for blank_line in range(candidate.line + 1, end_line + 1):
+                if 1 <= blank_line <= len(lines):
+                    replacements_by_line.setdefault(blank_line, []).append((0, len(lines[blank_line - 1]), ""))
+        else:
+            replacements_by_line.setdefault(candidate.line, []).append((start, end, replacement))
     return replacements_by_line
 
 def _render_replay_group(
@@ -425,7 +438,6 @@ def _render_assignment_prefixed_replay_shim(
         "elif [[ $__modash_replay_kind == file ]]; then",
         "  __modash_require_embedded_file \"$__modash_replay_target\"",
         f"  {file_source}",
-        "  __modash_replay_actual_status=$?",
         "  if (( __modash_replay_actual_status != __modash_replay_status )); then",
         "    __modash_abort \"observed source status drift\"",
         "  fi",
@@ -953,6 +965,8 @@ def _ensure_no_unrewritten_source(line: str, unit: _RewriteUnit, line_index: int
     for command in get_commands(line):
         if "__modash_select_source_edge" in command or "__modash_emit_embedded_file" in command:
             continue
+        if _is_generated_dynamic_command_guard(command):
+            continue
         try:
             words = parse_shell_words_preserving_quotes(command.strip())
         except UnsupportedSourceError:
@@ -969,6 +983,15 @@ def _ensure_no_unrewritten_source(line: str, unit: _RewriteUnit, line_index: int
                 f"unsupported unrewritten source command in {unit.physical_path or unit.logical_path}:{line_index}: {command.strip()}",
                 code="runtime.compile.unrewritten_source",
             )
+
+
+def _is_generated_dynamic_command_guard(command: str) -> bool:
+    stripped = command.strip()
+    return (
+        "__modash_guard_dynamic_command_preserve_status" in stripped
+        or stripped.startswith("__modash_dynamic_argv=")
+        or stripped.startswith("__modash_dynamic_command_name=")
+    )
 
 
 def _process_substitution_contains_source(command: str) -> bool:

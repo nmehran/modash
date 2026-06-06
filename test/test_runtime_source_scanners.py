@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from methods.runtime_evaluator.scanners import functions_main, main, positionals_main  # noqa: E402
+from methods.runtime_evaluator.scanners import functions_main, main, positional_assignments_main, positionals_main  # noqa: E402
 
 
 class RuntimeSourceScannersTestCase(unittest.TestCase):
@@ -23,6 +23,19 @@ class RuntimeSourceScannersTestCase(unittest.TestCase):
 
             path.write_text("echo safe\n", encoding="utf-8")
             self.assertEqual(positionals_main([str(path)]), 1)
+
+    def test_positional_assignment_scanner_allows_shift_but_reports_set(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "dep.sh"
+            path.write_text("shift\n", encoding="utf-8")
+
+            self.assertEqual(positional_assignments_main([str(path)]), 1)
+
+            path.write_text("set -- changed\n", encoding="utf-8")
+            self.assertEqual(positional_assignments_main([str(path)]), 0)
+
+            path.write_text('eval "set -- changed"\n', encoding="utf-8")
+            self.assertEqual(positional_assignments_main([str(path)]), 0)
 
     def test_function_scanner_marks_live_dead_and_ambiguous_definitions(self):
         with TemporaryDirectory() as directory:

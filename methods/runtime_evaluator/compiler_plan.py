@@ -24,7 +24,8 @@ from methods.source_conditions import (
 )
 from methods.source_effects import CaseBlock, CStyleForLoop, ForLoop, FunctionDef, IfBlock, SourceSite, WhileLoop
 from methods.source_frontend import LineParserFrontend
-from methods.source_resolver import UnsupportedSourceError
+from methods.source_resolver import UnsupportedSourceError, parse_shell_words_preserving_quotes, strip_shell_word_quotes
+from methods.shell.line import get_commands
 
 def _build_compile_plan(entrypoint: Path, graph: dict) -> _CompilePlan:
     edges = tuple(_coerce_edge(edge) for edge in graph["edges"])
@@ -123,6 +124,8 @@ def _clone_file_units_for_process(file_units: dict[str, _RewriteUnit], process_i
                 process_index=process_index,
                 status_before=candidate.status_before,
                 repeatable=candidate.repeatable,
+                end_line=candidate.end_line,
+                physical_lines=candidate.physical_lines,
             )
             for candidate in unit.candidates
         )
@@ -141,16 +144,25 @@ def _source_candidates(unit: _RewriteUnit) -> tuple[_SourceCandidate, ...]:
             code="runtime.compile.parse_failed",
         ) from exc
 
-    raw_sites: list[tuple[int, str, str, int | None, bool]] = []
+    raw_sites: list[tuple[int, str, str, int | None, bool, int | None, tuple[str, ...]]] = []
 
-    def add_site(line: int, text: str, separator: str = "", status_before: int | None = None, *, repeatable: bool = False) -> None:
+    def add_site(
+        line: int,
+        text: str,
+        separator: str = "",
+        status_before: int | None = None,
+        *,
+        repeatable: bool = False,
+        end_line: int | None = None,
+        physical_lines: tuple[str, ...] = (),
+    ) -> None:
         stripped = text.strip()
         if not stripped:
             return
         probe = stripped.lstrip(";&| ")
         if source_command_invocation(stripped) is None and source_command_invocation(probe) is None:
             return
-        raw_sites.append((line, stripped, separator, status_before, repeatable))
+        raw_sites.append((line, stripped, separator, status_before, repeatable, end_line, physical_lines))
 
     def add_condition_sites(line: int, condition: str, *, repeatable: bool) -> None:
         for text, separator, status_before in _condition_source_sites(condition):
@@ -159,6 +171,10 @@ def _source_candidates(unit: _RewriteUnit) -> tuple[_SourceCandidate, ...]:
     def collect(nodes, *, repeatable: bool = False) -> None:
         for node in nodes:
             if isinstance(node, SourceSite):
+                if unit.physical_path is not None and _site_is_inside_bash_c_payload(unit.content, node.location.line, node.location.column):
+                    continue
+                if node.text.rstrip().endswith("\\"):
+                    continue
                 add_site(node.location.line, node.text, node.separator, repeatable=repeatable)
             elif isinstance(node, FunctionDef):
                 collect(node.body, repeatable=True)
@@ -179,9 +195,11 @@ def _source_candidates(unit: _RewriteUnit) -> tuple[_SourceCandidate, ...]:
                     collect(arm.body, repeatable=repeatable)
 
     collect(ir.nodes)
+    for line, command, physical_lines in _continued_source_sites(unit.content):
+        add_site(line, command, end_line=line + len(physical_lines) - 1, physical_lines=physical_lines)
     candidates: list[_SourceCandidate] = []
     ordinals_by_line: dict[int, int] = {}
-    for line, text, separator, status_before, repeatable in raw_sites:
+    for line, text, separator, status_before, repeatable, end_line, physical_lines in raw_sites:
         ordinal = ordinals_by_line.get(line, 0)
         ordinals_by_line[line] = ordinal + 1
         base_id = _base_id(unit.process_index, unit.logical_path, line, ordinal)
@@ -196,8 +214,143 @@ def _source_candidates(unit: _RewriteUnit) -> tuple[_SourceCandidate, ...]:
             process_index=unit.process_index,
             status_before=status_before,
             repeatable=repeatable,
+            end_line=end_line,
+            physical_lines=physical_lines,
         ))
     return tuple(candidates)
+
+def _continued_source_sites(content: str) -> tuple[tuple[int, str, tuple[str, ...]], ...]:
+    lines = content.splitlines()
+    sites: list[tuple[int, str, tuple[str, ...]]] = []
+    index = 0
+    while index < len(lines):
+        if not _line_has_unquoted_continuation(lines[index]):
+            index += 1
+            continue
+        start = index
+        physical = [lines[index]]
+        logical = lines[index].rstrip()[:-1]
+        index += 1
+        while index < len(lines):
+            physical.append(lines[index])
+            if _line_has_unquoted_continuation(lines[index]):
+                logical += lines[index].rstrip()[:-1]
+                index += 1
+                continue
+            logical += lines[index]
+            index += 1
+            break
+        candidate = _continued_source_command(logical)
+        if len(physical) > 1 and candidate is not None:
+            first_fragment = _continued_source_first_physical_fragment(physical[0])
+            if first_fragment is not None:
+                sites.append((start + 1, candidate, (first_fragment, *physical[1:])))
+    return tuple(sites)
+
+
+def _continued_source_command(logical: str) -> str | None:
+    commands = get_commands(logical.strip())
+    if not commands:
+        return None
+    source_commands = [
+        index
+        for index, command in enumerate(commands)
+        if source_command_invocation(command.strip()) is not None
+    ]
+    if source_commands != [len(commands) - 1]:
+        return None
+    return commands[-1].strip()
+
+
+def _continued_source_first_physical_fragment(line: str) -> str | None:
+    prefix = line.rstrip()[:-1]
+    commands = get_commands(prefix)
+    if not commands:
+        return None
+    fragment = commands[-1].strip()
+    start = line.rfind(fragment)
+    if start < 0:
+        return None
+    return line[start:]
+
+
+def _line_has_unquoted_continuation(line: str) -> bool:
+    stripped = line.rstrip()
+    if not stripped.endswith("\\"):
+        return False
+    backslashes = 0
+    index = len(stripped) - 1
+    while index >= 0 and stripped[index] == "\\":
+        backslashes += 1
+        index -= 1
+    return backslashes % 2 == 1
+
+
+def _site_is_inside_bash_c_payload(content: str, line_number: int, column: int) -> bool:
+    lines = content.splitlines()
+    if line_number < 1 or line_number > len(lines):
+        return False
+    line = lines[line_number - 1]
+    offset = max(column - 1, 0)
+    for start, end in _bash_c_payload_spans(line):
+        if start <= offset < end:
+            return True
+    return False
+
+
+def _bash_c_payload_spans(command: str) -> tuple[tuple[int, int], ...]:
+    try:
+        raw_words = tuple(parse_shell_words_preserving_quotes(command.strip()))
+    except UnsupportedSourceError:
+        return ()
+    clean_words = tuple(strip_shell_word_quotes(word) for word in raw_words)
+    spans = _raw_word_spans(command, raw_words)
+    if spans is None:
+        return ()
+    result: list[tuple[int, int]] = []
+    index = 0
+    while index < len(clean_words):
+        if clean_words[index] not in {"bash", "/bin/bash", "/usr/bin/bash"}:
+            index += 1
+            continue
+        payload_index = _bash_c_payload_index(clean_words, index + 1)
+        if payload_index is not None:
+            result.append(spans[payload_index])
+        index += 1
+    return tuple(result)
+
+
+def _bash_c_payload_index(words: tuple[str, ...], index: int) -> int | None:
+    while index < len(words):
+        word = words[index]
+        if word == "--":
+            index += 1
+            continue
+        if word == "-c":
+            return index + 1 if index + 1 < len(words) else None
+        if word.startswith("-") and "c" in word and word not in {"-O", "+O", "-o", "+o"}:
+            return index + 1 if index + 1 < len(words) else None
+        if word in {"-O", "+O", "-o", "+o"}:
+            index += 2
+            continue
+        if word.startswith("-"):
+            index += 1
+            continue
+        return None
+    return None
+
+
+def _raw_word_spans(command: str, raw_words: tuple[str, ...]) -> tuple[tuple[int, int], ...] | None:
+    spans: list[tuple[int, int]] = []
+    search_start = 0
+    for word in raw_words:
+        start = command.find(word, search_start)
+        if start < 0:
+            return None
+        end = start + len(word)
+        spans.append((start, end))
+        search_start = end
+    return tuple(spans)
 
 def _condition_source_sites(condition: str) -> tuple[tuple[str, str, int | None], ...]:
     try:

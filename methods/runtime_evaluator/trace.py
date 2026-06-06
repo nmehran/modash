@@ -439,7 +439,18 @@ def _scanner_entrypoint_script(scanner_name: str):
 
 
 def _positionals_scanner_script():
-    return _scanner_entrypoint_script("positionals")
+    repo_root = str(Path(__file__).resolve().parents[2])
+    return (
+        "import sys\n\n"
+        f"REPO_ROOT = {repo_root!r}\n"
+        "if REPO_ROOT and REPO_ROOT not in sys.path:\n"
+        "    sys.path.insert(0, REPO_ROOT)\n\n"
+        "from methods.runtime_evaluator.scanners import main\n\n"
+        "if __name__ == \"__main__\":\n"
+        "    if len(sys.argv) > 1 and sys.argv[1] == \"positional-assignments\":\n"
+        "        sys.exit(main([\"positional-assignments\", *sys.argv[2:]]))\n"
+        "    sys.exit(main([\"positionals\", *sys.argv[1:]]))\n"
+    )
 
 
 def _function_definition_scanner_script():
@@ -593,8 +604,11 @@ def _observation_events(
     for index, event in enumerate(sorted(raw_events, key=lambda item: item.index)):
         if event.pid not in process_index_by_pid:
             raise RuntimeSourceTraceError(
-                f"runtime source trace event references unknown process: {event.pid}",
-                code="runtime.trace.unknown_process",
+                "runtime source trace does not yet support source commands executed "
+                "inside unregistered child-shell contexts such as subshells, pipelines, "
+                "or command substitutions: "
+                f"{event.caller_file}:{event.caller_line}",
+                code="runtime.trace.unsupported_child_shell_source",
             )
         command = _source_line(event.caller_file, event.caller_line)
         if command == "<unknown>":
@@ -712,8 +726,11 @@ def _observation_xtrace_commands(
     for index, command in enumerate(xtrace_commands):
         if command.pid not in process_index_by_pid:
             raise RuntimeSourceTraceError(
-                f"runtime xtrace source command references unknown process: {command.pid}",
-                code="runtime.trace.unknown_process",
+                "runtime source trace does not yet support source commands executed "
+                "inside unregistered child-shell contexts such as subshells, pipelines, "
+                "or command substitutions: "
+                f"{command.file}:{command.line}",
+                code="runtime.trace.unsupported_child_shell_source",
             )
         event = raw_events_by_xtrace_index.get(index)
         commands.append(RuntimeXtraceSourceCommand(

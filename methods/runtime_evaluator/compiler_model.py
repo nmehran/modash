@@ -65,6 +65,8 @@ class _SourceCandidate:
     process_index: int = 0
     status_before: int | None = None
     repeatable: bool = False
+    end_line: int | None = None
+    physical_lines: tuple[str, ...] = ()
 
 @dataclass
 class _RewriteUnit:

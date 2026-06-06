@@ -16,7 +16,7 @@ from methods.source_effects import (
 )
 from methods.source_frontend import LineParserFrontend
 from methods.source_resolver import extract_heredoc_delimiters, is_heredoc_end
-from methods.source_traits import file_top_level_source_traits
+from methods.source_traits import file_has_top_level_positional_assignment, file_top_level_source_traits
 
 FUNCTION_DECLARATION_PATTERN = re.compile(
     r"(?=(?:^|[;&|(){}]|\bthen\b|\bdo\b)\s*"
@@ -41,6 +41,8 @@ def main(argv):
     command, *rest = argv
     if command == "positionals":
         return positionals_main(rest)
+    if command == "positional-assignments":
+        return positional_assignments_main(rest)
     if command == "functions":
         return functions_main(rest)
     return _usage(f"unknown modash runtime source scanner: {command}")
@@ -61,6 +63,23 @@ def positionals_main(argv):
         print(f"modash positional scanner failed for {path}: {exc}", file=sys.stderr)
         return 2
     return 0 if has_top_level_positional_mutation else 1
+
+
+def positional_assignments_main(argv):
+    if len(argv) != 1:
+        return _usage("modash positional assignment scanner expected exactly one path")
+    path = argv[0]
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            content = handle.read()
+    except OSError:
+        return 1
+    try:
+        has_top_level_positional_assignment = file_has_top_level_positional_assignment(path, content)
+    except Exception as exc:  # pragma: no cover - defensive subprocess boundary
+        print(f"modash positional assignment scanner failed for {path}: {exc}", file=sys.stderr)
+        return 2
+    return 0 if has_top_level_positional_assignment else 1
 
 
 def functions_main(argv):

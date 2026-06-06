@@ -101,6 +101,12 @@
   command process-substitution arguments in entrypoint and child `bash -c`
   payloads; source redirection setup drift; and explicit `set -e`
   source-finalization trace diagnostics.
+- Added review-driven regressions for assignment-prefixed nonzero source status
+  replay, negated assignment-prefixed source sites, backslash-continued source
+  commands, middle-position child `bash -c` source payloads, explicit-argument
+  source files that assign caller positionals, source-free dynamic external `-c`
+  payloads, child-shell source diagnostics, and process-substitution-backed
+  source diagnostics.
 
 ### Changed
 
@@ -159,14 +165,18 @@
   External interpreter environment reads are allowed when trace-owned state is
   hidden and the payload does not inspect trace/replay-owned names, `/proc`
   process state, or trace file descriptors.
-- Runtime tracing now reports source commands that terminate under `set -e`
-  before trace finalization with the targeted
-  `runtime.trace.errexit_source_exit` diagnostic. `errexit`-suppressed source
-  contexts remain traceable and replayable.
+- Runtime tracing now reports source commands that terminate the shell before
+  trace finalization, for example through `set -e` or explicit `exit`, with the
+  targeted `runtime.trace.errexit_source_exit` diagnostic. `errexit`-suppressed
+  source contexts remain traceable and replayable.
+- Runtime tracing now reports source commands in unsupported child-shell
+  contexts with `runtime.trace.unsupported_child_shell_source`, and
+  process-substitution-backed source inputs with
+  `runtime.trace.unsupported_process_substitution_source`.
 
 ### Validation
 
-- Full unit suite: `780` tests, `9` skipped.
+- Full unit suite: `798` tests, `9` skipped.
 - Runtime-focused graph/source/replay safety suites passed.
 - Opt-in real-world suite with runtime parity, trace, supplement replay,
   trusted graph replay, and observe-compile gates: `17` tests passed. Runtime

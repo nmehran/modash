@@ -72,15 +72,17 @@ path with different file fingerprints, and trace instrumentation failures are
 rejected before executable output is promoted. A target command's own nonzero
 exit status is recorded as graph data and should be preserved by generated
 output; it is not a graph-trust failure by itself. Source commands that
-terminate the traced shell through `set -e` before the trace wrapper can
-finalize the event remain an explicit trace limitation and fail closed with a
-targeted diagnostic instead of producing a trusted graph.
+terminate the traced shell before the trace wrapper can finalize the event, for
+example through `set -e` or explicit `exit`, remain an explicit trace limitation
+and fail closed with a targeted diagnostic instead of producing a trusted graph.
 
 The compiler also rejects shapes that can make a trusted graph lie about what
 will run: reserved `__modash_` names, trace-instrumentation-sensitive shell
-state, aliases, dynamic or source-capable `eval`, dynamic or multiline child
-`bash -c` payloads, unsupported child `bash -c` wrappers that hide source
-operations, `exec`, trap manipulation, computed mutation of
+state, aliases, dynamic or source-capable `eval`, source commands in
+subshells, pipelines, or command substitutions, process-substitution-backed
+source input, dynamic or multiline child `bash -c` payloads, unsupported child
+`bash -c` wrappers that hide source operations, `exec`, trap manipulation,
+computed mutation of
 generated replay state, runtime `$0` / `BASH_SOURCE` references inside heredocs
 or multiline strings, complex `LINENO` parameter operations, and runtime `$0` /
 `BASH_SOURCE` references on parent lines that also contain child `bash -c`

@@ -83,10 +83,7 @@ def source_command_word_index(words: Sequence[str]):
 
 def source_command_position(words: Sequence[str]):
     command_start = 0
-    while command_start < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[command_start]):
-        command_start += 1
-    while command_start < len(words) and words[command_start] == "!":
-        command_start += 1
+    command_start = _skip_negation_and_assignments(words, command_start)
     effective_start = _source_effective_command_start(words, command_start)
 
     for index, word in enumerate(words):
@@ -108,10 +105,7 @@ def source_command_position(words: Sequence[str]):
                 return command_start, index
         if first_word in {"if", "while", "until", "then", "elif", "else", "do"}:
             branch_index = effective_start + 1
-            while branch_index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[branch_index]):
-                branch_index += 1
-            while branch_index < len(words) and words[branch_index] == "!":
-                branch_index += 1
+            branch_index = _skip_negation_and_assignments(words, branch_index)
             branch_index = _source_effective_command_start(words, branch_index)
             if index == branch_index:
                 return command_start, index
@@ -130,6 +124,18 @@ def source_command_position(words: Sequence[str]):
             return command_start, index
 
     return None
+
+
+def _skip_negation_and_assignments(words: Sequence[str], index: int):
+    while index < len(words):
+        start = index
+        while index < len(words) and words[index] == "!":
+            index += 1
+        while index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[index]):
+            index += 1
+        if index == start:
+            break
+    return index
 
 
 def _source_effective_command_start(words: Sequence[str], index: int):

@@ -9,6 +9,7 @@ declare -A __modash_source_file_map=()
 declare -A __modash_function_file_map=()
 declare -A __modash_function_metadata_map=()
 declare -A __modash_source_positional_mutation_cache=()
+declare -A __modash_source_positional_assignment_cache=()
 __modash_caller_positionals=()
 __modash_source_call_args=()
 __modash_caller_positionals_captured=0
@@ -342,6 +343,30 @@ __modash_source_may_mutate_positionals() {
   return 0
 }
 
+__modash_source_may_assign_positionals() {
+  local path=${1-} scanner_status
+  if [[ -z $path || ! -r $path ]]; then
+    return 1
+  fi
+
+  if [[ -n ${__modash_source_positional_assignment_cache[$path]+set} ]]; then
+    return "${__modash_source_positional_assignment_cache[$path]}"
+  fi
+
+  "$MODASH_TRACE_PYTHON" -S "$MODASH_TRACE_POSITIONAL_SCANNER" positional-assignments "$path"
+  scanner_status=$?
+  if ((scanner_status == 0)); then
+    __modash_source_positional_assignment_cache["$path"]=0
+    return 0
+  fi
+  if ((scanner_status == 1)); then
+    __modash_source_positional_assignment_cache["$path"]=1
+    return 1
+  fi
+  __modash_source_positional_assignment_cache["$path"]=0
+  return 0
+}
+
 __modash_source_builtin_enabled() {
   local line
   case "$1" in
@@ -450,6 +475,10 @@ __modash_trace_source_common() {
         "runtime.trace.nontransparent-source-positionals" \
         "modash: runtime trace cannot transparently observe no-argument source of a file that may mutate caller positionals: ${resolved_path}"
     fi
+  elif __modash_source_may_assign_positionals "$resolved_path"; then
+    __modash_trace_abort \
+      "runtime.trace.nontransparent-source-positionals" \
+      "modash: runtime trace cannot transparently observe explicit-argument source of a file that may assign caller positionals: ${resolved_path}"
   fi
 
   if [[ -n $source_path && -r $resolved_path ]]; then
