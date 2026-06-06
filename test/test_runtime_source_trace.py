@@ -659,6 +659,38 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(event.resolved_path, str(missing.resolve(strict=False)))
         self.assertGreater(event.status, 0)
 
+    def test_trace_missing_source_diagnostic_uses_original_call_site(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "source ./missing.sh 2>err.txt || true\ncat err.txt\n")
+            expected = project.run("main.sh")
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, expected.returncode, result.stderr)
+        self.assertEqual(result.stdout, expected.stdout)
+        self.assertIn("main.sh: line 1: ./missing.sh: No such file or directory", result.stdout)
+        self.assertNotIn("modash-trace", result.stdout)
+        self.assertNotIn("trace_prelude", result.stdout)
+
+    def test_trace_missing_source_diagnostic_does_not_create_false_graph_edge(self):
+        with ScriptProject() as project:
+            dep = project.write("dep.sh", "printf 'dep\\n'\n")
+            project.write(
+                "main.sh",
+                "source ./missing.sh 2>err.txt || true\n"
+                "if grep -q modash-trace err.txt; then\n"
+                "  source ./dep.sh\n"
+                "fi\n"
+                "printf 'done\\n'\n",
+            )
+
+            result = project.trace("main.sh")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "done\n")
+        self.assertEqual(len(result.observation.sources), 1)
+        self.assertNotEqual(result.observation.sources[0].resolved_path, str(dep.resolve(strict=False)))
+
     def test_trace_fingerprints_sourced_file_that_returns_nonzero(self):
         with ScriptProject() as project:
             dependency = project.write("dep.sh", "return 7\n")

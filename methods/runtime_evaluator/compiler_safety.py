@@ -1583,6 +1583,14 @@ def _uses_unsafe_indirect_expansion(word: str) -> bool:
         expression = match.group(1)
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*@a", expression):
             continue
+        array_index_match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\[(?:\*|@)]", expression)
+        if array_index_match is not None:
+            name = array_index_match.group(1)
+            if (
+                name not in INSTRUMENTATION_VARIABLES
+                and not name.startswith(("BASH", "MODASH_TRACE", "__modash_"))
+            ):
+                continue
         return True
     return False
 

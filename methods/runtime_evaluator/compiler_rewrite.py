@@ -1231,6 +1231,8 @@ def _replace_lineno_references(line: str, line_index: int) -> str:
     replacement = str(line_index)
     line = _replace_lineno_in_double_bracket_arithmetic(line, replacement)
     line = _replace_lineno_in_let_commands(line, replacement)
+    line = _replace_lineno_in_legacy_arithmetic_expansions(line, replacement)
+    line = _replace_lineno_in_array_subscripts(line, replacement)
     rendered: list[str] = []
     in_single_quote = False
     in_double_quote = False
@@ -1430,6 +1432,146 @@ def _let_command_index(words: tuple[str, ...]) -> int | None:
     return index if index < len(words) and words[index] == "let" else None
 
 
+def _replace_lineno_in_legacy_arithmetic_expansions(line: str, replacement: str) -> str:
+    rendered: list[str] = []
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if escaped:
+            rendered.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and not in_single_quote:
+            rendered.append(char)
+            escaped = True
+            index += 1
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            rendered.append(char)
+            index += 1
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            rendered.append(char)
+            index += 1
+            continue
+        if char == "#" and not in_single_quote and not in_double_quote:
+            rendered.append(line[index:])
+            break
+        if not in_single_quote and line.startswith("$[", index):
+            body, end_index = _bracket_body(line, index + 2)
+            if body is not None:
+                rendered.append("$[")
+                rendered.append(_replace_bare_lineno_identifier(body, replacement))
+                rendered.append("]")
+                index = end_index + 1
+                continue
+        rendered.append(char)
+        index += 1
+    return "".join(rendered)
+
+
+def _replace_lineno_in_array_subscripts(line: str, replacement: str) -> str:
+    rendered: list[str] = []
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if escaped:
+            rendered.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and not in_single_quote:
+            rendered.append(char)
+            escaped = True
+            index += 1
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            rendered.append(char)
+            index += 1
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            rendered.append(char)
+            index += 1
+            continue
+        if char == "#" and not in_single_quote and not in_double_quote:
+            rendered.append(line[index:])
+            break
+        if not in_single_quote and char == "[" and _is_lineno_array_subscript_start(line, index):
+            body, end_index = _bracket_body(line, index + 1)
+            if body is not None:
+                rendered.append("[")
+                rendered.append(_replace_bare_lineno_identifier(body, replacement))
+                rendered.append("]")
+                index = end_index + 1
+                continue
+        rendered.append(char)
+        index += 1
+    return "".join(rendered)
+
+
+def _is_lineno_array_subscript_start(line: str, index: int) -> bool:
+    if line.startswith("[[", index) or (index > 0 and line[index - 1] == "["):
+        return False
+    body, end_index = _bracket_body(line, index + 1)
+    if body is None or not re.search(r"\bLINENO\b", body):
+        return False
+    previous = line[index - 1] if index > 0 else ""
+    if previous.isalnum() or previous == "_":
+        return True
+    if previous == "(":
+        next_index = end_index + 1
+        while next_index < len(line) and line[next_index].isspace():
+            next_index += 1
+        return next_index < len(line) and line[next_index] == "="
+    return False
+
+
+def _bracket_body(line: str, index: int) -> tuple[str | None, int]:
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    depth = 1
+    start = index
+    while index < len(line):
+        char = line[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and not in_single_quote:
+            escaped = True
+            index += 1
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            index += 1
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            index += 1
+            continue
+        if not in_single_quote and not in_double_quote:
+            if char == "[":
+                depth += 1
+            elif char == "]":
+                depth -= 1
+                if depth == 0:
+                    return line[start:index], index
+        index += 1
+    return None, start
+
+
 def _replace_bare_lineno_identifier(text: str, replacement: str) -> str:
     return re.sub(r"\bLINENO\b", replacement, text)
 
@@ -1446,6 +1588,8 @@ def _line_has_lineno_reference(line: str) -> bool:
         or _arithmetic_context_has_bare_lineno(line)
         or _double_bracket_arithmetic_has_bare_lineno(line)
         or _let_command_has_bare_lineno(line)
+        or _legacy_arithmetic_has_bare_lineno(line)
+        or _array_subscript_has_bare_lineno(line)
     )
 
 
@@ -1493,6 +1637,75 @@ def _arithmetic_context_has_bare_lineno(line: str) -> bool:
                 return True
             index = end_index + 1
             continue
+        index += 1
+    return False
+
+
+def _legacy_arithmetic_has_bare_lineno(line: str) -> bool:
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and not in_single_quote:
+            escaped = True
+            index += 1
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            index += 1
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            index += 1
+            continue
+        if char == "#" and not in_single_quote and not in_double_quote:
+            return False
+        if not in_single_quote and line.startswith("$[", index):
+            body, end_index = _bracket_body(line, index + 2)
+            if body is None:
+                index += 2
+                continue
+            if re.search(r"\bLINENO\b", body):
+                return True
+            index = end_index + 1
+            continue
+        index += 1
+    return False
+
+
+def _array_subscript_has_bare_lineno(line: str) -> bool:
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and not in_single_quote:
+            escaped = True
+            index += 1
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            index += 1
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            index += 1
+            continue
+        if char == "#" and not in_single_quote and not in_double_quote:
+            return False
+        if not in_single_quote and char == "[" and _is_lineno_array_subscript_start(line, index):
+            return True
         index += 1
     return False
 

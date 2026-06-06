@@ -16,7 +16,7 @@ from methods.runtime_evaluator.compiler_model import (
     _base_id,
     _validate_logical_path,
 )
-from methods.source_commands import source_command_invocation
+from methods.source_commands import shell_word_start, source_command_invocation
 from methods.source_conditions import (
     condition_exit_status_not,
     literal_command_condition_exit_status,
@@ -25,6 +25,7 @@ from methods.source_conditions import (
 from methods.source_effects import CaseBlock, CStyleForLoop, ForLoop, FunctionDef, IfBlock, SourceSite, WhileLoop
 from methods.source_frontend import LineParserFrontend
 from methods.source_resolver import UnsupportedSourceError, parse_shell_words_preserving_quotes, strip_shell_word_quotes
+from methods.source_words import ASSIGNMENT_WORD_PATTERN
 from methods.shell.line import get_commands
 
 def _build_compile_plan(entrypoint: Path, graph: dict) -> _CompilePlan:
@@ -250,15 +251,16 @@ def _continued_source_sites(content: str) -> tuple[tuple[int, str, tuple[str, ..
             break
         candidate = _continued_source_command(logical)
         if len(physical) > 1 and candidate is not None:
-            first_fragment = _continued_source_first_physical_fragment(physical[0])
+            command, replacement_command = candidate
+            first_fragment = _continued_source_first_physical_fragment(physical[0], logical)
             if first_fragment is not None:
-                fragments = _continued_source_physical_fragments(candidate, first_fragment, physical)
+                fragments = _continued_source_physical_fragments(replacement_command, first_fragment, physical)
                 if fragments is not None:
-                    sites.append((start + 1, candidate, fragments))
+                    sites.append((start + 1, command, fragments))
     return tuple(sites)
 
 
-def _continued_source_command(logical: str) -> str | None:
+def _continued_source_command(logical: str) -> tuple[str, str] | None:
     commands = get_commands(logical.strip())
     if not commands:
         return None
@@ -269,11 +271,18 @@ def _continued_source_command(logical: str) -> str | None:
     ]
     if len(source_commands) != 1:
         return None
-    return _strip_leading_control_keyword(commands[source_commands[0]].strip())
+    command = _strip_leading_control_keyword(commands[source_commands[0]].strip())
+    replacement_command = _continued_source_replacement_command(command)
+    if replacement_command is None:
+        return None
+    return command, replacement_command
 
 
-def _continued_source_first_physical_fragment(line: str) -> str | None:
+def _continued_source_first_physical_fragment(line: str, logical: str) -> str | None:
     prefix = line.rstrip()[:-1]
+    operation_start = _continued_source_operation_start(logical)
+    if operation_start is not None and operation_start < len(prefix):
+        return line[operation_start:]
     commands = get_commands(prefix)
     if not commands:
         return None
@@ -281,19 +290,58 @@ def _continued_source_first_physical_fragment(line: str) -> str | None:
     start = line.rfind(fragment)
     if start < 0:
         return None
-    fragment = line[start:]
-    stripped = _strip_leading_control_keyword(fragment)
-    if stripped == fragment:
-        return fragment
-    control_prefix_length = len(fragment) - len(stripped)
-    return fragment[control_prefix_length:]
+    return line[start:]
 
 
 def _strip_leading_control_keyword(command: str) -> str:
-    match = re.match(r"^(?:if|while|until)\s+", command)
+    match = re.match(r"^(?:if|elif|while|until)\s+", command)
     if match is None:
         return command
     return command[match.end():]
+
+
+def _continued_source_replacement_command(command: str) -> str | None:
+    start = _continued_source_operation_start_in_command(command)
+    if start is None:
+        return None
+    return command[start:].strip()
+
+
+def _continued_source_operation_start(logical: str) -> int | None:
+    search_start = 0
+    for command in get_commands(logical):
+        command_start = logical.find(command, search_start)
+        if command_start < 0:
+            command_start = logical.find(command)
+        if command_start < 0:
+            continue
+        local_start = _continued_source_operation_start_in_command(command)
+        if local_start is not None:
+            return command_start + local_start
+        search_start = command_start + len(command)
+    return None
+
+
+def _continued_source_operation_start_in_command(command: str) -> int | None:
+    invocation = source_command_invocation(command, stop_at_shell_control=True)
+    if invocation is None:
+        return None
+    try:
+        raw_words = tuple(parse_shell_words_preserving_quotes(command))
+    except UnsupportedSourceError:
+        return invocation.source_column_offset
+    words = invocation.words
+    start_index = invocation.source_index
+    for index in range(invocation.source_index - 1, -1, -1):
+        if words[index] in {"command", "builtin"}:
+            start_index = index
+            break
+    while start_index > 0 and (
+        words[start_index - 1] == "!" or ASSIGNMENT_WORD_PATTERN.match(words[start_index - 1])
+    ):
+        start_index -= 1
+    start = shell_word_start(command, raw_words, start_index)
+    return invocation.source_column_offset if start is None else start
 
 
 def _continued_source_physical_fragments(

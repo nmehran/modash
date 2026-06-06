@@ -271,8 +271,15 @@ __modash_guard_dynamic_command() {{
 
 __modash_validate_printf_v_target() {{
   local target=$1
-  [[ $target =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || __modash_abort "runtime replay cannot allow dynamic printf -v target"
-  [[ $target != __modash_* ]] || __modash_abort "runtime replay cannot allow dynamic printf -v target"
+  if [[ $target =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    [[ $target != __modash_* ]] || __modash_abort "runtime replay cannot allow dynamic printf -v target"
+    return
+  fi
+  if [[ $target =~ ^([A-Za-z_][A-Za-z0-9_]*)\\[[0-9]+\\]$ ]]; then
+    [[ ${{BASH_REMATCH[1]}} != __modash_* ]] || __modash_abort "runtime replay cannot allow dynamic printf -v target"
+    return
+  fi
+  __modash_abort "runtime replay cannot allow dynamic printf -v target"
 }}
 
 __modash_guard_dynamic_command_preserve_status() {{

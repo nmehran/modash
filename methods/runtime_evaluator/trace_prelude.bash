@@ -506,7 +506,10 @@ __modash_trace_source_common() {
     __modash_source_stack+=("$resolved_path")
   fi
 
-  if ((source_arg_count == 1)); then
+  if [[ -n $source_path && ! -e $resolved_path && ! -L $resolved_path ]]; then
+    builtin printf '%s: line %s: %s: No such file or directory\n' "$caller_file" "$caller_line" "$source_path" >&2
+    status=1
+  elif ((source_arg_count == 1)); then
     if ((${#__modash_caller_positionals[@]} > 0)); then
       ( exit "$prior_status" )
       builtin "$builtin_name" "$source_path" "${__modash_caller_positionals[@]}"
@@ -515,11 +518,12 @@ __modash_trace_source_common() {
       ( exit "$prior_status" )
       builtin "$builtin_name" "$source_path"
     fi
+    status=$?
   else
     ( exit "$prior_status" )
     builtin "$builtin_name" "${source_args[@]}"
+    status=$?
   fi
-  status=$?
 
   if [[ -n $source_sha256 ]]; then
     if ! __modash_fingerprint_file "$resolved_path"; then
