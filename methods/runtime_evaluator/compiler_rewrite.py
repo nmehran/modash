@@ -251,7 +251,10 @@ def _candidate_replacements_by_line(unit: _RewriteUnit) -> dict[int, list[tuple[
             replacement = f"{candidate.separator} {replacement}"
         if candidate.physical_lines:
             end_line = candidate.end_line or candidate.line
-            replacements_by_line.setdefault(candidate.line, []).append((start, len(line), replacement))
+            last_line = lines[end_line - 1] if 1 <= end_line <= len(lines) else ""
+            last_fragment = candidate.physical_lines[-1] if candidate.physical_lines else ""
+            suffix = last_line[len(last_fragment):] if last_line.startswith(last_fragment) else ""
+            replacements_by_line.setdefault(candidate.line, []).append((start, len(line), replacement + suffix))
             for blank_line in range(candidate.line + 1, end_line + 1):
                 if 1 <= blank_line <= len(lines):
                     replacements_by_line.setdefault(blank_line, []).append((0, len(lines[blank_line - 1]), ""))
@@ -268,6 +271,17 @@ def _render_replay_group(
     redirection_suffix: str = "",
     negated: bool = False,
 ) -> str:
+    path_expression, argument_expression, source_argc = _source_path_and_argument_expression_for_candidate(candidate)
+    if _has_process_substitution(argument_expression):
+        return _render_process_substitution_argument_replay_group(
+            candidate,
+            path_expression=path_expression,
+            argument_expression=argument_expression,
+            source_argc=source_argc,
+            assignment_words=assignment_words,
+            redirection_suffix=redirection_suffix,
+            negated=negated,
+        )
     if assignment_words:
         return _render_assignment_prefixed_replay_group(
             candidate,
@@ -324,6 +338,198 @@ def _render_replay_group(
         missing_status_capture = ""
     group = (
         f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {source_expression} ); "
+        "__modash_source_expansion_status=$?; "
+        f"__modash_source_entry_status=${source_entry_status}; "
+        f"__modash_replay_select_active=1; __modash_select_source_edge {shlex.quote(candidate.base_id)}; "
+        "__modash_replay_select_active=0; "
+        "__modash_replay_select_status=$?; "
+        f"{validation_before_source}"
+        "if (( __modash_replay_select_status != 0 )); then "
+        "( exit \"$__modash_replay_select_status\" ); "
+        "elif [[ $__modash_replay_kind == file ]]; then "
+        "__modash_require_embedded_file \"$__modash_replay_target\"; "
+        f"{file_source_operation}"
+        "if (( __modash_replay_actual_status != __modash_replay_status )); then "
+        "__modash_abort \"observed source status drift\"; "
+        "fi; "
+        "( exit \"$__modash_replay_actual_status\" ); "
+        "else "
+        f"{missing_source_operation}"
+        f"{missing_status_capture}"
+        "( exit \"$__modash_replay_missing_status\" ); "
+        "fi; }"
+    )
+    return f"! {group}" if negated else group
+
+
+def _render_process_substitution_argument_replay_group(
+    candidate: _SourceCandidate,
+    *,
+    path_expression: str,
+    argument_expression: str,
+    source_argc: int,
+    assignment_words: tuple[str, ...] = (),
+    redirection_suffix: str = "",
+    negated: bool = False,
+) -> str:
+    if _has_command_substitution(argument_expression):
+        raise RuntimeObservedCompileError(
+            f"runtime graph compiler does not yet support source arguments combining process and command substitution: {candidate.text!r}",
+            code="runtime.compile.source_arguments",
+        )
+    if assignment_words:
+        return _render_assignment_prefixed_process_substitution_argument_replay_group(
+            candidate,
+            path_expression=path_expression,
+            argument_expression=argument_expression,
+            source_argc=source_argc,
+            assignment_words=assignment_words,
+            redirection_suffix=redirection_suffix,
+            negated=negated,
+        )
+    path_sets_status = _has_command_substitution(path_expression)
+    redirection_sets_status = _has_command_substitution(redirection_suffix)
+    source_entry_status = (
+        "__modash_source_redirection_status"
+        if redirection_sets_status
+        else "__modash_source_expansion_status"
+        if path_sets_status
+        else "__modash_source_command_prior_status"
+    )
+    redirected_validation = ""
+    if redirection_sets_status:
+        redirected_validation = (
+            "__modash_source_redirection_status=$?; "
+            f"__modash_source_entry_status=${source_entry_status}; "
+            f"__modash_validate_source_path_and_argc \"$__modash_source_entry_status\" {source_argc} \"${{__modash_source_argv[@]}}\"; "
+        )
+    validation_before_source = (
+        ""
+        if redirection_sets_status
+        else f"__modash_validate_source_path_and_argc \"$__modash_source_entry_status\" {source_argc} \"${{__modash_source_argv[@]}}\"; "
+    )
+    live_arguments = f" {argument_expression}" if argument_expression else ""
+    file_source_operation = redirected_validation + (
+        "__modash_live_source_path=$(__modash_materialize_embedded_file \"$__modash_replay_target\"); "
+        "( exit \"$__modash_source_entry_status\" ); "
+        f"builtin source \"$__modash_live_source_path\"{live_arguments}; "
+        "__modash_replay_actual_status=$?; "
+    )
+    missing_source_operation = redirected_validation + (
+        "builtin printf '%s: line %s: %s\\n' \"$__modash_replay_diag_file\" \"$__modash_replay_diag_line\" \"$__modash_replay_diag_message\" >&2; "
+        "( exit \"$__modash_replay_status\" ); "
+    )
+    missing_status_capture = "__modash_replay_missing_status=$?; "
+    if redirection_suffix:
+        file_source_operation = (
+            "unset __modash_replay_actual_status; "
+            f"{{ {file_source_operation}}} {redirection_suffix}; "
+            "if [[ ! ${__modash_replay_actual_status+x} ]]; then "
+            "__modash_abort \"observed source redirection drift\"; "
+            "fi; "
+        )
+        missing_source_operation = (
+            "unset __modash_replay_missing_status; "
+            f"{{ {missing_source_operation}__modash_replay_missing_status=$?; }} {redirection_suffix}; "
+            "if [[ ! ${__modash_replay_missing_status+x} ]]; then "
+            "__modash_abort \"observed source redirection drift\"; "
+            "fi; "
+        )
+        missing_status_capture = ""
+    group = (
+        f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {path_expression} ); "
+        "__modash_source_expansion_status=$?; "
+        f"__modash_source_entry_status=${source_entry_status}; "
+        f"__modash_replay_select_active=1; __modash_select_source_edge {shlex.quote(candidate.base_id)}; "
+        "__modash_replay_select_active=0; "
+        "__modash_replay_select_status=$?; "
+        f"{validation_before_source}"
+        "if (( __modash_replay_select_status != 0 )); then "
+        "( exit \"$__modash_replay_select_status\" ); "
+        "elif [[ $__modash_replay_kind == file ]]; then "
+        "__modash_require_embedded_file \"$__modash_replay_target\"; "
+        f"{file_source_operation}"
+        "if (( __modash_replay_actual_status != __modash_replay_status )); then "
+        "__modash_abort \"observed source status drift\"; "
+        "fi; "
+        "( exit \"$__modash_replay_actual_status\" ); "
+        "else "
+        f"{missing_source_operation}"
+        f"{missing_status_capture}"
+        "( exit \"$__modash_replay_missing_status\" ); "
+        "fi; }"
+    )
+    return f"! {group}" if negated else group
+
+
+def _render_assignment_prefixed_process_substitution_argument_replay_group(
+    candidate: _SourceCandidate,
+    *,
+    path_expression: str,
+    argument_expression: str,
+    source_argc: int,
+    assignment_words: tuple[str, ...],
+    redirection_suffix: str = "",
+    negated: bool = False,
+) -> str:
+    _source_assignment_names(assignment_words)
+    if any(_has_command_substitution(word) for word in assignment_words):
+        raise RuntimeObservedCompileError(
+            f"runtime graph compiler does not yet support assignment command substitutions with process-substitution source arguments: {candidate.text!r}",
+            code="runtime.compile.source_arguments",
+        )
+    path_sets_status = _has_command_substitution(path_expression)
+    redirection_sets_status = _has_command_substitution(redirection_suffix)
+    source_entry_status = (
+        "__modash_source_redirection_status"
+        if redirection_sets_status
+        else "__modash_source_expansion_status"
+        if path_sets_status
+        else "__modash_source_command_prior_status"
+    )
+    redirected_validation = ""
+    if redirection_sets_status:
+        redirected_validation = (
+            "__modash_source_redirection_status=$?; "
+            f"__modash_source_entry_status=${source_entry_status}; "
+            f"__modash_validate_source_path_and_argc \"$__modash_source_entry_status\" {source_argc} \"${{__modash_source_argv[@]}}\"; "
+        )
+    validation_before_source = (
+        ""
+        if redirection_sets_status
+        else f"__modash_validate_source_path_and_argc \"$__modash_source_entry_status\" {source_argc} \"${{__modash_source_argv[@]}}\"; "
+    )
+    live_arguments = f" {argument_expression}" if argument_expression else ""
+    assignment_prefix = " ".join(assignment_words)
+    file_source_operation = redirected_validation + (
+        "__modash_live_source_path=$(__modash_materialize_embedded_file \"$__modash_replay_target\"); "
+        "( exit \"$__modash_source_entry_status\" ); "
+        f"{assignment_prefix} command source \"$__modash_live_source_path\"{live_arguments}; "
+        "__modash_replay_actual_status=$?; "
+    )
+    missing_source_operation = redirected_validation + (
+        "builtin printf '%s: line %s: %s\\n' \"$__modash_replay_diag_file\" \"$__modash_replay_diag_line\" \"$__modash_replay_diag_message\" >&2; "
+        "( exit \"$__modash_replay_status\" ); "
+    )
+    missing_status_capture = "__modash_replay_missing_status=$?; "
+    if redirection_suffix:
+        file_source_operation = (
+            "unset __modash_replay_actual_status; "
+            f"{{ {file_source_operation}}} {redirection_suffix}; "
+            "if [[ ! ${__modash_replay_actual_status+x} ]]; then "
+            "__modash_abort \"observed source redirection drift\"; "
+            "fi; "
+        )
+        missing_source_operation = (
+            "unset __modash_replay_missing_status; "
+            f"{{ {missing_source_operation}__modash_replay_missing_status=$?; }} {redirection_suffix}; "
+            "if [[ ! ${__modash_replay_missing_status+x} ]]; then "
+            "__modash_abort \"observed source redirection drift\"; "
+            "fi; "
+        )
+        missing_status_capture = ""
+    group = (
+        f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {path_expression} ); "
         "__modash_source_expansion_status=$?; "
         f"__modash_source_entry_status=${source_entry_status}; "
         f"__modash_replay_select_active=1; __modash_select_source_edge {shlex.quote(candidate.base_id)}; "
@@ -457,6 +663,19 @@ def _source_expression_for_candidate(candidate: _SourceCandidate) -> str:
 
 
 def _source_expression_and_redirections_for_candidate(candidate: _SourceCandidate) -> tuple[str, str]:
+    argv_words, redirection_words = _source_argv_words_and_redirections_for_candidate(candidate)
+    return " ".join(argv_words), " ".join(redirection_words)
+
+
+def _source_path_and_argument_expression_for_candidate(candidate: _SourceCandidate) -> tuple[str, str, int]:
+    argv_words, _redirection_words = _source_argv_words_and_redirections_for_candidate(candidate)
+    path_expression = argv_words[0]
+    argument_words = argv_words[1:]
+    argument_expression = " ".join(argument_words)
+    return path_expression, argument_expression, _source_argument_count(argument_expression)
+
+
+def _source_argv_words_and_redirections_for_candidate(candidate: _SourceCandidate) -> tuple[tuple[str, ...], tuple[str, ...]]:
     probe = candidate.text.strip()
     if candidate.separator and probe.startswith(candidate.separator):
         probe = probe[len(candidate.separator):].strip()
@@ -473,14 +692,15 @@ def _source_expression_and_redirections_for_candidate(candidate: _SourceCandidat
             f"could not parse source argv validation for observed source site: {candidate.text!r}",
             code="runtime.compile.mapping_failed",
         ) from exc
-    source_words = raw_words[invocation.source_index + 1:]
+    source_word_count = 1 + len(invocation.arguments)
+    source_words = raw_words[invocation.source_index + 1:invocation.source_index + 1 + source_word_count]
     argv_words, redirection_words = _split_source_redirections(source_words)
     if not argv_words:
         raise RuntimeObservedCompileError(
             f"could not render source argv validation for observed source site: {candidate.text!r}",
             code="runtime.compile.mapping_failed",
         )
-    return " ".join(argv_words), " ".join(redirection_words)
+    return argv_words, redirection_words
 
 
 def _source_assignment_words_for_candidate(candidate: _SourceCandidate) -> tuple[str, ...]:
@@ -599,6 +819,59 @@ def _has_command_substitution(text: str) -> bool:
             return True
         index += 1
     return False
+
+
+def _has_process_substitution(text: str) -> bool:
+    return "<(" in text or ">(" in text
+
+
+def _source_argument_count(argument_expression: str) -> int:
+    if not argument_expression.strip():
+        return 0
+    masked = _mask_process_substitutions(argument_expression)
+    try:
+        return len(parse_shell_words_preserving_quotes(masked))
+    except UnsupportedSourceError:
+        return len(argument_expression.split())
+
+
+def _mask_process_substitutions(text: str) -> str:
+    rendered: list[str] = []
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if escaped:
+            rendered.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and not in_single_quote:
+            rendered.append(char)
+            escaped = True
+            index += 1
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            rendered.append(char)
+            index += 1
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            rendered.append(char)
+            index += 1
+            continue
+        if not in_single_quote and (text.startswith("<(", index) or text.startswith(">(", index)):
+            _body, end_index = read_balanced_body(text, index + 2)
+            if end_index is not None:
+                rendered.append("__modash_process_substitution_arg")
+                index = end_index + 1
+                continue
+        rendered.append(char)
+        index += 1
+    return "".join(rendered)
 
 
 def _apply_replacements(line: str, replacements: list[tuple[int, int, str]]) -> str:
@@ -930,6 +1203,30 @@ def _replace_lineno_references(line: str, line_index: int) -> str:
         if char == "#" and not in_single_quote and not in_double_quote:
             rendered.append(line[index:])
             break
+        if not in_single_quote and line.startswith("$((", index):
+            body, end_index = read_balanced_body(line, index + 3)
+            if body is not None:
+                end_after = _arithmetic_context_end_after(line, end_index)
+                if re.search(r"\bLINENO\b", body):
+                    rendered.append("$((")
+                    rendered.append(_replace_bare_lineno_identifier(body, replacement))
+                    rendered.append("))")
+                else:
+                    rendered.append(line[index:end_after])
+                index = end_after
+                continue
+        if not in_single_quote and line.startswith("((", index):
+            body, end_index = read_balanced_body(line, index + 2)
+            if body is not None:
+                end_after = _arithmetic_context_end_after(line, end_index)
+                if re.search(r"\bLINENO\b", body):
+                    rendered.append("((")
+                    rendered.append(_replace_bare_lineno_identifier(body, replacement))
+                    rendered.append("))")
+                else:
+                    rendered.append(line[index:end_after])
+                index = end_after
+                continue
         if not in_single_quote and line.startswith("${LINENO}", index):
             rendered.append(replacement)
             index += len("${LINENO}")
@@ -943,8 +1240,69 @@ def _replace_lineno_references(line: str, line_index: int) -> str:
     return "".join(rendered)
 
 
+def _replace_bare_lineno_identifier(text: str, replacement: str) -> str:
+    return re.sub(r"\bLINENO\b", replacement, text)
+
+
+def _arithmetic_context_end_after(line: str, end_index: int) -> int:
+    if end_index + 1 < len(line) and line[end_index + 1] == ")":
+        return end_index + 2
+    return end_index + 1
+
+
 def _line_has_lineno_reference(line: str) -> bool:
-    return _expandable_runtime_reference(line, r"\$(?:LINENO|\{LINENO[^}]*\})")
+    return (
+        _expandable_runtime_reference(line, r"\$(?:LINENO|\{LINENO[^}]*\})")
+        or _arithmetic_context_has_bare_lineno(line)
+    )
+
+
+def _arithmetic_context_has_bare_lineno(line: str) -> bool:
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and not in_single_quote:
+            escaped = True
+            index += 1
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            index += 1
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            index += 1
+            continue
+        if in_single_quote:
+            index += 1
+            continue
+        if line.startswith("$((", index):
+            body, end_index = read_balanced_body(line, index + 3)
+            if body is None:
+                index += 3
+                continue
+            if re.search(r"\bLINENO\b", body):
+                return True
+            index = end_index + 1
+            continue
+        if line.startswith("((", index):
+            body, end_index = read_balanced_body(line, index + 2)
+            if body is None:
+                index += 2
+                continue
+            if re.search(r"\bLINENO\b", body):
+                return True
+            index = end_index + 1
+            continue
+        index += 1
+    return False
 
 
 def _ensure_unique_process_payloads(process_payloads: dict[int, tuple[str, str]]) -> None:
@@ -963,7 +1321,11 @@ def _ensure_no_unrewritten_source(line: str, unit: _RewriteUnit, line_index: int
     if not stripped or stripped.startswith("#"):
         return
     for command in get_commands(line):
-        if "__modash_select_source_edge" in command or "__modash_emit_embedded_file" in command:
+        if (
+            "__modash_select_source_edge" in command
+            or "__modash_emit_embedded_file" in command
+            or "__modash_live_source_path" in command
+        ):
             continue
         if _is_generated_dynamic_command_guard(command):
             continue
@@ -1659,12 +2021,13 @@ def _dynamic_command_guarded_replacement(command: str) -> str | None:
     argv_words, redirection_words = _split_dynamic_command_redirections(raw_words[index:simple_end])
     if not argv_words:
         return None
-    if _dynamic_argv_has_process_substitution(argv_words):
+    simple_command_text = command[start:end]
+    if _has_process_substitution(simple_command_text):
+        command_tail = command[spans[index][1]:end].strip()
         return command[:start] + _dynamic_command_guarded_process_substitution_replacement(
             command_prefix=command_prefix,
             command_name=raw_name,
-            command_tail=argv_words[1:],
-            command_redirections=redirection_words,
+            command_tail=command_tail,
         ) + command[end:]
     argv_expression = " ".join(argv_words)
     status_variable = "__modash_dynamic_argv_status" if _has_command_substitution(argv_expression) else "__modash_dynamic_prior_status"
@@ -1685,8 +2048,7 @@ def _dynamic_command_guarded_process_substitution_replacement(
     *,
     command_prefix: str,
     command_name: str,
-    command_tail: tuple[str, ...],
-    command_redirections: tuple[str, ...],
+    command_tail: str,
 ) -> str:
     command_name_status = "__modash_dynamic_name_status" if _has_command_substitution(command_name) else "__modash_dynamic_prior_status"
     actual_command = " ".join(
@@ -1694,8 +2056,7 @@ def _dynamic_command_guarded_process_substitution_replacement(
         for part in (
             command_prefix,
             '"${__modash_dynamic_command_name[@]}"',
-            " ".join(command_tail),
-            " ".join(command_redirections),
+            command_tail,
         )
         if part
     )
@@ -1707,11 +2068,6 @@ def _dynamic_command_guarded_process_substitution_replacement(
         '__modash_guard_dynamic_command_preserve_status "${__modash_dynamic_command_name[@]}"; '
         f"{actual_command}; }}"
     )
-
-
-def _dynamic_argv_has_process_substitution(argv_words: tuple[str, ...]) -> bool:
-    return any(_is_process_substitution_word(word) for word in argv_words)
-
 
 def _dynamic_simple_command_start(raw_words: tuple[str, ...], words: tuple[str, ...], command_index: int) -> int:
     index = command_index

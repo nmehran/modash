@@ -29,6 +29,7 @@ from methods.runtime_evaluator.observations import (
     validate_observation,
 )
 from methods.compile_renderer import find_unquoted_substring
+from methods.shell.line import get_commands
 from methods.source_commands import is_trace_wrapper_source_command, source_command_invocation
 from methods.source_resolver import parse_shell_words_preserving_quotes, strip_shell_word_quotes
 def load_observed_source_graph(path: str | os.PathLike):
@@ -383,10 +384,11 @@ def _is_source_like_command(command: str):
 
 def _is_replayable_source_call_site(command: str, xtrace_command: str):
     stripped = command.strip()
-    return (
-        source_command_invocation(stripped) is not None
-        or find_unquoted_substring(stripped, xtrace_command.strip()) >= 0
-    )
+    if source_command_invocation(stripped) is not None:
+        return True
+    if find_unquoted_substring(stripped, xtrace_command.strip()) >= 0:
+        return True
+    return any(source_command_invocation(part.strip()) is not None for part in get_commands(stripped))
 
 def _is_trusted_xtrace_source_command(command: str):
     return _is_source_like_command(command) or _is_trace_wrapper_source_command(command)

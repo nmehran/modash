@@ -91,12 +91,22 @@ __modash_abort() {{
 declare -A __modash_embedded_payload=()
 {chr(10).join(payload_setup)}
 readonly -A __modash_embedded_payload
+__modash_materialized_embedded_index=0
 
 __modash_emit_embedded_file() {{
   local logical_path=$1 encoded
   [[ ${{__modash_embedded_payload[$logical_path]+set}} == set ]] || __modash_abort "missing embedded payload: $logical_path"
   encoded=${{__modash_embedded_payload[$logical_path]}}
   builtin printf '%s' "$encoded" | "$__modash_base64" -d || __modash_abort "could not decode embedded file: $logical_path"
+}}
+
+__modash_materialize_embedded_file() {{
+  local logical_path=$1 path
+  __modash_require_embedded_file "$logical_path"
+  path="$__modash_tmp/embedded-${{__modash_materialized_embedded_index}}.sh"
+  __modash_materialized_embedded_index=$((__modash_materialized_embedded_index + 1))
+  __modash_emit_embedded_file "$logical_path" > "$path" || __modash_abort "could not materialize embedded file: $logical_path"
+  builtin printf '%s' "$path"
 }}
 
 __modash_require_embedded_file() {{
@@ -422,6 +432,31 @@ __modash_validate_source_argv() {{
     fi
     shift
   done
+}}
+
+__modash_validate_source_path_and_argc() {{
+  local expansion_status=$1 expected_argc=$2 source_path actual_resolved
+  shift 2
+  if (( expansion_status != __modash_replay_source_entry_status )); then
+    __modash_abort "observed source argument status drift"
+  fi
+  if (( $# == 0 )); then
+    source_path=
+  else
+    source_path=$1
+  fi
+  actual_resolved=$(__modash_normalize_source_path "$(__modash_resolve_source_path "$source_path")")
+  if [[ $actual_resolved != "$__modash_replay_resolved_path" ]]; then
+    if [[ $__modash_replay_kind != file || ! -e $actual_resolved || ! -e $__modash_replay_resolved_path || ! $actual_resolved -ef $__modash_replay_resolved_path ]]; then
+      __modash_abort "observed source path drift"
+    fi
+  fi
+  if [[ $__modash_replay_kind == missing && -n $source_path && ( -e $actual_resolved || -L $actual_resolved ) ]]; then
+    __modash_abort "observed missing source drift"
+  fi
+  if (( __modash_replay_argc != expected_argc )); then
+    __modash_abort "observed source argument drift"
+  fi
 }}
 
 source() {{

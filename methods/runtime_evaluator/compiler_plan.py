@@ -175,7 +175,7 @@ def _source_candidates(unit: _RewriteUnit) -> tuple[_SourceCandidate, ...]:
                     continue
                 if node.text.rstrip().endswith("\\"):
                     continue
-                add_site(node.location.line, node.text, node.separator, repeatable=repeatable)
+                add_site(node.location.line, _source_site_text_for_candidate(node), node.separator, repeatable=repeatable)
             elif isinstance(node, FunctionDef):
                 collect(node.body, repeatable=True)
             elif isinstance(node, (ForLoop, CStyleForLoop)):
@@ -219,6 +219,14 @@ def _source_candidates(unit: _RewriteUnit) -> tuple[_SourceCandidate, ...]:
         ))
     return tuple(candidates)
 
+
+def _source_site_text_for_candidate(node: SourceSite) -> str:
+    text = node.text.strip()
+    if text.startswith("{") and node.source_site:
+        return node.source_site
+    return node.text
+
+
 def _continued_source_sites(content: str) -> tuple[tuple[int, str, tuple[str, ...]], ...]:
     lines = content.splitlines()
     sites: list[tuple[int, str, tuple[str, ...]]] = []
@@ -244,7 +252,9 @@ def _continued_source_sites(content: str) -> tuple[tuple[int, str, tuple[str, ..
         if len(physical) > 1 and candidate is not None:
             first_fragment = _continued_source_first_physical_fragment(physical[0])
             if first_fragment is not None:
-                sites.append((start + 1, candidate, (first_fragment, *physical[1:])))
+                fragments = _continued_source_physical_fragments(candidate, first_fragment, physical)
+                if fragments is not None:
+                    sites.append((start + 1, candidate, fragments))
     return tuple(sites)
 
 
@@ -257,9 +267,9 @@ def _continued_source_command(logical: str) -> str | None:
         for index, command in enumerate(commands)
         if source_command_invocation(command.strip()) is not None
     ]
-    if source_commands != [len(commands) - 1]:
+    if len(source_commands) != 1:
         return None
-    return commands[-1].strip()
+    return commands[source_commands[0]].strip()
 
 
 def _continued_source_first_physical_fragment(line: str) -> str | None:
@@ -272,6 +282,29 @@ def _continued_source_first_physical_fragment(line: str) -> str | None:
     if start < 0:
         return None
     return line[start:]
+
+
+def _continued_source_physical_fragments(
+    command: str,
+    first_fragment: str,
+    physical_lines: list[str],
+) -> tuple[str, ...] | None:
+    first_logical = first_fragment.rstrip()[:-1]
+    if not command.startswith(first_logical):
+        return None
+    remaining = command[len(first_logical):]
+    fragments = [first_fragment]
+    for line in physical_lines[1:-1]:
+        logical = line.rstrip()[:-1]
+        if not remaining.startswith(logical):
+            return None
+        fragments.append(line)
+        remaining = remaining[len(logical):]
+    last_line = physical_lines[-1]
+    if not last_line.startswith(remaining):
+        return None
+    fragments.append(last_line[:len(remaining)])
+    return tuple(fragments)
 
 
 def _line_has_unquoted_continuation(line: str) -> bool:

@@ -11,8 +11,10 @@ from methods.source_commands import (
     is_source_like_command_text,
     normalized_trace_wrapper_words,
     shell_quote as quote_runtime_shell_word,
+    source_command_invocation,
     source_invocation_from_command as runtime_source_invocation_from_command,
 )
+from methods.shell.line import get_commands
 from methods.source_resolver import parse_shell_words_preserving_quotes
 
 XTRACE_MARKER = "MODASH_XTRACE"
@@ -305,7 +307,7 @@ def _trusted_xtrace_call_site_file_alias(
     event_file = str(Path(event.caller_file).resolve(strict=False))
     if event_file == command_file:
         return False
-    event_line = _source_line(event_file, event.caller_line)
+    event_line = _source_command_line(event_file, event.caller_line)
     if (
         not _is_xtrace_source_like(event_line)
         and (not command.function or command.function not in event.function_stack)
@@ -352,7 +354,7 @@ def _source_like_xtrace_commands(commands):
     source_commands = []
     for command in commands:
         record_file = _normalized_xtrace_file(command, None)
-        source_line = _source_line(record_file, command.line)
+        source_line = _source_command_line(record_file, command.line)
         if _is_xtrace_source_like(command.command) or (
             _xtrace_source_line_fallback_allowed(command.command)
             and _is_xtrace_source_like(source_line)
@@ -422,6 +424,13 @@ def _source_line(path: str, line: int):
     return _logical_source_line(lines, line - 1).strip()
 
 
+def _source_command_line(path: str, line: int):
+    logical = _source_line(path, line)
+    if logical == "<unknown>":
+        return logical
+    return _single_source_command(logical) or logical
+
+
 def _logical_source_line(lines: list[str], start_index: int) -> str:
     line = lines[start_index]
     if not _line_has_continuation(line):
@@ -437,6 +446,18 @@ def _logical_source_line(lines: list[str], start_index: int) -> str:
         logical += current
         break
     return logical
+
+
+def _single_source_command(line: str) -> str | None:
+    commands = get_commands(line)
+    source_commands = [
+        command.strip()
+        for command in commands
+        if source_command_invocation(command.strip()) is not None
+    ]
+    if len(source_commands) == 1:
+        return source_commands[0]
+    return None
 
 
 def _line_has_continuation(line: str) -> bool:

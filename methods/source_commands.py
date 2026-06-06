@@ -85,13 +85,14 @@ def source_command_position(words: Sequence[str]):
     command_start = 0
     command_start = _skip_negation_and_assignments(words, command_start)
     effective_start = _source_effective_command_start(words, command_start)
+    effective_command_start = _source_command_start_for_effective_start(words, command_start, effective_start)
 
     for index, word in enumerate(words):
         if word not in SOURCE_COMMAND_NAMES:
             continue
 
         if index == effective_start:
-            return command_start, index
+            return effective_command_start, index
 
         first_word = words[effective_start] if effective_start < len(words) else ""
         previous_word = words[index - 1]
@@ -118,8 +119,9 @@ def source_command_position(words: Sequence[str]):
                 command_index = _command_source_command_index(words, branch_index)
                 if index == command_index:
                     return command_start, index
-        if previous_word == "{" or previous_word.endswith("{"):
-            return command_start, index
+        brace_command_start = _brace_group_command_start(words, command_start, index)
+        if brace_command_start is not None:
+            return brace_command_start, index
         if any(candidate.endswith(")") for candidate in words[command_start:index]):
             return command_start, index
 
@@ -135,6 +137,30 @@ def _skip_negation_and_assignments(words: Sequence[str], index: int):
             index += 1
         if index == start:
             break
+    return index
+
+
+def _source_command_start_for_effective_start(words: Sequence[str], command_start: int, effective_start: int):
+    if command_start < len(words) and words[command_start] == "{" and effective_start > command_start:
+        return _assignment_prefix_start(words, command_start + 1, effective_start)
+    return command_start
+
+
+def _brace_group_command_start(words: Sequence[str], command_start: int, source_index: int):
+    index = source_index - 1
+    while index >= command_start and ASSIGNMENT_WORD_PATTERN.match(words[index]):
+        index -= 1
+    while index >= command_start and words[index] == "!":
+        index -= 1
+    if index >= command_start and (words[index] == "{" or words[index].endswith("{")):
+        return _assignment_prefix_start(words, index + 1, source_index)
+    return None
+
+
+def _assignment_prefix_start(words: Sequence[str], start: int, source_index: int):
+    index = start
+    while index < source_index and words[index] == "!":
+        index += 1
     return index
 
 
@@ -163,6 +189,7 @@ def _source_effective_command_start(words: Sequence[str], index: int):
             continue
     if index < len(words) and words[index] == "{":
         index += 1
+        index = _skip_negation_and_assignments(words, index)
     return index
 
 
@@ -221,6 +248,7 @@ def _source_command_invocation_from_words(
     if source_words is None:
         return None
     source_path, arguments = source_words
+    source_word_count = 1 + len(arguments)
 
     wrapped = source_index != command_start
     command_name = words[source_index]
@@ -228,7 +256,8 @@ def _source_command_invocation_from_words(
         return None
 
     if normalized:
-        source_expression = " ".join(words[source_index + 1:])
+        source_expression_words = words[source_index + 1:source_index + 1 + source_word_count] if stop_at_shell_control else words[source_index + 1:]
+        source_expression = " ".join(source_expression_words)
         source_site = " ".join(words)
         token_start = 0
         source_site_column_offset = 0
@@ -236,9 +265,19 @@ def _source_command_invocation_from_words(
         token_start = shell_word_start(command, quoted_words, source_index)
         if token_start is None:
             return None
-        source_expression = command[token_start + len(quoted_words[source_index]):].strip()
-        source_site = command.strip() if wrapped else f"{command_name} {source_expression}".strip()
-        source_site_column_offset = 0 if wrapped else token_start
+        if stop_at_shell_control:
+            source_expression = " ".join(quoted_words[source_index + 1:source_index + 1 + source_word_count])
+        else:
+            source_expression = command[token_start + len(quoted_words[source_index]):].strip()
+        if wrapped:
+            command_start_token = shell_word_start(command, quoted_words, command_start)
+            if command_start_token is None:
+                return None
+            source_site = command[command_start_token:].strip()
+            source_site_column_offset = command_start_token
+        else:
+            source_site = f"{command_name} {source_expression}".strip()
+            source_site_column_offset = token_start
 
     return SourceCommandInvocation(
         command_name=command_name,
