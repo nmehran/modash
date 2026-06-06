@@ -24,7 +24,7 @@ inheritance, explicit source arguments, top-level `return`, nested observed
 sources, assignment-prefixed source scope/export/array behavior, simple source
 redirections including target command-substitution source-entry status, dynamic
 external commands with process-substitution arguments, simple `LINENO`
-references, and child `bash -c` argv.
+references, child `bash -c` argv, and observed child Bash script invocations.
 
 ## Trust boundary
 
@@ -80,9 +80,9 @@ The compiler also rejects shapes that can make a trusted graph lie about what
 will run: reserved `__modash_` names, trace-instrumentation-sensitive shell
 state, aliases, dynamic or source-capable `eval`, source commands in
 subshells, pipelines, or command substitutions, process-substitution-backed
-source input, dynamic or multiline child `bash -c` payloads, unsupported child
-`bash -c` wrappers that hide source operations, wrapper-bypassing or
-source-bearing `exec` forms, trap manipulation, computed mutation of
+source input, dynamic or multiline child `bash -c` payloads, unsupported
+external child-command wrappers that hide source operations from tracing,
+source-bearing `exec` shell payloads, trap manipulation, computed mutation of
 generated replay state, runtime `$0` / `BASH_SOURCE` references inside heredocs
 or multiline strings, complex `LINENO` parameter operations, and runtime `$0` /
 `BASH_SOURCE` references on parent lines that also contain child `bash -c`
@@ -129,12 +129,12 @@ utilities such as `find -exec sh -c` are also rejected instead of being left
 live.
 Direct final `exec` is allowed when generated replay can validate all observed
 source edges and child-process markers before replacing the shell. `command exec`
-and `builtin exec` remain rejected because they bypass the generated validation
-wrapper, and source-bearing shell payloads behind `exec` remain fail-closed until
-that path is modeled explicitly.
-Source command recognition covers source-capable `time` and `coproc` prefixes so
-they fail closed instead of live-sourcing; observed `time`-prefixed source sites
-are rejected until timing output can be replayed precisely.
+and `builtin exec` are rewritten through the same generated validation wrapper
+for source-free final process replacement. Source-bearing shell payloads behind
+`exec` remain fail-closed.
+Observed `time`-prefixed source sites are replayed through Bash's own `time`
+reserved word. `coproc` source sites remain fail-closed because they run in a
+separate asynchronous shell context.
 Source-free external interpreter heredocs are allowed, but heredoc bodies that
 probe trace-owned environment remain rejected.
 Direct `kill` calls are guarded at runtime so normal background-helper cleanup

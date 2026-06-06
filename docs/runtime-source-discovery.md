@@ -185,7 +185,7 @@ The graph is still data, not executable shell code. It contains:
 
 - process nodes
 - file nodes with fingerprint roles
-- process-command nodes for child `bash -c` style source sites
+- process-command nodes for observed child Bash source sites
 - source edges with call-site text, resolved paths, source arguments,
   source-entry status, completion status, source identity, helper-call
   provenance when needed, and linked xtrace provenance
@@ -247,11 +247,12 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - Trace instrumentation failures still stop promotion before graph or executable
   output is written.
 - Runtime graph compile is limited to observed source edges whose call site can
-  be mapped exactly in an entrypoint, sourced file, or observed child `bash -c`
-  payload. Runtime-observed source effects hidden behind dynamic or source-capable
-  `eval` remain trace data, but they are not promoted into trusted graph
-  compilation. Source-free `eval "$shellopts"` restoration from `shopt -p` is
-  allowed for real-world shell-library helpers.
+  be mapped exactly in an entrypoint, sourced file, observed child `bash -c`
+  payload, or observed child Bash script. Runtime-observed source effects
+  hidden behind dynamic or source-capable `eval` remain trace data, but they
+  are not promoted into trusted graph compilation. Source-free
+  `eval "$shellopts"` restoration from `shopt -p` is allowed for real-world
+  shell-library helpers.
 - Runtime graph compile supports simple source redirections by applying them to
   the generated source operation after source argument and assignment-prefix
   expansion. Redirection target command substitutions participate in the
@@ -259,7 +260,8 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
   runtime redirection drift before treating an observed edge as successfully
   replayed. Heredoc source redirections, source commands in subshells,
   pipelines, or command substitutions, process-substitution-backed source input,
-  dynamic or multiline child `bash -c` payloads, reserved `__modash_` names, and
+  dynamic or multiline child `bash -c` payloads, external child-command wrappers
+  that hide source operations from tracing, reserved `__modash_` names, and
   scripts that inspect trace-instrumentation-sensitive shell state remain
   fail-closed with targeted diagnostics where available.
 - Runtime graph construction rejects sourced files with top-level
@@ -293,6 +295,7 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - repeated guarded runtime-selected source sites from a trusted graph, such as
   a mkinitcpio-style `. "$root/$hook"` hook loop observed for a finite hook list
 - child Bash process propagation and parent/child process provenance
+- observed child Bash script invocation replay with runtime path validation
 - persisted xtrace provenance linked to wrapper-observed source events
 - observed helper-call provenance for trusted runtime graph replay
 - schema `9` source identities, source-entry status, file fingerprints, and

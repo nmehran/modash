@@ -215,11 +215,6 @@ def _validate_unit_text(
                     f"runtime graph compiler input uses dynamic validation-bypassing command dispatch at {label}:{line_number}",
                     code="runtime.compile.dynamic_command",
                 )
-            if effective.name == "exec" and _exec_bypasses_generated_wrapper(parsed):
-                raise RuntimeObservedCompileError(
-                    f"runtime graph compiler input uses exec, which can bypass replay validation: {label}:{line_number}",
-                    code="runtime.compile.exec",
-                )
             if effective.name == "exec" and _words_have_source_bearing_shell_payload(command):
                 raise RuntimeObservedCompileError(
                     f"runtime graph compiler input uses exec with a source-bearing shell payload: {label}:{line_number}",
@@ -896,17 +891,6 @@ def _dynamic_validation_bypass_command(command: _Command, exact_variables: dict[
     return _dynamic_words_can_bypass_source_validation(command.words, exact_variables)
 
 
-def _exec_bypasses_generated_wrapper(command: _Command) -> bool:
-    command_index = _effective_command_index_without_unwrap(command.words)
-    if command_index is None:
-        return False
-    name = command.words[command_index]
-    if name not in {"command", "builtin"}:
-        return False
-    target_index = _command_or_builtin_target_index(command.words, command_index)
-    return target_index is not None and target_index < len(command.words) and command.words[target_index] == "exec"
-
-
 def _dynamic_words_can_bypass_source_validation(words: tuple[str, ...], exact_variables: dict[str, str]) -> bool:
     if not words:
         return False
@@ -1100,6 +1084,16 @@ def _shell_command_index_after_wrappers(words: list[str]) -> int | None:
     index = 0
     while index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[index]):
         index += 1
+    while index < len(words):
+        if words[index] == "!":
+            index += 1
+            continue
+        if words[index] == "time":
+            index += 1
+            while index < len(words) and words[index].startswith("-"):
+                index += 1
+            continue
+        break
     if index < len(words) and words[index] == "command":
         index += 1
         while index < len(words):

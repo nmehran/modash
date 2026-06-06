@@ -54,11 +54,9 @@ def _file_units(entrypoint: Path, graph: dict, edges: tuple[_ReplayEdge, ...]) -
     included_paths = {str(entrypoint)}
     for fingerprint in graph["files"]:
         roles = set(fingerprint["roles"])
-        if roles & {"entrypoint", "source"}:
+        if roles & {"entrypoint", "source", "call-site"}:
             included_paths.add(fingerprint["path"])
     for edge in edges:
-        if edge.from_node.startswith("file:"):
-            included_paths.add(edge.site_file)
         if edge.is_file:
             included_paths.add(edge.resolved_path)
 
@@ -505,7 +503,14 @@ def _assign_edges_to_candidates(process_index: int, edges: tuple[_ReplayEdge, ..
         for edge in process_edges:
             process_edges_by_line.setdefault(edge.site_line, []).append(edge)
         for line, line_edges in sorted(process_edges_by_line.items(), key=lambda item: min(edge.index for edge in item[1])):
-            line_candidates = [candidate for candidate in process_candidates if candidate.line == line]
+            site_file = line_edges[0].site_file
+            line_candidates = [
+                candidate
+                for candidate in candidates
+                if candidate.line == line and candidate.physical_path == site_file
+            ]
+            if not line_candidates:
+                line_candidates = [candidate for candidate in process_candidates if candidate.line == line]
             if not line_candidates:
                 raise RuntimeObservedCompileError(
                     f"observed child-process source edge cannot be mapped to payload line {line}",

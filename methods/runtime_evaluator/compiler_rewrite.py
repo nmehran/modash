@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import re
 import secrets
 import shutil
@@ -13,13 +14,14 @@ from methods.runtime_evaluator.compiler_model import (
     RuntimeObservedCompileError,
     _CompilePlan,
     _EmbeddedFile,
+    _ProcessPayload,
     _ReplayEdge,
     _RewriteUnit,
     _SourceCandidate,
 )
 from methods.runtime_evaluator.compiler_plan import _process_logical_path
 from methods.runtime_evaluator.compiler_prelude import _render_replay_prelude, _target_logical_paths
-from methods.runtime_evaluator.compiler_safety import _words_have_source_bearing_shell_payload
+from methods.runtime_evaluator.compiler_safety import _shell_command_index_after_wrappers, _words_have_source_bearing_shell_payload
 from methods.shell.line import get_commands
 from methods.shell.scan import read_backtick_body, read_balanced_body
 from methods.source_commands import contains_nested_source_command, contains_source_command, source_command_invocation
@@ -44,20 +46,23 @@ class _BashCInvocation:
 
 
 def _rewrite_process_payloads(plan: _CompilePlan) -> None:
+    process_nodes = {node["process_index"]: node for node in plan.graph["nodes"] if node["kind"] == "process"}
     for process_index, process_plan in plan.process_plans.items():
         if process_index == 0:
             continue
-        unit = process_plan.units[_process_logical_path(process_index)]
+        process_node = process_nodes.get(process_index, {})
+        unit = _process_payload_unit(process_plan, process_node)
         unit.transformed = _rewrite_content(
             unit,
             process_plan.assignments,
             plan.entrypoint,
             {},
-            rewrite_runtime_references=False,
+            rewrite_runtime_references=unit.physical_path is not None,
+            rewrite_runtime_zero=False,
         )
         embedded_files = []
         for logical_path, file_unit in sorted(process_plan.units.items()):
-            if logical_path in {ENTRYPOINT_LOGICAL_PATH, _process_logical_path(process_index)}:
+            if logical_path in {ENTRYPOINT_LOGICAL_PATH, _process_logical_path(process_index), unit.logical_path}:
                 continue
             transformed = _rewrite_content(
                 file_unit,
@@ -79,7 +84,31 @@ def _rewrite_process_payloads(plan: _CompilePlan) -> None:
             + unit.transformed.rstrip("\n")
             + "\n"
         )
-        plan.process_payloads[process_index] = (unit.content, payload)
+        plan.process_payloads[process_index] = _ProcessPayload(
+            identity=_process_payload_identity(unit, process_node),
+            content=payload,
+            entrypoint=process_node.get("entrypoint") if isinstance(process_node.get("entrypoint"), str) else None,
+            cwd=process_node.get("cwd") if isinstance(process_node.get("cwd"), str) else None,
+        )
+
+
+def _process_payload_unit(process_plan, process_node: dict) -> _RewriteUnit:
+    entrypoint = process_node.get("entrypoint")
+    command = process_node.get("command")
+    if isinstance(entrypoint, str) and isinstance(command, str):
+        entrypoint_path = str(Path(entrypoint).resolve(strict=False))
+        command_path = str(Path(command).resolve(strict=False))
+        if entrypoint_path == command_path:
+            for unit in process_plan.units.values():
+                if unit.physical_path == entrypoint_path:
+                    return unit
+    return process_plan.units[_process_logical_path(process_plan.process_index)]
+
+
+def _process_payload_identity(unit: _RewriteUnit, process_node: dict) -> str:
+    if unit.physical_path is not None:
+        return str(Path(unit.physical_path).resolve(strict=False))
+    return unit.content
 
 def _rewrite_file_units(plan: _CompilePlan) -> None:
     _ensure_unique_process_payloads(plan.process_payloads)
@@ -104,7 +133,7 @@ def _rewrite_content(
     unit: _RewriteUnit,
     assignments: dict[str, list[_ReplayEdge]],
     entrypoint: Path,
-    process_payloads: dict[int, tuple[str, str]],
+    process_payloads: dict[int, _ProcessPayload],
     process_replacement_counts: dict[int, int] | None = None,
     rewrite_runtime_references: bool = True,
     rewrite_runtime_zero: bool = True,
@@ -180,6 +209,7 @@ def _rewrite_content(
                         f"runtime graph compiler does not support this runtime source reference form in {unit.physical_path or unit.logical_path}:{line_index}",
                         code="runtime.compile.runtime_reference",
                     )
+        line = _rewrite_exec_wrapper_commands(line)
         line = _rewrite_bash_c_payloads(line, process_payloads, process_replacement_counts)
         line = _guard_positional_replay_state_targets(line)
         line = _guard_dynamic_command_sites(line)
@@ -234,7 +264,7 @@ def _candidate_replacements_by_line(unit: _RewriteUnit) -> dict[int, list[tuple[
                 f"unsupported unrewritten source command in process substitution at {unit.physical_path or unit.logical_path}:{candidate.line}: {candidate.text.strip()}",
                 code="runtime.compile.unrewritten_source",
             )
-        if _source_site_has_unsupported_prefix(needle):
+        if _source_site_has_unsupported_prefix(needle, candidate.separator):
             raise RuntimeObservedCompileError(
                 f"runtime graph compiler does not yet support replaying source command prefixes in {unit.physical_path or unit.logical_path}:{candidate.line}: {needle.strip()}",
                 code="runtime.compile.unsupported_source_prefix",
@@ -248,8 +278,11 @@ def _candidate_replacements_by_line(unit: _RewriteUnit) -> dict[int, list[tuple[
             source_expression_sets_status=_has_command_substitution(source_expression),
             assignment_words=_source_assignment_words_for_candidate(candidate),
             redirection_suffix=redirection_suffix,
-            negated=_source_site_is_negated(needle, candidate.separator),
+            negated=False,
         )
+        replay_prefix = _source_site_replay_prefix(needle, candidate.separator)
+        if replay_prefix:
+            replacement = f"{replay_prefix} {replacement}"
         if candidate.separator and candidate.text.lstrip().startswith(candidate.separator):
             replacement = f"{candidate.separator} {replacement}"
         if candidate.physical_lines:
@@ -943,9 +976,168 @@ def _apply_replacements(line: str, replacements: list[tuple[int, int, str]]) -> 
         occupied.append((start, end))
     return rendered
 
+
+def _rewrite_exec_wrapper_commands(line: str) -> str:
+    rewritten = line
+    search_start = 0
+    for command in get_commands(line):
+        start = find_unquoted_substring(rewritten, command, search_start)
+        if start < 0:
+            continue
+        replacement = _exec_wrapper_command_replacement(command)
+        if replacement is None:
+            search_start = start + len(command)
+            continue
+        end = start + len(command)
+        rewritten = rewritten[:start] + replacement + rewritten[end:]
+        search_start = start + len(replacement)
+    return rewritten
+
+
+@dataclass(frozen=True)
+class _BashScriptInvocation:
+    script_word: str
+    script_index: int
+
+
+def _bash_script_invocation(command: str) -> _BashScriptInvocation | None:
+    try:
+        raw_words = parse_shell_words_preserving_quotes(command.strip())
+    except UnsupportedSourceError:
+        return None
+    index = _command_word_index_after_wrappers(raw_words)
+    if index is None:
+        return None
+    command_name = strip_shell_word_quotes(raw_words[index])
+    if command_name not in {"bash", "/bin/bash", "/usr/bin/bash"}:
+        return None
+    if _bash_c_payload_index(raw_words, index + 1) is not None:
+        return None
+    script_index = _bash_script_word_index(raw_words, index + 1)
+    if script_index is None:
+        return None
+    script_word = strip_shell_word_quotes(raw_words[script_index])
+    if _has_dynamic_shell_expansion(script_word):
+        return None
+    return _BashScriptInvocation(script_word, script_index)
+
+
+def _bash_script_word_index(words: list[str], index: int) -> int | None:
+    while index < len(words):
+        word = strip_shell_word_quotes(words[index])
+        if word == "--":
+            return index + 1 if index + 1 < len(words) else None
+        if word in {"-O", "+O", "-o", "+o"}:
+            index += 2
+            continue
+        if word.startswith("-") or word.startswith("+"):
+            index += 1
+            continue
+        return index
+    return None
+
+
+def _rewrite_bash_script_command(
+    command: str,
+    invocation: _BashScriptInvocation,
+    payload: str,
+    observed_entrypoint: str,
+) -> str:
+    words = parse_shell_words_preserving_quotes(command.strip())
+    index = _command_word_index_after_wrappers(words)
+    if index is None:
+        raise RuntimeObservedCompileError(f"unsupported bash script command: {command}")
+    bash_word = _trusted_bash_command_word(words[index])
+    prefix_words, guard_names = _trusted_child_bash_prefix(words[:index])
+    bash_options = list(words[index + 1:invocation.script_index])
+    if not any(strip_shell_word_quotes(option) == "-p" or "p" in strip_shell_word_quotes(option)[1:] for option in bash_options if strip_shell_word_quotes(option).startswith("-") and not strip_shell_word_quotes(option).startswith("--")):
+        bash_options.insert(0, "-p")
+    rewritten_words = [
+        *prefix_words,
+        bash_word,
+        *bash_options,
+        "-c",
+        shlex.quote(payload),
+        words[invocation.script_index],
+        *words[invocation.script_index + 1:],
+    ]
+    guard = " ".join(f"__modash_reject_function_override {shlex.quote(name)};" for name in guard_names)
+    validation = _child_script_validation_command(words[invocation.script_index], observed_entrypoint)
+    return f"{guard} {validation} {' '.join(rewritten_words)}".strip()
+
+
+def _child_script_validation_command(script_word: str, observed_entrypoint: str) -> str:
+    return (
+        "__modash_validate_child_script_path "
+        f"{shlex.quote(str(Path(observed_entrypoint).resolve(strict=False)))} "
+        f"{script_word};"
+    )
+
+
+def _child_script_matches_observed(script_word: str, process_payload: _ProcessPayload) -> bool:
+    if process_payload.entrypoint is None or process_payload.cwd is None:
+        return False
+    if _has_dynamic_shell_expansion(script_word):
+        return False
+    script_path = Path(script_word)
+    if not script_path.is_absolute():
+        script_path = Path(process_payload.cwd) / script_path
+    return str(script_path.resolve(strict=False)) == str(Path(process_payload.entrypoint).resolve(strict=False))
+
+
+def _exec_wrapper_command_replacement(command: str) -> str | None:
+    try:
+        raw_words = tuple(parse_shell_words_preserving_quotes(command.strip()))
+    except UnsupportedSourceError:
+        return None
+    if not raw_words:
+        return None
+    words = tuple(strip_shell_word_quotes(word) for word in raw_words)
+    command_index = _command_or_builtin_exec_index(words)
+    if command_index is None:
+        return None
+    target_index = _command_or_builtin_target_index(words, command_index)
+    if target_index is None or target_index >= len(words) or words[target_index] != "exec":
+        return None
+    return " ".join((*raw_words[:command_index], "exec", *raw_words[target_index + 1:]))
+
+
+def _command_or_builtin_exec_index(words: tuple[str, ...]) -> int | None:
+    index = 0
+    while index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[index]):
+        index += 1
+    while index < len(words) and words[index] in {"if", "then", "elif", "else", "do", "while", "until", "time", "!"}:
+        word = words[index]
+        index += 1
+        if word == "time":
+            while index < len(words) and words[index].startswith("-"):
+                index += 1
+    return index if index < len(words) and words[index] in {"command", "builtin"} else None
+
+
+def _command_or_builtin_target_index(words: tuple[str, ...], index: int) -> int | None:
+    if words[index] == "builtin":
+        index += 1
+        if index < len(words) and words[index] == "--":
+            index += 1
+        return index if index < len(words) else None
+    index += 1
+    while index < len(words):
+        word = words[index]
+        if word == "--":
+            return index + 1 if index + 1 < len(words) else None
+        if word == "-p":
+            index += 1
+            continue
+        if word.startswith("-"):
+            return None
+        return index
+    return None
+
+
 def _rewrite_bash_c_payloads(
     line: str,
-    process_payloads: dict[int, tuple[str, str]],
+    process_payloads: dict[int, _ProcessPayload],
     process_replacement_counts: dict[int, int] | None = None,
     rewrite_runtime_references: bool = True,
 ) -> str:
@@ -958,6 +1150,32 @@ def _rewrite_bash_c_payloads(
         end = start + len(command)
         invocation = _bash_c_invocation(command)
         if invocation is None:
+            script_replacement = None
+            script_replacement_process = None
+            script_invocation = _bash_script_invocation(command)
+            if script_invocation is not None:
+                for process_index, process_payload in process_payloads.items():
+                    if not _child_script_matches_observed(script_invocation.script_word, process_payload):
+                        continue
+                    if script_replacement is not None:
+                        raise RuntimeObservedCompileError(
+                            f"ambiguous observed child bash script mapping for: {script_invocation.script_word}",
+                            code="runtime.compile.child_process_mapping_failed",
+                        )
+                    script_replacement = _rewrite_bash_script_command(
+                        command,
+                        script_invocation,
+                        process_payload.content,
+                        process_payload.entrypoint or process_payload.identity,
+                    )
+                    script_replacement_process = process_index
+            if script_replacement is not None:
+                script_replacement = _wrap_child_process_command(script_replacement_process, script_replacement)
+                rewritten = rewritten[:start] + script_replacement + rewritten[end:]
+                if process_replacement_counts is not None and script_replacement_process is not None:
+                    process_replacement_counts[script_replacement_process] = process_replacement_counts.get(script_replacement_process, 0) + 1
+                search_start = start + len(script_replacement)
+                continue
             unsupported_invocation = _bash_c_invocation_anywhere(command)
             if unsupported_invocation is not None:
                 if unsupported_invocation.dynamic_payload:
@@ -994,14 +1212,14 @@ def _rewrite_bash_c_payloads(
             )
         replacement = None
         replacement_process = None
-        for process_index, (original_payload, transformed_payload) in process_payloads.items():
-            if payload == original_payload:
+        for process_index, process_payload in process_payloads.items():
+            if payload == process_payload.identity:
                 if replacement is not None:
                     raise RuntimeObservedCompileError(
                         f"ambiguous observed child bash -c payload mapping for: {payload}",
                         code="runtime.compile.child_process_mapping_failed",
                     )
-                replacement = _rewrite_bash_c_command(command, transformed_payload)
+                replacement = _rewrite_bash_c_command(command, process_payload.content)
                 replacement_process = process_index
         if replacement is None:
             if _payload_is_runtime_unsafe(payload):
@@ -1186,18 +1404,70 @@ def _line_has_bash_c_payload(line: str) -> bool:
     return any(_bash_c_invocation(command) is not None for command in get_commands(line))
 
 
-def _source_site_is_negated(source_site: str, separator: str) -> bool:
-    probe = source_site.lstrip()
+def _source_site_replay_prefix(source_site: str, separator: str) -> str:
+    probe = source_site.strip()
     if separator and probe.startswith(separator):
-        probe = probe[len(separator):].lstrip()
-    return probe.startswith("!")
+        probe = probe[len(separator):].strip()
+    invocation = source_command_invocation(probe, stop_at_shell_control=True)
+    if invocation is None or invocation.source_index <= 0:
+        return ""
+    try:
+        raw_words = tuple(parse_shell_words_preserving_quotes(probe))
+    except UnsupportedSourceError:
+        return ""
+    words = tuple(strip_shell_word_quotes(word) for word in raw_words)
+    prefix_words: list[str] = []
+    index = 0
+    while index < invocation.source_index:
+        word = words[index]
+        if word == "{":
+            index += 1
+            continue
+        if word == "!":
+            prefix_words.append(raw_words[index])
+            index += 1
+            continue
+        if ASSIGNMENT_WORD_PATTERN.match(word):
+            index += 1
+            continue
+        if word == "time":
+            prefix_words.append(raw_words[index])
+            index += 1
+            while index < invocation.source_index and words[index].startswith("-"):
+                prefix_words.append(raw_words[index])
+                index += 1
+            continue
+        if word == "builtin":
+            index += 1
+            if index < invocation.source_index and words[index] == "--":
+                index += 1
+            continue
+        if word == "command":
+            index += 1
+            while index < invocation.source_index:
+                option = words[index]
+                if option == "--":
+                    index += 1
+                    break
+                if option == "-p":
+                    index += 1
+                    continue
+                if option.startswith("-"):
+                    break
+                break
+            continue
+        index += 1
+    return " ".join(prefix_words)
 
 
-def _source_site_has_unsupported_prefix(source_site: str) -> bool:
-    invocation = source_command_invocation(source_site)
+def _source_site_has_unsupported_prefix(source_site: str, separator: str = "") -> bool:
+    probe = source_site.strip()
+    if separator and probe.startswith(separator):
+        probe = probe[len(separator):].strip()
+    invocation = source_command_invocation(probe)
     if invocation is None:
         return False
-    return any(word in {"time", "coproc"} for word in invocation.words[:invocation.source_index])
+    return any(word == "coproc" for word in invocation.words[:invocation.source_index])
 
 
 def _line_has_runtime_reference(line: str, *, include_zero: bool = True) -> bool:
@@ -1762,16 +2032,16 @@ def _let_command_has_bare_lineno(line: str) -> bool:
     return False
 
 
-def _ensure_unique_process_payloads(process_payloads: dict[int, tuple[str, str]]) -> None:
+def _ensure_unique_process_payloads(process_payloads: dict[int, _ProcessPayload]) -> None:
     payload_owners: dict[str, int] = {}
-    for process_index, (payload, _transformed) in process_payloads.items():
-        owner = payload_owners.get(payload)
+    for process_index, process_payload in process_payloads.items():
+        owner = payload_owners.get(process_payload.identity)
         if owner is not None:
             raise RuntimeObservedCompileError(
                 f"repeated identical bash -c payload is not yet replayable without a parent process occurrence key: processes {owner} and {process_index}",
                 code="runtime.compile.ambiguous_child_process",
             )
-        payload_owners[payload] = process_index
+        payload_owners[process_payload.identity] = process_index
 
 def _ensure_no_unrewritten_source(line: str, unit: _RewriteUnit, line_index: int) -> None:
     stripped = line.strip()
@@ -1899,7 +2169,7 @@ def _bash_c_invocation(command: str) -> _BashCInvocation | None:
     if payload_index is None:
         return None
     raw_payload = words[payload_index]
-    payload = strip_shell_word_quotes(raw_payload)
+    payload = _bash_c_payload_text(raw_payload)
     return _BashCInvocation(payload, raw_payload, _dynamic_bash_c_payload_word(raw_payload))
 
 
@@ -1916,7 +2186,7 @@ def _bash_c_invocation_anywhere(command: str) -> _BashCInvocation | None:
         if payload_index is None:
             continue
         raw_payload = raw_words[payload_index]
-        payload = strip_shell_word_quotes(raw_payload)
+        payload = _bash_c_payload_text(raw_payload)
         return _BashCInvocation(payload, raw_payload, _dynamic_bash_c_payload_word(raw_payload))
     return None
 
@@ -1936,56 +2206,7 @@ def _bash_invocation_without_c(command: str) -> bool:
 
 
 def _command_word_index_after_wrappers(words: list[str]) -> int | None:
-    index = _command_word_index_after_env(words)
-    if index is None:
-        return None
-    command_name = strip_shell_word_quotes(words[index])
-    if command_name != "command":
-        return index
-    index += 1
-    while index < len(words):
-        word = strip_shell_word_quotes(words[index])
-        if word == "--":
-            return index + 1 if index + 1 < len(words) else None
-        if word == "-p":
-            index += 1
-            continue
-        if word.startswith("-"):
-            return None
-        return index
-    return None
-
-
-def _command_word_index_after_env(words: list[str]) -> int | None:
-    index = 0
-    while index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[index]):
-        index += 1
-    if index >= len(words):
-        return None
-    command_name = strip_shell_word_quotes(words[index])
-    if command_name != "env":
-        return index
-    index += 1
-    while index < len(words):
-        word = strip_shell_word_quotes(words[index])
-        if word == "--":
-            return index + 1 if index + 1 < len(words) else None
-        if word in {"-i", "--ignore-environment"}:
-            index += 1
-            continue
-        if word == "-u":
-            index += 2
-            continue
-        if word.startswith("--unset="):
-            index += 1
-            continue
-        if ASSIGNMENT_WORD_PATTERN.match(words[index]):
-            index += 1
-            continue
-        if word.startswith("-"):
-            return None
-        return index
-    return None
+    return _shell_command_index_after_wrappers([strip_shell_word_quotes(word) for word in words])
 
 
 def _bash_c_payload_index(words: list[str], index: int) -> int | None:
@@ -2008,10 +2229,24 @@ def _bash_c_payload_index(words: list[str], index: int) -> int | None:
 def _dynamic_bash_c_payload_word(word: str) -> bool:
     stripped = word.strip()
     if stripped.startswith("$'"):
-        return True
+        return False
     if _is_single_quoted_word(stripped):
         return False
     return _has_dynamic_shell_expansion(stripped)
+
+
+def _bash_c_payload_text(word: str) -> str:
+    stripped = word.strip()
+    if stripped.startswith("$'") and stripped.endswith("'") and len(stripped) >= 3:
+        return _decode_ansi_c_quoted_payload(stripped[2:-1])
+    return strip_shell_word_quotes(word)
+
+
+def _decode_ansi_c_quoted_payload(body: str) -> str:
+    try:
+        return codecs.decode(body, "unicode_escape")
+    except UnicodeDecodeError:
+        return body.replace(r"\'", "'").replace(r"\\", "\\")
 
 
 def _is_single_quoted_word(word: str) -> bool:

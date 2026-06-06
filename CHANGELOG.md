@@ -28,7 +28,7 @@
   version drift during trace, source-entry-sensitive `PIPESTATUS` / `$_`
   references, dynamic validation-bypass command dispatch, child replay failure
   propagation, unsafe shopt-restore poisoning, generated `exit` bypasses,
-  exported Bash function rejection, time-prefixed source fail-closed behavior,
+  exported Bash function rejection, time-prefixed source replay behavior,
   and unsupported runtime `$0` / `BASH_SOURCE` forms.
 - Added regressions for plain-`bash` launch rejection, embedded payload stream
   replay, child process replay success markers, `BASH_ENV` child startup
@@ -94,6 +94,11 @@
 - Added guarded direct-`exec` replay support so final process replacement can
   run after observed source setup while still validating consumed graph edges
   before the shell is replaced.
+- Added review-driven replay support for safe cases that had been rejected too
+  broadly: `time`-prefixed source sites, `time`-wrapped child Bash sources,
+  ANSI-C quoted child `bash -c` payloads, static `command exec` / `builtin exec`
+  final process replacement through the generated validation wrapper, and
+  observed child Bash script invocations with runtime path validation.
 - Added review-driven replay parity regressions for dynamic command argv and
   redirection expansion exactly-once behavior, full assignment-prefixed source
   export/array/readonly behavior, redirection target source-entry status, and

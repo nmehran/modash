@@ -431,6 +431,16 @@ __modash_normalize_source_path() {{
   builtin printf '%s' "$path"
 }}
 
+__modash_validate_child_script_path() {{
+  local expected=$1 script_path=$2 actual
+  actual=$(__modash_normalize_source_path "$script_path")
+  if [[ $actual != "$expected" ]]; then
+    if [[ ! -e $actual || ! -e $expected || ! $actual -ef $expected ]]; then
+      __modash_abort "observed child script path drift"
+    fi
+  fi
+}}
+
 __modash_select_source_edge() {{
   local base=$1 seen key argc index arg_key
   [[ $__modash_replay_select_active == 1 ]] || __modash_abort "generated source selector called outside replay group"

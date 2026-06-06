@@ -1794,7 +1794,6 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
 
     def test_runtime_compiler_rejects_unsupported_bash_c_payloads(self):
         cases = {
-            "ansi c quote": ("bash -c $'source ./dep.sh'\nprintf 'done\\n'\n", "runtime.compile.unsupported_child_bash"),
             "dynamic payload": ("printf 'source ./dep.sh\\n' > payload.txt\nbash -c \"$(cat payload.txt)\"\nprintf 'done\\n'\n", "runtime.compile.unsupported_child_bash"),
             "multiline payload": ("bash -c '\nsource ./dep.sh\n'\nprintf 'done\\n'\n", "runtime.compile.unsupported_child_bash"),
         }
@@ -1807,6 +1806,16 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                     "main.sh",
                     code=code,
                 )
+
+    def test_runtime_compiler_preserves_ansi_c_quoted_bash_c_payloads(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "bash -c $'source ./dep.sh'\nprintf 'done\\n'\n")
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "dep\ndone\n")
 
     def test_runtime_compiler_rewrites_env_wrapped_traced_bash_c_source_payload(self):
         with ScriptProject() as project:
@@ -2380,15 +2389,30 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertIn("unconsumed observed source edge", drifted.stdout)
         self.assertNotIn("final\n", drifted.stdout)
 
-    def test_runtime_compiler_rejects_exec_forms_that_bypass_validation_wrapper(self):
+    def test_runtime_compiler_rewrites_source_free_exec_wrapper_shell_payloads(self):
         with ScriptProject() as project:
             project.write(
                 "main.sh",
                 "source ./dep.sh\n"
-                "command exec bash -c 'printf done\\n'\n",
+                "command exec bash -c \"printf 'done\\\\n'\"\n",
             )
             project.write("dep.sh", "printf 'dep\\n'\n")
-            self.assert_compile_observed_error(project, "main.sh", code="runtime.compile.exec")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "dep\ndone\n")
+
+    def test_runtime_compiler_rejects_exec_wrapper_source_bearing_shell_payloads(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source ./env.sh\n"
+                "command exec bash -c 'source ./dep.sh; printf done\\n'\n",
+            )
+            project.write("env.sh", "printf 'env\\n'\n")
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            self.assert_compile_observed_error(project, "main.sh", code="runtime.compile.dynamic_command")
 
     def test_runtime_compiler_rejects_exec_source_bearing_shell_payloads(self):
         with ScriptProject() as project:
@@ -2629,14 +2653,30 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                 env={"RUN_TWO": "yes"},
             )
 
-    def test_runtime_compiler_rejects_exec_validation_bypass(self):
-        with ScriptProject() as project:
-            project.write(
-                "main.sh",
-                "source ./one.sh\n"
-                "if [[ ${RUN_TWO:-yes} == yes ]]; then source ./two.sh; fi\n"
-                "exec true\n",
-            )
+    def test_runtime_compiler_rewrites_exec_wrappers_through_validation(self):
+        cases = {
+            "command": "command exec printf 'final\\n'\n",
+            "builtin": "builtin exec printf 'final\\n'\n",
+        }
+        for name, exec_line in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write(
+                    "main.sh",
+                    "source ./one.sh\n"
+                    "if [[ ${RUN_TWO:-yes} == yes ]]; then source ./two.sh; fi\n"
+                    f"{exec_line}",
+                )
+                project.write("one.sh", "printf 'one\\n'\n")
+                project.write("two.sh", "printf 'two\\n'\n")
+                compiled, _graph = self.compile_observed(project, "main.sh")
+                matched = project.run(compiled)
+                drifted = project.run(compiled, env={"RUN_TWO": "no"})
+
+                self.assertEqual(matched.returncode, 0, matched.stdout)
+                self.assertEqual(matched.stdout, "one\ntwo\nfinal\n")
+                self.assertEqual(drifted.returncode, 125, drifted.stdout)
+                self.assertIn("unconsumed observed source edge", drifted.stdout)
+                self.assertNotIn("final\n", drifted.stdout)
 
     def test_runtime_compiler_rejects_enable_validation_bypass(self):
         cases = {
@@ -3234,9 +3274,53 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertIn(f"bs:{dep}\n", result.stdout)
         self.assertIn("zero:child0\n", result.stdout)
 
-    def test_runtime_compiler_rejects_unrecognized_child_bash_wrappers_with_sources(self):
+    def test_runtime_compiler_replays_child_bash_script_invocation_sources(self):
+        with ScriptProject() as project:
+            project.write(
+                "child.sh",
+                "source ./dep.sh\n"
+                "printf 'child:%s:%s\\n' \"$0\" \"$1\"\n",
+            )
+            project.write("main.sh", "bash ./child.sh arg1\nprintf 'done\\n'\n")
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            expected = project.run("main.sh")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            actual = project.run(compiled)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
+        self.assertIn("child:./child.sh:arg1\n", actual.stdout)
+
+    def test_runtime_compiler_validates_child_bash_script_invocation_cwd(self):
+        with ScriptProject() as project:
+            project.write(
+                "sub/child.sh",
+                "source ./dep.sh\n"
+                "printf 'child:%s:%s\\n' \"$0\" \"$1\"\n",
+            )
+            project.write("sub/dep.sh", "printf 'dep\\n'\n")
+            project.write("main.sh", "cd sub\nbash ./child.sh arg1\nprintf 'done\\n'\n")
+            expected = project.run("main.sh")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            actual = project.run(compiled)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
+        self.assertIn("child:./child.sh:arg1\n", actual.stdout)
+
+    def test_runtime_compiler_preserves_time_wrapped_child_bash_sources(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "time bash -c 'source ./dep.sh'\nprintf 'done\\n'\n")
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("dep\n", result.stdout)
+        self.assertIn("done\n", result.stdout)
+
+    def test_runtime_compiler_rejects_external_child_bash_wrappers_without_trace_observations(self):
         cases = {
-            "time": "time bash -c 'source ./dep.sh'\nprintf 'done\\n'\n",
             "nice": "nice bash -c 'source ./dep.sh'\nprintf 'done\\n'\n",
             "env nice": "env -i PATH=\"$PATH\" nice bash -c 'source ./dep.sh'\nprintf 'done\\n'\n",
             "nested env": "env /usr/bin/env bash -c 'source ./dep.sh'\nprintf 'done\\n'\n",
@@ -3342,25 +3426,39 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                 code="runtime.compile.instrumentation_sensitive",
             )
 
-    def test_runtime_compiler_rejects_reserved_word_live_source_prefixes(self):
-        with ScriptProject() as project:
-            project.write("main.sh", "if [[ ${RUN:-} ]]; then time builtin source ./dep.sh; fi\nprintf 'done\\n'\n")
-            project.write("dep.sh", "printf 'dep\\n'\n")
-            self.assert_compile_observed_error(
-                project,
-                "main.sh",
-                code="runtime.compile.unsupported_source_prefix",
-            )
+    def test_runtime_compiler_preserves_time_prefixed_live_source_prefixes(self):
+        cases = {
+            "time": "if [[ ${RUN:-} ]]; then time builtin source ./dep.sh; fi\nprintf 'done\\n'\n",
+            "bang time": "if [[ ${RUN:-} ]]; then ! time builtin source ./dep.sh; fi\nprintf 'done\\n'\n",
+        }
+        for name, script in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("main.sh", script)
+                project.write("dep.sh", "printf 'dep\\n'\n")
+                expected = project.run("main.sh", env={"RUN": "1"})
+                compiled, _graph = self.compile_observed(project, "main.sh", env={"RUN": "1"})
+                actual = project.run(compiled, env={"RUN": "1"})
 
-    def test_runtime_compiler_rejects_time_prefixed_observed_source_sites(self):
-        with ScriptProject() as project:
-            project.write("main.sh", "time source ./dep.sh\nprintf 'done\\n'\n")
-            project.write("dep.sh", "printf 'dep\\n'\n")
-            self.assert_compile_observed_error(
-                project,
-                "main.sh",
-                code="runtime.compile.unsupported_source_prefix",
-            )
+            self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+            self.assertIn("dep\n", actual.stdout)
+            self.assertIn("done\n", actual.stdout)
+
+    def test_runtime_compiler_preserves_time_prefixed_observed_source_sites(self):
+        cases = {
+            "time": "time source ./dep.sh\nprintf 'done\\n'\n",
+            "bang time": "! time source ./dep.sh\nprintf 'done\\n'\n",
+        }
+        for name, script in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("main.sh", script)
+                project.write("dep.sh", "printf 'dep\\n'\n")
+                expected = project.run("main.sh")
+                compiled, _graph = self.compile_observed(project, "main.sh")
+                actual = project.run(compiled)
+
+            self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+            self.assertIn("dep\n", actual.stdout)
+            self.assertIn("done\n", actual.stdout)
 
     def test_runtime_compiler_rejects_coproc_live_source_prefix(self):
         with ScriptProject() as project:
@@ -3379,20 +3477,23 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                 code="runtime.compile.dynamic_command",
             )
 
-    def test_runtime_compiler_rejects_reserved_word_child_bash_sources(self):
+    def test_runtime_compiler_preserves_time_prefixed_child_bash_source_sites(self):
         cases = {
             "time builtin": "bash -c 'time builtin source ./dep.sh'\nprintf 'done\\n'\n",
             "time bang builtin": "bash -c 'time ! builtin source ./dep.sh'\nprintf 'done\\n'\n",
+            "bang time builtin": "bash -c '! time builtin source ./dep.sh'\nprintf 'done\\n'\n",
         }
         for name, script in cases.items():
             with self.subTest(name=name), ScriptProject() as project:
                 project.write("main.sh", script)
                 project.write("dep.sh", "printf 'dep\\n'\n")
-                self.assert_compile_observed_error(
-                    project,
-                    "main.sh",
-                    code="runtime.compile.unsupported_source_prefix",
-                )
+                expected = project.run("main.sh")
+                compiled, _graph = self.compile_observed(project, "main.sh")
+                actual = project.run(compiled)
+
+            self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+            self.assertIn("dep\n", actual.stdout)
+            self.assertIn("done\n", actual.stdout)
 
     def test_runtime_compiler_guards_function_local_positional_nameref_targets(self):
         with ScriptProject() as project:

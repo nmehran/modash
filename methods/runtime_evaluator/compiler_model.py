@@ -82,6 +82,13 @@ class _EmbeddedFile:
     logical_path: str
     content: str
 
+@dataclass(frozen=True)
+class _ProcessPayload:
+    identity: str
+    content: str
+    entrypoint: str | None = None
+    cwd: str | None = None
+
 @dataclass
 class _ProcessPlan:
     process_index: int
@@ -96,7 +103,7 @@ class _CompilePlan:
     graph: dict
     file_units: dict[str, _RewriteUnit]
     process_plans: dict[int, _ProcessPlan]
-    process_payloads: dict[int, tuple[str, str]]
+    process_payloads: dict[int, _ProcessPayload]
 
 def _first_source_segment(command: str) -> str | None:
     for segment in get_commands(command):
