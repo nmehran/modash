@@ -217,7 +217,13 @@ __modash_guard_dynamic_command() {{
     printf)
       shift
       while (( $# )); do
-        [[ $1 == -v || $1 == -v* ]] && __modash_abort "runtime replay cannot allow dynamic printf -v"
+        if [[ $1 == -v ]]; then
+          shift
+          (( $# )) || __modash_abort "runtime replay cannot allow dynamic printf -v without target"
+          __modash_validate_printf_v_target "$1"
+        elif [[ $1 == -v* ]]; then
+          __modash_validate_printf_v_target "${{1#-v}}"
+        fi
         shift
       done
       return
@@ -261,6 +267,12 @@ __modash_guard_dynamic_command() {{
     esac
     shift
   done
+}}
+
+__modash_validate_printf_v_target() {{
+  local target=$1
+  [[ $target =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || __modash_abort "runtime replay cannot allow dynamic printf -v target"
+  [[ $target != __modash_* ]] || __modash_abort "runtime replay cannot allow dynamic printf -v target"
 }}
 
 __modash_guard_dynamic_command_preserve_status() {{
@@ -428,6 +440,40 @@ __modash_validate_source_argv() {{
     expected_arg=${{__modash_replay_args[$index]}}
     actual_arg=${{1-}}
     if [[ $actual_arg != "$expected_arg" ]]; then
+      __modash_abort "observed source argument drift"
+    fi
+    shift
+  done
+}}
+
+__modash_validate_source_argv_masked() {{
+  local expansion_status=$1 skip_mask=$2 source_path actual_resolved expected_arg actual_arg index
+  shift 2
+  if (( expansion_status != __modash_replay_source_entry_status )); then
+    __modash_abort "observed source argument status drift"
+  fi
+  if (( $# == 0 )); then
+    source_path=
+  else
+    source_path=$1
+  fi
+  actual_resolved=$(__modash_normalize_source_path "$(__modash_resolve_source_path "$source_path")")
+  if [[ $actual_resolved != "$__modash_replay_resolved_path" ]]; then
+    if [[ $__modash_replay_kind != file || ! -e $actual_resolved || ! -e $__modash_replay_resolved_path || ! $actual_resolved -ef $__modash_replay_resolved_path ]]; then
+      __modash_abort "observed source path drift"
+    fi
+  fi
+  if [[ $__modash_replay_kind == missing && -n $source_path && ( -e $actual_resolved || -L $actual_resolved ) ]]; then
+    __modash_abort "observed missing source drift"
+  fi
+  if (( $# != __modash_replay_argc + 1 )); then
+    __modash_abort "observed source argument drift"
+  fi
+  shift
+  for ((index = 0; index < __modash_replay_argc; index++)); do
+    expected_arg=${{__modash_replay_args[$index]}}
+    actual_arg=${{1-}}
+    if [[ $skip_mask != *":$index:"* && $actual_arg != "$expected_arg" ]]; then
       __modash_abort "observed source argument drift"
     fi
     shift

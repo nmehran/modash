@@ -33,6 +33,9 @@ from methods.source_resolver import (
 )
 
 
+_PROCESS_SUBSTITUTION_ARG_PLACEHOLDER = "__modash_process_substitution_arg_placeholder__"
+
+
 @dataclass(frozen=True)
 class _BashCInvocation:
     payload: str
@@ -387,6 +390,10 @@ def _render_process_substitution_argument_replay_group(
             redirection_suffix=redirection_suffix,
             negated=negated,
         )
+    validation_expression, validation_skip_mask = _source_validation_expression_for_process_substitution_arguments(
+        path_expression,
+        argument_expression,
+    )
     path_sets_status = _has_command_substitution(path_expression)
     redirection_sets_status = _has_command_substitution(redirection_suffix)
     source_entry_status = (
@@ -401,12 +408,12 @@ def _render_process_substitution_argument_replay_group(
         redirected_validation = (
             "__modash_source_redirection_status=$?; "
             f"__modash_source_entry_status=${source_entry_status}; "
-            f"__modash_validate_source_path_and_argc \"$__modash_source_entry_status\" {source_argc} \"${{__modash_source_argv[@]}}\"; "
+            f"__modash_validate_source_argv_masked \"$__modash_source_entry_status\" {shlex.quote(validation_skip_mask)} \"${{__modash_source_argv[@]}}\"; "
         )
     validation_before_source = (
         ""
         if redirection_sets_status
-        else f"__modash_validate_source_path_and_argc \"$__modash_source_entry_status\" {source_argc} \"${{__modash_source_argv[@]}}\"; "
+        else f"__modash_validate_source_argv_masked \"$__modash_source_entry_status\" {shlex.quote(validation_skip_mask)} \"${{__modash_source_argv[@]}}\"; "
     )
     live_arguments = f" {argument_expression}" if argument_expression else ""
     file_source_operation = redirected_validation + (
@@ -437,7 +444,7 @@ def _render_process_substitution_argument_replay_group(
         )
         missing_status_capture = ""
     group = (
-        f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {path_expression} ); "
+        f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {validation_expression} ); "
         "__modash_source_expansion_status=$?; "
         f"__modash_source_entry_status=${source_entry_status}; "
         f"__modash_replay_select_active=1; __modash_select_source_edge {shlex.quote(candidate.base_id)}; "
@@ -478,6 +485,10 @@ def _render_assignment_prefixed_process_substitution_argument_replay_group(
             f"runtime graph compiler does not yet support assignment command substitutions with process-substitution source arguments: {candidate.text!r}",
             code="runtime.compile.source_arguments",
         )
+    validation_expression, validation_skip_mask = _source_validation_expression_for_process_substitution_arguments(
+        path_expression,
+        argument_expression,
+    )
     path_sets_status = _has_command_substitution(path_expression)
     redirection_sets_status = _has_command_substitution(redirection_suffix)
     source_entry_status = (
@@ -492,12 +503,12 @@ def _render_assignment_prefixed_process_substitution_argument_replay_group(
         redirected_validation = (
             "__modash_source_redirection_status=$?; "
             f"__modash_source_entry_status=${source_entry_status}; "
-            f"__modash_validate_source_path_and_argc \"$__modash_source_entry_status\" {source_argc} \"${{__modash_source_argv[@]}}\"; "
+            f"__modash_validate_source_argv_masked \"$__modash_source_entry_status\" {shlex.quote(validation_skip_mask)} \"${{__modash_source_argv[@]}}\"; "
         )
     validation_before_source = (
         ""
         if redirection_sets_status
-        else f"__modash_validate_source_path_and_argc \"$__modash_source_entry_status\" {source_argc} \"${{__modash_source_argv[@]}}\"; "
+        else f"__modash_validate_source_argv_masked \"$__modash_source_entry_status\" {shlex.quote(validation_skip_mask)} \"${{__modash_source_argv[@]}}\"; "
     )
     live_arguments = f" {argument_expression}" if argument_expression else ""
     assignment_prefix = " ".join(assignment_words)
@@ -529,7 +540,7 @@ def _render_assignment_prefixed_process_substitution_argument_replay_group(
         )
         missing_status_capture = ""
     group = (
-        f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {path_expression} ); "
+        f"{{ __modash_source_command_prior_status=$?; __modash_source_argv=(); __modash_source_argv=( {validation_expression} ); "
         "__modash_source_expansion_status=$?; "
         f"__modash_source_entry_status=${source_entry_status}; "
         f"__modash_replay_select_active=1; __modash_select_source_edge {shlex.quote(candidate.base_id)}; "
@@ -675,6 +686,30 @@ def _source_path_and_argument_expression_for_candidate(candidate: _SourceCandida
     return path_expression, argument_expression, _source_argument_count(argument_expression)
 
 
+def _source_validation_expression_for_process_substitution_arguments(
+    path_expression: str,
+    argument_expression: str,
+) -> tuple[str, str]:
+    masked_arguments = _mask_process_substitutions(argument_expression).strip()
+    validation_expression = " ".join(part for part in (path_expression, masked_arguments) if part)
+    return validation_expression, _process_substitution_argument_skip_mask(masked_arguments)
+
+
+def _process_substitution_argument_skip_mask(masked_arguments: str) -> str:
+    if not masked_arguments:
+        return ":"
+    try:
+        words = tuple(parse_shell_words_preserving_quotes(masked_arguments))
+    except UnsupportedSourceError:
+        words = tuple(masked_arguments.split())
+    skipped = [
+        str(index)
+        for index, word in enumerate(words)
+        if _PROCESS_SUBSTITUTION_ARG_PLACEHOLDER in word
+    ]
+    return ":" + ":".join(skipped) + ":" if skipped else ":"
+
+
 def _source_argv_words_and_redirections_for_candidate(candidate: _SourceCandidate) -> tuple[tuple[str, ...], tuple[str, ...]]:
     probe = candidate.text.strip()
     if candidate.separator and probe.startswith(candidate.separator):
@@ -775,9 +810,30 @@ def _split_source_redirections(words: tuple[str, ...]) -> tuple[tuple[str, ...],
                     "runtime graph compiler could not parse source redirection target",
                     code="runtime.compile.source_redirection",
                 )
-            redirection_words.append(words[index])
-            index += 1
+            target, index = _source_redirection_target_words(words, index)
+            redirection_words.append(target)
     return tuple(argv_words), tuple(redirection_words)
+
+
+def _source_redirection_target_words(words: tuple[str, ...], index: int) -> tuple[str, int]:
+    word = words[index]
+    if not _is_process_substitution_word(word):
+        return word, index + 1
+    collected = [word]
+    probe = word
+    index += 1
+    while _process_substitution_needs_more_words(probe) and index < len(words):
+        collected.append(words[index])
+        probe = " ".join(collected)
+        index += 1
+    return " ".join(collected), index
+
+
+def _process_substitution_needs_more_words(text: str) -> bool:
+    if not _is_process_substitution_word(text):
+        return False
+    _body, end_index = read_balanced_body(text, 2)
+    return end_index is None or end_index != len(text) - 1
 
 
 def _is_process_substitution_word(word: str) -> bool:
@@ -866,7 +922,7 @@ def _mask_process_substitutions(text: str) -> str:
         if not in_single_quote and (text.startswith("<(", index) or text.startswith(">(", index)):
             _body, end_index = read_balanced_body(text, index + 2)
             if end_index is not None:
-                rendered.append("__modash_process_substitution_arg")
+                rendered.append(_PROCESS_SUBSTITUTION_ARG_PLACEHOLDER)
                 index = end_index + 1
                 continue
         rendered.append(char)
@@ -1172,12 +1228,14 @@ def _line_has_runtime_reference_outside_bash_c_payload(line: str) -> bool:
 
 
 def _replace_lineno_references(line: str, line_index: int) -> str:
+    replacement = str(line_index)
+    line = _replace_lineno_in_double_bracket_arithmetic(line, replacement)
+    line = _replace_lineno_in_let_commands(line, replacement)
     rendered: list[str] = []
     in_single_quote = False
     in_double_quote = False
     escaped = False
     index = 0
-    replacement = str(line_index)
     while index < len(line):
         char = line[index]
         if escaped:
@@ -1240,6 +1298,138 @@ def _replace_lineno_references(line: str, line_index: int) -> str:
     return "".join(rendered)
 
 
+def _replace_lineno_in_double_bracket_arithmetic(line: str, replacement: str) -> str:
+    rendered: list[str] = []
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if escaped:
+            rendered.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and not in_single_quote:
+            rendered.append(char)
+            escaped = True
+            index += 1
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            rendered.append(char)
+            index += 1
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            rendered.append(char)
+            index += 1
+            continue
+        if char == "#" and not in_single_quote and not in_double_quote:
+            rendered.append(line[index:])
+            break
+        if not in_single_quote and line.startswith("[[", index):
+            body, end_after = _double_bracket_body(line, index + 2)
+            if body is not None:
+                rendered.append("[[")
+                if _double_bracket_body_has_arithmetic_comparison(body):
+                    rendered.append(_replace_bare_lineno_identifier(body, replacement))
+                else:
+                    rendered.append(body)
+                rendered.append("]]")
+                index = end_after
+                continue
+        rendered.append(char)
+        index += 1
+    return "".join(rendered)
+
+
+def _double_bracket_body(line: str, index: int) -> tuple[str | None, int]:
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    start = index
+    while index < len(line):
+        char = line[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and not in_single_quote:
+            escaped = True
+            index += 1
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            index += 1
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            index += 1
+            continue
+        if not in_single_quote and not in_double_quote and line.startswith("]]", index):
+            return line[start:index], index + 2
+        index += 1
+    return None, start
+
+
+def _double_bracket_body_has_arithmetic_comparison(body: str) -> bool:
+    return re.search(r"(^|[^\w-])-(?:eq|ne|lt|le|gt|ge)(?:$|[^\w-])", body) is not None
+
+
+def _replace_lineno_in_let_commands(line: str, replacement: str) -> str:
+    rewritten = line
+    search_start = 0
+    for command in get_commands(line):
+        start = find_unquoted_substring(rewritten, command, search_start)
+        if start < 0:
+            start = rewritten.find(command, search_start)
+        if start < 0:
+            continue
+        replacement_command = _replace_lineno_in_let_command(command, replacement)
+        rewritten = rewritten[:start] + replacement_command + rewritten[start + len(command):]
+        search_start = start + len(replacement_command)
+    return rewritten
+
+
+def _replace_lineno_in_let_command(command: str, replacement: str) -> str:
+    try:
+        raw_words = tuple(parse_shell_words_preserving_quotes(command.strip()))
+    except UnsupportedSourceError:
+        return command
+    if not raw_words:
+        return command
+    words = tuple(strip_shell_word_quotes(word) for word in raw_words)
+    index = _let_command_index(words)
+    if index is None:
+        return command
+    spans = _raw_word_spans(command, raw_words)
+    if spans is None:
+        return command
+    rendered = command
+    for word_index in range(len(raw_words) - 1, index, -1):
+        start, end = spans[word_index]
+        rendered = rendered[:start] + _replace_bare_lineno_identifier(rendered[start:end], replacement) + rendered[end:]
+    return rendered
+
+
+def _let_command_index(words: tuple[str, ...]) -> int | None:
+    index = 0
+    while index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[index]):
+        index += 1
+    while index < len(words) and words[index] in {"if", "then", "elif", "else", "do", "while", "until", "time", "!"}:
+        index += 1
+        if index < len(words) and words[index - 1] == "time":
+            while index < len(words) and words[index].startswith("-"):
+                index += 1
+    if index < len(words) and words[index] in {"command", "builtin"}:
+        index = _command_or_builtin_payload_target_index(words, index)
+        if index is None:
+            return None
+    return index if index < len(words) and words[index] == "let" else None
+
+
 def _replace_bare_lineno_identifier(text: str, replacement: str) -> str:
     return re.sub(r"\bLINENO\b", replacement, text)
 
@@ -1254,6 +1444,8 @@ def _line_has_lineno_reference(line: str) -> bool:
     return (
         _expandable_runtime_reference(line, r"\$(?:LINENO|\{LINENO[^}]*\})")
         or _arithmetic_context_has_bare_lineno(line)
+        or _double_bracket_arithmetic_has_bare_lineno(line)
+        or _let_command_has_bare_lineno(line)
     )
 
 
@@ -1302,6 +1494,58 @@ def _arithmetic_context_has_bare_lineno(line: str) -> bool:
             index = end_index + 1
             continue
         index += 1
+    return False
+
+
+def _double_bracket_arithmetic_has_bare_lineno(line: str) -> bool:
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and not in_single_quote:
+            escaped = True
+            index += 1
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            index += 1
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            index += 1
+            continue
+        if char == "#" and not in_single_quote and not in_double_quote:
+            return False
+        if not in_single_quote and line.startswith("[[", index):
+            body, end_after = _double_bracket_body(line, index + 2)
+            if body is None:
+                return False
+            if _double_bracket_body_has_arithmetic_comparison(body) and re.search(r"\bLINENO\b", body):
+                return True
+            index = end_after
+            continue
+        index += 1
+    return False
+
+
+def _let_command_has_bare_lineno(line: str) -> bool:
+    for command in get_commands(line):
+        try:
+            raw_words = tuple(parse_shell_words_preserving_quotes(command.strip()))
+        except UnsupportedSourceError:
+            continue
+        words = tuple(strip_shell_word_quotes(word) for word in raw_words)
+        index = _let_command_index(words)
+        if index is None:
+            continue
+        if any(re.search(r"\bLINENO\b", word) for word in raw_words[index + 1:]):
+            return True
     return False
 
 

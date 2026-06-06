@@ -269,7 +269,7 @@ def _continued_source_command(logical: str) -> str | None:
     ]
     if len(source_commands) != 1:
         return None
-    return commands[source_commands[0]].strip()
+    return _strip_leading_control_keyword(commands[source_commands[0]].strip())
 
 
 def _continued_source_first_physical_fragment(line: str) -> str | None:
@@ -281,7 +281,19 @@ def _continued_source_first_physical_fragment(line: str) -> str | None:
     start = line.rfind(fragment)
     if start < 0:
         return None
-    return line[start:]
+    fragment = line[start:]
+    stripped = _strip_leading_control_keyword(fragment)
+    if stripped == fragment:
+        return fragment
+    control_prefix_length = len(fragment) - len(stripped)
+    return fragment[control_prefix_length:]
+
+
+def _strip_leading_control_keyword(command: str) -> str:
+    match = re.match(r"^(?:if|while|until)\s+", command)
+    if match is None:
+        return command
+    return command[match.end():]
 
 
 def _continued_source_physical_fragments(
