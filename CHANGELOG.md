@@ -118,6 +118,10 @@
 - Added review-driven regressions and fixes for `source --` / `. --` option
   terminators, `set -e`-suppressed source contexts, one-line `select` source
   replay, and safe literal associative `printf -v` targets.
+- Fixed static executable lowering so source arguments are evaluated by Bash at
+  the generated source site instead of being frozen during dependency
+  discovery, preserving loop variables, runtime `"$@"`, command substitutions,
+  and assignment-prefixed source positional mutation.
 
 ### Changed
 

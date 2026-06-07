@@ -233,6 +233,8 @@ class RetainedHelperSourceSite:
 class SourceInvocation:
     source: ResolvedSource | None
     source_arguments: tuple[str, ...] | None = None
+    source_argument_words: tuple[str, ...] | None = None
+    source_arguments_dynamic: bool = False
 
 
 @dataclass(frozen=True)

@@ -92,7 +92,11 @@ def wrap_rendered_source_for_positional_frame(
         return rendered_source
 
     lines = [render_positional_frame_reset(names, indent), rendered_source]
-    if source_declaration.source_arguments is None and source_declaration.sync_positionals:
+    has_explicit_source_arguments = (
+        source_declaration.source_arguments is not None
+        or getattr(source_declaration, "source_argument_words", None) is not None
+    )
+    if not has_explicit_source_arguments and source_declaration.sync_positionals:
         lines.append(render_positional_frame_capture(names, indent))
     return '\n'.join(lines)
 
@@ -188,11 +192,20 @@ def source_positional_sync_replacements(
     return replacements
 
 
-def render_source_call_wrapper(filepath: str, content: str, source_arguments=None, sync_positionals=False):
+def render_source_call_wrapper(
+    filepath: str,
+    content: str,
+    source_arguments=None,
+    *,
+    source_argument_words=None,
+    sync_positionals=False,
+):
     body_function = generated_source_function_name(filepath)
     wrapper_function = f"{body_function}_run"
     status_variable = f"{body_function}_status"
-    if source_arguments is None:
+    if source_argument_words is not None:
+        call_arguments = f" {' '.join(source_argument_words)}" if source_argument_words else ""
+    elif source_arguments is None:
         call_arguments = ' "$@"'
     elif source_arguments:
         call_arguments = " " + shell_quote_words(source_arguments, always_quote=True)
@@ -231,5 +244,3 @@ def render_source_call_wrapper(filepath: str, content: str, source_arguments=Non
         f"{names['finish']} \"${names['source_status']}\"\n"
         "}"
     )
-
-

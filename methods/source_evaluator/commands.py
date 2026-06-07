@@ -67,12 +67,24 @@ class SourceEvaluatorCommandMixin:
                 resolved_source.replacement_kind,
                 state,
                 source_value=resolved_source.source_value,
+                source_arguments=resolved_source.source_arguments,
+                source_argument_words=resolved_source.source_argument_words,
             )
             if execution_model == ExecutionModel.CHILD_SHELL:
                 child_state = state.child_shell_copy()
-                source_status = self._evaluate_sourced_file(source_path, child_state, stack)
+                source_status = self._evaluate_sourced_file(
+                    source_path,
+                    child_state,
+                    stack,
+                    source_arguments=resolved_source.source_arguments,
+                )
             else:
-                source_status = self._evaluate_sourced_file(source_path, state, stack)
+                source_status = self._evaluate_sourced_file(
+                    source_path,
+                    state,
+                    stack,
+                    source_arguments=resolved_source.source_arguments,
+                )
         state.last_status = source_status
 
     def _pre_source_command_handlers(self):

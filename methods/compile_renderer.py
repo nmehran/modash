@@ -235,6 +235,7 @@ def render_source_dispatch(
                 render_source(
                     source_declaration.path,
                     source_arguments=source_declaration.source_arguments,
+                    source_argument_words=source_declaration.source_argument_words,
                     source_state_generation=source_declaration.positional_assignment_generation,
                     sync_positionals=source_declaration.sync_positionals,
                 ),
@@ -296,6 +297,7 @@ def render_retained_source_dispatch(
             render_source(
                 source_declaration.path,
                 source_arguments=source_declaration.source_arguments,
+                source_argument_words=source_declaration.source_argument_words,
                 source_state_generation=source_declaration.positional_assignment_generation,
                 sync_positionals=source_declaration.sync_positionals,
             ),
@@ -395,6 +397,7 @@ def replace_command_source_sites(
                 render_source(
                     source_declaration.path,
                     source_arguments=source_declaration.source_arguments,
+                    source_argument_words=source_declaration.source_argument_words,
                     source_state_generation=source_declaration.positional_assignment_generation,
                     sync_positionals=source_declaration.sync_positionals,
                 ),
@@ -435,6 +438,7 @@ def render_bash_c_source_command(
         render_source(
             source_declaration.path,
             source_arguments=source_declaration.source_arguments,
+            source_argument_words=source_declaration.source_argument_words,
             source_state_generation=source_declaration.positional_assignment_generation,
             sync_positionals=source_declaration.sync_positionals,
         ),
@@ -532,6 +536,7 @@ def render_source_site_replacement(
         render_source(
             declaration.path,
             source_arguments=declaration.source_arguments,
+            source_argument_words=declaration.source_argument_words,
             source_state_generation=declaration.positional_assignment_generation,
             sync_positionals=declaration.sync_positionals,
         ),
@@ -566,7 +571,6 @@ def render_source_site_shell_replacement(
             assignment_words,
             indent,
             source_site,
-            source_arguments,
             negation_prefix,
             redirection_suffix,
         )
@@ -585,7 +589,6 @@ def wrap_source_site_embedded_payload(
     assignment_words: tuple[str, ...],
     indent: str,
     source_site: str,
-    source_arguments: tuple[str, ...] | None,
     negation_prefix: str,
     redirection_suffix: str,
 ):
@@ -597,7 +600,6 @@ def wrap_source_site_embedded_payload(
         source_site,
         payload_variable,
         assignment_words,
-        source_arguments,
         negation_prefix,
         redirection_suffix,
     )
@@ -631,7 +633,6 @@ def source_site_embedded_source_call(
     source_site: str,
     payload_variable: str,
     assignment_words: tuple[str, ...],
-    source_arguments: tuple[str, ...] | None,
     negation_prefix: str,
     redirection_suffix: str,
 ):
@@ -648,8 +649,6 @@ def source_site_embedded_source_call(
             raw_words[invocation.source_index],
         )
     argument_words = [f'"${{{payload_variable}}}"']
-    if source_arguments:
-        argument_words.extend(shell_quote(argument) for argument in source_arguments)
     command = " ".join((*assignment_words, *command_words, *argument_words))
     if negation_prefix:
         command = f"{negation_prefix}{command}"
@@ -961,6 +960,7 @@ def render_executable_script(entry_point: str, context: dict):
         *,
         as_source=False,
         source_arguments=None,
+        source_argument_words=None,
         source_state_generation=None,
         sync_positionals=False,
     ):
@@ -977,6 +977,7 @@ def render_executable_script(entry_point: str, context: dict):
             def render_source_file(
                 source_filepath,
                 source_arguments=None,
+                source_argument_words=None,
                 source_state_generation=None,
                 sync_positionals=False,
             ):
@@ -984,6 +985,7 @@ def render_executable_script(entry_point: str, context: dict):
                     source_filepath,
                     as_source=True,
                     source_arguments=source_arguments,
+                    source_argument_words=source_argument_words,
                     source_state_generation=source_state_generation,
                     sync_positionals=sync_positionals,
                 )
@@ -993,7 +995,11 @@ def render_executable_script(entry_point: str, context: dict):
             wraps_top_level_return = as_source and has_top_level_return
             positional_frame_names = (
                 source_positional_capture_names(filepath)
-                if as_source and source_arguments is not None and sync_positionals
+                if (
+                    as_source
+                    and (source_arguments is not None or source_argument_words is not None)
+                    and sync_positionals
+                )
                 else None
             )
             positional_sync_replacements = (
@@ -1001,13 +1007,22 @@ def render_executable_script(entry_point: str, context: dict):
                     filepath,
                     content,
                     capture_shift=True,
-                    capture_shift_when_set=source_arguments is not None,
+                    capture_shift_when_set=(
+                        source_arguments is not None or source_argument_words is not None
+                    ),
                 )
                 if (
                     as_source
                     and (
-                        (source_arguments is not None and sync_positionals)
-                        or (source_arguments is None and wraps_top_level_return)
+                        (
+                            (source_arguments is not None or source_argument_words is not None)
+                            and sync_positionals
+                        )
+                        or (
+                            source_arguments is None
+                            and source_argument_words is None
+                            and wraps_top_level_return
+                        )
                     )
                     and has_top_level_positional_mutation
                 )
@@ -1067,11 +1082,16 @@ def render_executable_script(entry_point: str, context: dict):
                 output.append(line)
 
             rendered = '\n'.join(output)
-            if as_source and (source_arguments is not None or wraps_top_level_return):
+            if as_source and (
+                source_arguments is not None
+                or source_argument_words is not None
+                or wraps_top_level_return
+            ):
                 return render_source_call_wrapper(
                     filepath,
                     rendered,
                     source_arguments,
+                    source_argument_words=source_argument_words,
                     sync_positionals=should_sync_positionals,
                 )
             return rendered

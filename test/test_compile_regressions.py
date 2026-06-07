@@ -3495,17 +3495,76 @@ class CompileRegressionTestCase(unittest.TestCase):
             self.assertTrue(cm.exception.diagnostic.code.startswith("unsupported.source."))
             self.assertFalse(output.exists())
 
-    def test_source_arguments_must_resolve_to_exact_values(self):
+    def test_loop_variable_source_arguments_are_evaluated_at_runtime_site(self):
         with ScriptProject() as project:
-            project.write("dep.sh", 'echo "dep:$1"\n')
-            project.write("main.sh", 'source ./dep.sh "$UNKNOWN"\n')
-            output = project.path("compiled.sh")
+            project.write("dep.sh", "printf 'arg:%s\\n' \"$1\"\n")
+            project.write("main.sh", textwrap.dedent("""\
+                for ARG in one two; do
+                  source ./dep.sh "$ARG"
+                done
+                """))
 
-            with self.assertRaisesRegex(NotImplementedError, "source argument") as cm:
-                project.compile("main.sh", output=output, mode="executable")
+            project.assert_compiled_matches(self, "main.sh")
 
-            self.assertEqual(cm.exception.diagnostic.code, "unsupported.source.argument")
-            self.assertFalse(output.exists())
+    def test_runtime_script_arguments_are_preserved_for_source_arguments(self):
+        with ScriptProject() as project:
+            project.write("dep.sh", "printf 'args:%s:%s\\n' \"$1\" \"$2\"\n")
+            project.write("main.sh", 'source ./dep.sh "$@"\n')
+            compiled = project.compile("main.sh", mode="executable")
+
+            expected = subprocess.run(
+                ["bash", str(project.path("main.sh")), "a", "b"],
+                cwd=project.root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            actual = subprocess.run(
+                ["bash", str(compiled), "a", "b"],
+                cwd=project.root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+
+            self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+            self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_dynamic_source_argument_command_substitution_runs_at_source_site(self):
+        with ScriptProject() as project:
+            project.write("dep.sh", "printf 'arg:%s\\n' \"$1\"\n")
+            project.write("main.sh", textwrap.dedent("""\
+                source ./dep.sh "$(printf arg; touch side)"
+                [[ -f side ]] && printf 'side:yes\\n' || printf 'side:no\\n'
+                """))
+
+            project.assert_compiled_matches(self, "main.sh")
+
+    def test_assignment_prefixed_source_arguments_preserve_caller_positional_mutation(self):
+        with ScriptProject() as project:
+            project.write("dep.sh", textwrap.dedent("""\
+                printf 'dep:%s:%s:%s\\n' "$1" "$2" "$VAR"
+                set -- changed
+                VAR=bar
+                """))
+            project.write("main.sh", textwrap.dedent("""\
+                set -- caller
+                VAR=foo source ./dep.sh a b
+                printf 'after:%s:%s\\n' "$1" "$VAR"
+                """))
+
+            project.assert_compiled_matches(self, "main.sh")
+
+    def test_wrapped_source_forms_preserve_dynamic_source_argument_words(self):
+        with ScriptProject() as project:
+            project.write("dep.sh", "printf 'dep:%s\\n' \"$1\"\n")
+            project.write("main.sh", textwrap.dedent("""\
+                ARG=wrapped
+                command source ./dep.sh "$ARG"
+                VAR=foo source ./dep.sh "$(printf assigned)"
+                """))
+
+            project.assert_compiled_matches(self, "main.sh")
 
     def test_source_free_unsupported_read_loop_producer_does_not_block_later_source(self):
         with ScriptProject() as project:

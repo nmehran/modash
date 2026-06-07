@@ -125,6 +125,7 @@ def context_from_source_events(events, disabled_sources=(), line_replacements=()
             replacement_kind=event.replacement_kind,
             source_value=event.source_value,
             source_arguments=event.source_arguments,
+            source_argument_words=event.source_argument_words,
             source_column=event.location.column,
             occurrence_model=event.occurrence_model.value,
             condition=event.condition,

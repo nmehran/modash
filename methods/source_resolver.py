@@ -4,7 +4,7 @@ from fnmatch import fnmatch
 
 from methods.shell_commands import create_command_pattern, extract_bash_commands
 from methods.shell_text import strip_matching_quotes
-from methods.source_commands import SOURCE_PATTERN
+from methods.source_commands import SOURCE_PATTERN, shell_quote
 from methods.source_commands import source_command_invocation as shared_source_command_invocation
 from methods.source_errors import FailglobExpansionError, UnsupportedSourceError
 from methods.source_globs import (
@@ -378,6 +378,9 @@ class SourceResolver:
                     MISSING_SOURCE,
                 )
             source_arguments = tuple(match.word for match in matches[1:]) or None
+            source_argument_words = tuple(
+                shell_quote(match.word) for match in matches[1:]
+            ) or None
 
             return ResolvedSource(
                 path=matches[0].path,
@@ -387,6 +390,7 @@ class SourceResolver:
                 replacement_kind=replacement_kind,
                 source_value=matches[0].word,
                 source_arguments=source_arguments,
+                source_argument_words=source_argument_words,
             )
 
         missing_source_words = context.get('missing_source_words', set())

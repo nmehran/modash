@@ -57,6 +57,8 @@ class SourceEvaluatorSourceSiteMixin:
 
         resolved_source = invocation.source
         source_arguments = invocation.source_arguments
+        source_argument_words = invocation.source_argument_words
+        source_arguments_dynamic = invocation.source_arguments_dynamic
 
         if not resolved_source:
             if self.mode == "context":
@@ -123,12 +125,14 @@ class SourceEvaluatorSourceSiteMixin:
                 occurrence_model=OccurrenceModel.CONDITIONAL,
                 source_value=source_value,
                 source_arguments=source_arguments,
+                source_argument_words=source_argument_words,
             )
             branch_state.last_status = self._evaluate_sourced_file(
                 source_path,
                 branch_state,
                 stack,
                 source_arguments=source_arguments,
+                source_arguments_dynamic=source_arguments_dynamic,
             )
             self._merge_possible_states(state, [base_state, branch_state])
             return
@@ -146,12 +150,14 @@ class SourceEvaluatorSourceSiteMixin:
                 occurrence_model=OccurrenceModel.CONDITIONAL,
                 source_value=source_value,
                 source_arguments=source_arguments,
+                source_argument_words=source_argument_words,
             )
             branch_state.last_status = self._evaluate_sourced_file(
                 source_path,
                 branch_state,
                 stack,
                 source_arguments=source_arguments,
+                source_arguments_dynamic=source_arguments_dynamic,
             )
             return
 
@@ -166,6 +172,8 @@ class SourceEvaluatorSourceSiteMixin:
             replacement_kind,
             source_value,
             source_arguments,
+            source_argument_words,
+            source_arguments_dynamic,
         )
 
     def _resolve_source_invocation(
@@ -183,16 +191,19 @@ class SourceEvaluatorSourceSiteMixin:
             return SourceInvocation(
                 positional_source,
                 source_arguments=positional_source.source_arguments,
+                source_argument_words=positional_source.source_argument_words,
             )
 
         if self._source_expression_needs_word_expansion(resolved_expression):
             return self._resolve_expanded_source_invocation(resolved_expression, node, state)
 
         source_site = self._source_site_text(node)
-        path_expression, source_arguments = self._split_source_expression_arguments(
-            resolved_expression,
-            node,
-            state,
+        path_expression, source_arguments, source_argument_words, source_arguments_dynamic = (
+            self._split_source_expression_arguments(
+                resolved_expression,
+                node,
+                state,
+            )
         )
         try:
             resolved_source = SOURCE_RESOLVER.resolve_source_expression(
@@ -211,8 +222,16 @@ class SourceEvaluatorSourceSiteMixin:
             ) from exc
 
         if not resolved_source:
-            return SourceInvocation(resolved_source, source_arguments=source_arguments)
-        if resolved_source.replacement_kind == MISSING_SOURCE_NO_FILENAME and source_arguments:
+            return SourceInvocation(
+                resolved_source,
+                source_arguments=source_arguments,
+                source_argument_words=source_argument_words,
+                source_arguments_dynamic=source_arguments_dynamic,
+            )
+        if (
+            resolved_source.replacement_kind == MISSING_SOURCE_NO_FILENAME
+            and (source_arguments or source_argument_words)
+        ):
             raise self._unsupported_source_argument(
                 node,
                 "unsupported nullglob source argument shift",
@@ -225,6 +244,11 @@ class SourceEvaluatorSourceSiteMixin:
                 resolved_source.source_arguments,
                 source_arguments,
             ),
+            source_argument_words=self._merge_source_argument_words(
+                resolved_source.source_arguments,
+                source_argument_words,
+            ),
+            source_arguments_dynamic=source_arguments_dynamic,
         )
 
     def _resolve_expanded_source_invocation(
@@ -284,6 +308,7 @@ class SourceEvaluatorSourceSiteMixin:
                     source_value=source_word.word,
                 ),
                 source_arguments=tuple(word.word for word in argument_words) or None,
+                source_argument_words=tuple(self._shell_quote(word.word) for word in argument_words) or None,
             )
 
         if source_word.path is not None and not source_word.is_file:
@@ -324,6 +349,7 @@ class SourceEvaluatorSourceSiteMixin:
         return SourceInvocation(
             resolved_source,
             source_arguments=tuple(word.word for word in argument_words) or None,
+            source_argument_words=tuple(self._shell_quote(word.word) for word in argument_words) or None,
         )
 
     @staticmethod
@@ -433,9 +459,18 @@ class SourceEvaluatorSourceSiteMixin:
             ) from exc
 
         if len(words) <= 1:
-            return source_expression, None
+            return source_expression, None, None, False
 
-        return words[0], self._resolve_source_argument_words(words[1:], node, state)
+        source_argument_words = tuple(words[1:])
+        try:
+            source_arguments = self._resolve_source_argument_words(words[1:], node, state)
+        except UnsupportedSourceError:
+            source_arguments = None
+            source_arguments_dynamic = True
+        else:
+            source_arguments_dynamic = False
+
+        return words[0], source_arguments, source_argument_words, source_arguments_dynamic
 
     def _resolve_source_argument_words(self, words: list[str], node: SourceSite, state: EvaluationState):
         arguments = []
@@ -478,6 +513,22 @@ class SourceEvaluatorSourceSiteMixin:
         if explicit_arguments is None:
             return resolver_arguments
         return (*resolver_arguments, *explicit_arguments)
+
+    @staticmethod
+    def _merge_source_argument_words(
+        resolver_arguments: tuple[str, ...] | None,
+        explicit_argument_words: tuple[str, ...] | None,
+    ):
+        resolver_words = (
+            tuple(shell_single_quote(argument) for argument in resolver_arguments)
+            if resolver_arguments
+            else None
+        )
+        if resolver_words is None:
+            return explicit_argument_words
+        if explicit_argument_words is None:
+            return resolver_words
+        return (*resolver_words, *explicit_argument_words)
 
     def _resolve_source_argument_word(self, word: str, node: SourceSite, state: EvaluationState):
         if self._raw_word_is_single_quoted(word):
@@ -611,6 +662,7 @@ class SourceEvaluatorSourceSiteMixin:
             replacement_kind=resolved_source.replacement_kind,
             source_value=arguments[0],
             source_arguments=arguments[1:] or None,
+            source_argument_words=tuple(self._shell_quote(argument) for argument in arguments[1:]) or None,
             source_column=resolved_source.source_column,
         )
 

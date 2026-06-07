@@ -11,6 +11,7 @@ class ResolvedSource:
     replacement_kind: str = "source"
     source_value: str | None = None
     source_arguments: tuple[str, ...] | None = None
+    source_argument_words: tuple[str, ...] | None = None
     source_column: int | None = None
     occurrence_model: str | None = None
     condition: str | None = None
@@ -33,4 +34,3 @@ class HeredocDelimiter:
     value: str
     strip_tabs: bool = False
     quoted: bool = False
-

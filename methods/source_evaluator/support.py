@@ -46,18 +46,22 @@ class SourceEvaluatorSupportMixin:
     def _record_and_descend(self, source_path: Path, node: SourceSite, source_expression: str, source_site: str,
                             state: EvaluationState, stack: tuple[Path, ...], execution_model: ExecutionModel,
                             replacement_kind: str, source_value: str | None = None,
-                            source_arguments: tuple[str, ...] | None = None):
+                            source_arguments: tuple[str, ...] | None = None,
+                            source_argument_words: tuple[str, ...] | None = None,
+                            source_arguments_dynamic: bool = False):
         event_index = len(self.events)
         self._record_event(
             source_path, node, source_expression, source_site, execution_model, replacement_kind, state,
             source_value=source_value,
             source_arguments=source_arguments,
+            source_argument_words=source_argument_words,
         )
         state.last_status, sync_positionals = self._evaluate_sourced_file(
             source_path,
             state,
             stack,
             source_arguments=source_arguments,
+            source_arguments_dynamic=source_arguments_dynamic,
         )
         self.events[event_index] = replace(
             self.events[event_index],
@@ -70,6 +74,7 @@ class SourceEvaluatorSupportMixin:
         state: EvaluationState,
         stack: tuple[Path, ...],
         source_arguments: tuple[str, ...] | None = None,
+        source_arguments_dynamic: bool = False,
     ):
         previous_positional_arguments = None
         previous_positionals = None
@@ -79,12 +84,16 @@ class SourceEvaluatorSupportMixin:
         source_argument_frame_active = bool(state.source_argument_frame_dirty_stack)
         if source_argument_frame_active:
             state.clear_current_source_argument_frame_dirty()
-        if source_arguments is not None:
+        has_explicit_source_arguments = source_arguments is not None or source_arguments_dynamic
+        if has_explicit_source_arguments:
             previous_positional_arguments = state.positional_arguments
             previous_ambiguous_positionals = state.ambiguous_positionals
-            previous_positionals = self._push_function_positionals(source_arguments, state)
-            state.positional_arguments = source_arguments
-            state.ambiguous_positionals = False
+            previous_positionals = self._push_function_positionals(source_arguments or (), state)
+            if source_arguments_dynamic:
+                state.mark_positionals_ambiguous(mark_source_argument_frame=False)
+            else:
+                state.positional_arguments = source_arguments or ()
+                state.ambiguous_positionals = False
             state.push_source_argument_frame()
         try:
             try:
@@ -96,19 +105,19 @@ class SourceEvaluatorSupportMixin:
                     return_status = 0
                 else:
                     return_status = state.last_status
-            if source_arguments is None:
+            if not has_explicit_source_arguments:
                 sync_positionals = (
                     source_argument_frame_active
                     and bool(state.source_argument_frame_dirty_stack)
                     and state.source_argument_frame_dirty_stack[-1]
                 )
         finally:
-            if source_arguments is not None:
+            if has_explicit_source_arguments:
                 final_positional_arguments = state.positional_arguments
                 final_ambiguous_positionals = state.ambiguous_positionals
                 frame_dirty = state.pop_source_argument_frame()
                 sync_positionals = frame_dirty
-                self._restore_function_positionals(previous_positionals, len(source_arguments), state)
+                self._restore_function_positionals(previous_positionals, len(source_arguments or ()), state)
                 state.positional_arguments = previous_positional_arguments
                 state.ambiguous_positionals = previous_ambiguous_positionals
                 if frame_dirty:
@@ -129,7 +138,8 @@ class SourceEvaluatorSupportMixin:
     def _record_event(self, source_path: Path, node, source_expression: str, source_site: str,
                       execution_model: ExecutionModel, replacement_kind: str, state: EvaluationState,
                       occurrence_model: OccurrenceModel | None = None, source_value: str | None = None,
-                      source_arguments: tuple[str, ...] | None = None):
+                      source_arguments: tuple[str, ...] | None = None,
+                      source_argument_words: tuple[str, ...] | None = None):
         self.events.append(SourceEvent(
             path=source_path.resolve(),
             location=node.location,
@@ -140,6 +150,7 @@ class SourceEvaluatorSupportMixin:
             replacement_kind=replacement_kind,
             source_value=source_value,
             source_arguments=source_arguments,
+            source_argument_words=source_argument_words,
             state_before=state.snapshot(),
             condition=state.condition_context,
         ))
@@ -647,6 +658,7 @@ class SourceEvaluatorSupportMixin:
                 replacement_kind=event.replacement_kind,
                 source_value=event.source_value,
                 source_arguments=event.source_arguments,
+                source_argument_words=event.source_argument_words,
                 state_before=event.state_before,
                 condition=event.condition,
                 sync_positionals=event.sync_positionals,
