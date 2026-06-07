@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 from collections import defaultdict
@@ -486,18 +487,30 @@ def render_source_site_replacement(
     ]
     if retained_declarations:
         replacement = render_retained_source_dispatch(retained_declarations, render_source, indent, positional_frame_names)
-        return render_source_site_shell_replacement(separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent)
+        return render_source_site_shell_replacement(
+            separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent,
+            declaration.source_site, declaration.source_arguments,
+        )
 
     unique_paths = {source_declaration.path for source_declaration in declarations}
     if len(declarations) > 1 and len(unique_paths) > 1:
         replacement = render_source_dispatch(declaration.source_expression, declarations, render_source, indent, positional_frame_names)
-        return render_source_site_shell_replacement(separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent)
+        return render_source_site_shell_replacement(
+            separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent,
+            declaration.source_site, declaration.source_arguments,
+        )
 
     if declaration.replacement_kind == "noop-source":
-        return render_source_site_shell_replacement(separator, negation_prefix, assignment_words, ":", redirection_suffix, indent)
+        return render_source_site_shell_replacement(
+            separator, negation_prefix, assignment_words, ":", redirection_suffix, indent,
+            declaration.source_site, declaration.source_arguments,
+        )
     if is_missing_source_replacement_kind(declaration.replacement_kind):
         replacement = f"{{\n{render_missing_source_failure(declaration, indent)}\n{indent}}}"
-        return render_source_site_shell_replacement(separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent)
+        return render_source_site_shell_replacement(
+            separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent,
+            declaration.source_site, declaration.source_arguments,
+        )
     if is_source_expansion_failure_replacement_kind(declaration.replacement_kind):
         if declaration.replacement_kind == SOURCE_EXPANSION_FAILURE_RETURN:
             replacement = (
@@ -505,9 +518,15 @@ def render_source_site_replacement(
                 f"{render_source_expansion_failure(declaration, indent, return_from_function=True)}\n"
                 f"{indent}}}"
             )
-            return render_source_site_shell_replacement(separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent)
+            return render_source_site_shell_replacement(
+                separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent,
+                declaration.source_site, declaration.source_arguments,
+            )
         replacement = f"{{\n{render_source_expansion_failure(declaration, indent)}\n{indent}}}"
-        return render_source_site_shell_replacement(separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent) + " #"
+        return render_source_site_shell_replacement(
+            separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent,
+            declaration.source_site, declaration.source_arguments,
+        ) + " #"
 
     rendered_source = indent_shell_block(
         render_source(
@@ -525,7 +544,10 @@ def render_source_site_replacement(
         indent,
     )
     replacement = f"{{\n{rendered_source}\n{indent}}}"
-    return render_source_site_shell_replacement(separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent)
+    return render_source_site_shell_replacement(
+        separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent,
+        declaration.source_site, declaration.source_arguments,
+    )
 
 
 def render_source_site_shell_replacement(
@@ -535,8 +557,20 @@ def render_source_site_shell_replacement(
     replacement: str,
     redirection_suffix: str,
     indent: str,
+    source_site: str = "",
+    source_arguments: tuple[str, ...] | None = None,
 ):
-    replacement = wrap_source_site_assignments(replacement, assignment_words, indent)
+    if assignment_words or source_site_uses_builtin_wrapper(source_site):
+        replacement = wrap_source_site_embedded_payload(
+            replacement,
+            assignment_words,
+            indent,
+            source_site,
+            source_arguments,
+            negation_prefix,
+            redirection_suffix,
+        )
+        return f"{separator}{replacement}"
     return append_source_site_redirections(f"{separator}{negation_prefix}{replacement}", redirection_suffix)
 
 
@@ -546,38 +580,108 @@ def append_source_site_redirections(replacement: str, redirection_suffix: str):
     return f"{replacement} {redirection_suffix}"
 
 
-def wrap_source_site_assignments(replacement: str, assignment_words: tuple[str, ...], indent: str):
-    assignment_names = source_site_assignment_names(assignment_words)
-    if not assignment_names:
-        return replacement
-
+def wrap_source_site_embedded_payload(
+    replacement: str,
+    assignment_words: tuple[str, ...],
+    indent: str,
+    source_site: str,
+    source_arguments: tuple[str, ...] | None,
+    negation_prefix: str,
+    redirection_suffix: str,
+):
+    digest = hashlib.sha1(f"{source_site}\0{replacement}".encode("utf-8")).hexdigest()[:12]
+    payload_variable = f"__modash_source_payload_{digest}_file"
+    status_variable = f"__modash_source_payload_{digest}_status"
+    delimiter = source_site_payload_delimiter(replacement, digest)
+    source_call = source_site_embedded_source_call(
+        source_site,
+        payload_variable,
+        assignment_words,
+        source_arguments,
+        negation_prefix,
+        redirection_suffix,
+    )
     inner_indent = f"{indent}  "
-    save_lines = []
-    restore_lines = []
-    for name in assignment_names:
-        safe_name = re.sub(r"[^A-Za-z0-9_]", "_", name)
-        set_var = f"__modash_source_assign_{safe_name}_set"
-        value_var = f"__modash_source_assign_{safe_name}_value"
-        save_lines.extend([
-            f"{inner_indent}{set_var}=${{{name}+x}}",
-            f"{inner_indent}{value_var}=${{{name}-}}",
-        ])
-        restore_lines.append(
-            f"{inner_indent}if [[ ${{{set_var}}} ]]; then {name}=${{{value_var}}}; else unset {name}; fi"
-        )
-
-    assignment_lines = [f"{inner_indent}{word}" for word in assignment_words]
-    replacement_block = indent_shell_block(replacement, inner_indent)
     return "\n".join([
         "{",
-        *save_lines,
-        *assignment_lines,
-        replacement_block,
-        f"{inner_indent}__modash_source_assign_status=$?",
-        *restore_lines,
-        f"{inner_indent}( exit \"$__modash_source_assign_status\" )",
+        f"{inner_indent}{payload_variable}=$(mktemp \"${{TMPDIR:-/tmp}}/modash-source.XXXXXXXXXX\") || exit",
+        f"{inner_indent}command cat > \"${{{payload_variable}}}\" <<'{delimiter}'",
+        replacement,
+        delimiter,
+        f"{inner_indent}{source_call}",
+        f"{inner_indent}{status_variable}=$?",
+        f"{inner_indent}command rm -f -- \"${{{payload_variable}}}\"",
+        f"{inner_indent}( exit \"${{{status_variable}}}\" )",
         f"{indent}}}",
     ])
+
+
+def source_site_payload_delimiter(payload: str, seed: str):
+    base = f"__MODASH_SOURCE_PAYLOAD_{seed.upper()}__"
+    delimiter = base
+    counter = 0
+    payload_lines = set(payload.splitlines())
+    while delimiter in payload_lines:
+        counter += 1
+        delimiter = f"{base}_{counter}"
+    return delimiter
+
+
+def source_site_embedded_source_call(
+    source_site: str,
+    payload_variable: str,
+    assignment_words: tuple[str, ...],
+    source_arguments: tuple[str, ...] | None,
+    negation_prefix: str,
+    redirection_suffix: str,
+):
+    invocation = source_command_invocation(source_site.strip(), stop_at_shell_control=True)
+    if invocation is None:
+        command_words = ("source",)
+    else:
+        try:
+            raw_words = tuple(parse_shell_words_preserving_quotes(source_site.strip()))
+        except UnsupportedSourceError:
+            raw_words = invocation.words
+        command_words = (
+            *source_site_wrapper_words(raw_words, invocation),
+            raw_words[invocation.source_index],
+        )
+    argument_words = [f'"${{{payload_variable}}}"']
+    if source_arguments:
+        argument_words.extend(shell_quote(argument) for argument in source_arguments)
+    command = " ".join((*assignment_words, *command_words, *argument_words))
+    if negation_prefix:
+        command = f"{negation_prefix}{command}"
+    if redirection_suffix:
+        command = f"{command} {redirection_suffix}"
+    return command
+
+
+def source_site_uses_builtin_wrapper(source_site: str):
+    invocation = source_command_invocation(source_site.strip(), stop_at_shell_control=True)
+    if invocation is None or invocation.source_index <= invocation.command_start_index:
+        return False
+    return "builtin" in invocation.words[invocation.command_start_index:invocation.source_index]
+
+
+def source_site_wrapper_words(raw_words: tuple[str, ...], invocation):
+    wrappers = []
+    index = 0
+    while index < invocation.source_index:
+        clean_word = invocation.words[index]
+        if clean_word == "!" or ASSIGNMENT_WORD_PATTERN.match(clean_word):
+            index += 1
+            continue
+        redirection = source_site_redirection_token_kind(clean_word)
+        if redirection is not None:
+            index += 1
+            if redirection == "separate-target" and index < invocation.source_index:
+                index += 1
+            continue
+        wrappers.append(raw_words[index])
+        index += 1
+    return tuple(wrappers)
 
 
 def source_site_assignment_words(source_site: str):
@@ -593,24 +697,6 @@ def source_site_assignment_words(source_site: str):
         for raw_word, word in zip(raw_words[:invocation.source_index], invocation.words[:invocation.source_index])
         if ASSIGNMENT_WORD_PATTERN.match(word)
     )
-
-
-def source_site_assignment_names(assignment_words: tuple[str, ...]):
-    names = []
-    seen = set()
-    for word in assignment_words:
-        clean_word = strip_shell_word_quotes(word)
-        if "=" not in clean_word:
-            continue
-        name = clean_word.split("=", 1)[0]
-        if name.endswith("+"):
-            name = name[:-1]
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
-            continue
-        if name not in seen:
-            names.append(name)
-            seen.add(name)
-    return tuple(names)
 
 
 def source_site_redirection_suffix(source_site: str):
@@ -837,11 +923,21 @@ def assert_no_unresolved_source_sites(content: str):
 
 
 def line_contains_unresolved_source(line: str):
-    if any(contains_source_command(command) for command in get_commands(line)):
-        return True
+    commands = get_commands(line)
+    source_commands = [command for command in commands if contains_source_command(command)]
+    if source_commands:
+        return any(not command_sources_generated_payload(command) for command in source_commands)
     if "source" not in line and not re.search(r'(^|[\s;&|({])\.\s+', line):
         return False
     return contains_nested_source_command(line)
+
+
+def command_sources_generated_payload(command: str):
+    invocation = source_command_invocation(command.strip(), stop_at_shell_control=True)
+    return (
+        invocation is not None
+        and re.fullmatch(r"\$?\{?__modash_source_payload_[A-Fa-f0-9]{12}_file\}?", invocation.source_path)
+    )
 
 
 def render_executable_script(entry_point: str, context: dict):

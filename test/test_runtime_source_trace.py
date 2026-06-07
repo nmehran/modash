@@ -776,6 +776,32 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
         self.assertEqual(result.stdout, "dep\nafter:0\n")
         self.assertEqual(result.observation.sources[0].status, 1)
 
+    def test_trace_rejects_builtin_source_with_errexit_before_execution(self):
+        cases = {
+            "or": "builtin source ./dep.sh || true\n",
+            "if": "if builtin source ./dep.sh; then printf 'then\\n'; fi\n",
+            "negated": "! builtin . ./dep.sh\n",
+        }
+        for name, command in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write(
+                    "main.sh",
+                    "set -e\n"
+                    + command
+                    + "printf 'after\\n'\n",
+                )
+                project.write(
+                    "dep.sh",
+                    "printf 'should-not-run\\n'\n"
+                    "false\n",
+                )
+
+                with self.assertRaises(RuntimeSourceTraceError) as context:
+                    project.trace("main.sh")
+
+            self.assertEqual(context.exception.code, "runtime.trace.nontransparent-builtin-source-errexit")
+            self.assertIn("builtin", str(context.exception))
+
     def test_trace_reports_child_shell_sources_as_targeted_limitation(self):
         cases = {
             "subshell": "( source ./dep.sh )\n",

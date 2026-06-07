@@ -807,10 +807,10 @@ def _source_argv_words_and_redirections_for_candidate(candidate: _SourceCandidat
     else:
         prefix_words = raw_words[:invocation.source_index]
         source_words = raw_words[invocation.source_index + 1:invocation.source_end_index]
-        if invocation.option_terminator and source_words and clean_shell_word(source_words[0]) == "--":
-            source_words = source_words[1:]
     _prefix_argv_words, leading_redirection_words = _split_source_redirections(prefix_words if invocation is not None else ())
     argv_words, redirection_words = _split_source_redirections(source_words)
+    if invocation is not None and invocation.option_terminator and argv_words and clean_shell_word(argv_words[0]) == "--":
+        argv_words = argv_words[1:]
     if not argv_words and not is_source_like_command_text(probe):
         raise RuntimeObservedCompileError(
             f"could not render source argv validation for observed source site: {candidate.text!r}",

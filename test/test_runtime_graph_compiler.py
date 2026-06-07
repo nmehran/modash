@@ -163,6 +163,21 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
             "dot": ". -- ./dep.sh arg1\nprintf 'done\\n'\n",
             "command source": "command source -- ./dep.sh arg1\nprintf 'done\\n'\n",
             "builtin source": "builtin source -- ./dep.sh arg1\nprintf 'done\\n'\n",
+            "source redirection before terminator": (
+                "source > out.txt -- ./dep.sh arg1\n"
+                "printf 'done\\n'\n"
+                "cat out.txt\n"
+            ),
+            "dot redirection before terminator": (
+                ". > out.txt -- ./dep.sh arg1\n"
+                "printf 'done\\n'\n"
+                "cat out.txt\n"
+            ),
+            "command source redirection before terminator": (
+                "command source > out.txt -- ./dep.sh arg1\n"
+                "printf 'done\\n'\n"
+                "cat out.txt\n"
+            ),
         }
         for name, script in cases.items():
             with self.subTest(name=name), ScriptProject() as project:

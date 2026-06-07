@@ -648,6 +648,15 @@ __modash_trace_source_alias() {
   __modash_trace_source_common "$prior_status" "$kind" "$builtin_name" "${__modash_source_call_args[@]}"
 }
 
+__modash_reject_errexit_builtin_source_trace() {
+  local builtin_name=$1
+  if [[ -o errexit ]]; then
+    __modash_trace_abort \
+      "runtime.trace.nontransparent-builtin-source-errexit" \
+      "modash: runtime trace cannot transparently observe builtin ${builtin_name} while errexit is enabled"
+  fi
+}
+
 source() {
   local prior_status=$?
   __modash_caller_positionals=()
@@ -665,9 +674,11 @@ __modash_trace_builtin() {
     builtin_name=${__modash_source_call_args[$__modash_source_command_index]}
     case "$builtin_name" in
       source)
+        __modash_reject_errexit_builtin_source_trace "$builtin_name"
         __modash_trace_source_common "$prior_status" source source "${__modash_source_call_args[@]:$((__modash_source_command_index + 1))}"
         ;;
       .)
+        __modash_reject_errexit_builtin_source_trace "$builtin_name"
         __modash_trace_source_common "$prior_status" dot . "${__modash_source_call_args[@]:$((__modash_source_command_index + 1))}"
         ;;
     esac
@@ -676,9 +687,11 @@ __modash_trace_builtin() {
   builtin_name=${__modash_source_call_args[0]-}
   case "$builtin_name" in
     source)
+      __modash_reject_errexit_builtin_source_trace "$builtin_name"
       __modash_trace_source_common "$prior_status" source source "${__modash_source_call_args[@]:1}"
       ;;
     .)
+      __modash_reject_errexit_builtin_source_trace "$builtin_name"
       __modash_trace_source_common "$prior_status" dot . "${__modash_source_call_args[@]:1}"
       ;;
     *)

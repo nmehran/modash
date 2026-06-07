@@ -339,14 +339,9 @@ def _source_command_invocation_from_words(
 
 def _source_path_and_arguments(words: Sequence[str], source_index: int, stop_at_shell_control: bool):
     index = source_index + 1
-    option_terminator = False
-    if index < len(words) and clean_shell_word(words[index]) == "--":
-        option_terminator = True
-        index += 1
-    source_path_index = len(words)
-    source_path = ""
-    argument_indexes: list[int] = []
-    arguments: list[str] = []
+    argv_entries: list[tuple[int, str]] = []
+    source_end_index = index
+
     while index < len(words):
         cleaned = clean_shell_word(words[index])
         if _is_source_word_boundary(cleaned, stop_at_shell_control):
@@ -356,30 +351,31 @@ def _source_path_and_arguments(words: Sequence[str], source_index: int, stop_at_
             index += 1
             if redirection == "separate-target" and index < len(words):
                 index += 1
+            source_end_index = index
             continue
-        source_path_index = index
-        source_path = cleaned
+        argv_entries.append((index, cleaned))
         index += 1
-        break
+        source_end_index = index
+
+    option_terminator = False
+    if argv_entries and argv_entries[0][1] == "--":
+        option_terminator = True
+        argv_entries = argv_entries[1:]
+
+    source_path_index = len(words)
+    source_path = ""
+    argument_indexes: list[int] = []
+    arguments: list[str] = []
+    if argv_entries:
+        source_path_index, source_path = argv_entries[0]
+        for argument_index, argument in argv_entries[1:]:
+            argument_indexes.append(argument_index)
+            arguments.append(argument)
 
     invalid_option = None
     if source_path and not option_terminator and _invalid_source_option_word(source_path):
         invalid_option = _source_option_diagnostic_word(source_path)
-    while index < len(words):
-        word = words[index]
-        cleaned = clean_shell_word(word)
-        if _is_source_word_boundary(cleaned, stop_at_shell_control):
-            break
-        redirection = _redirection_token_kind(word)
-        if redirection is not None:
-            index += 1
-            if redirection == "separate-target" and index < len(words):
-                index += 1
-            continue
-        argument_indexes.append(index)
-        arguments.append(cleaned)
-        index += 1
-    return source_path, tuple(arguments), source_path_index, tuple(argument_indexes), index, option_terminator, invalid_option
+    return source_path, tuple(arguments), source_path_index, tuple(argument_indexes), source_end_index, option_terminator, invalid_option
 
 
 def _has_simple_command_prefix(words: Sequence[str], command_start: int):

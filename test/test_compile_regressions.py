@@ -101,6 +101,27 @@ class CompileRegressionTestCase(unittest.TestCase):
 
             project.assert_compiled_matches(self, "main.sh")
 
+    def test_static_source_option_terminator_after_redirection_matches_bash(self):
+        cases = {
+            "source stdout": "source > out.txt -- ./dep.sh arg\n",
+            "source stderr": "source 2> err.txt -- ./dep.sh arg\n",
+            "dot stdout": ". > out.txt -- ./dep.sh arg\n",
+            "command source stdout": "command source > out.txt -- ./dep.sh arg\n",
+            "assignment source stdout": "VAR=foo source > out.txt -- ./dep.sh arg\n",
+        }
+        for name, command in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("dep.sh", "printf 'dep:%s:%s\\n' \"$1\" \"${VAR:-unset}\"\n")
+                output_file = "err.txt" if "2>" in command else "out.txt"
+                project.write(
+                    "main.sh",
+                    command
+                    + "printf 'after:%s\\n' \"$?\"\n"
+                    + f"cat {output_file} 2>/dev/null || true\n",
+                )
+
+                project.assert_compiled_matches(self, "main.sh")
+
     def test_static_leading_source_redirection_is_merged(self):
         with ScriptProject() as project:
             project.write("dep.sh", "printf 'dep\\n'\n")
@@ -210,6 +231,66 @@ class CompileRegressionTestCase(unittest.TestCase):
             self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
             self.assertEqual(actual.stdout, expected.stdout)
             self.assertNotIn(live_source, compiled_text)
+
+    def test_static_assignment_prefixed_source_uses_bash_assignment_semantics(self):
+        cases = {
+            "export to child": (
+                "VAR=old\n"
+                "VAR=foo source ./dep.sh\n"
+                "printf 'after:%s\\n' \"$VAR\"\n",
+                "printf 'shell:%s\\n' \"$VAR\"\n"
+                "python3 -c 'import os; print(\"env:\" + os.environ.get(\"VAR\", \"\"))'\n"
+                "VAR=bar\n",
+            ),
+            "array scalar shadow": (
+                "A=(x y)\n"
+                "A=foo source ./dep.sh\n"
+                "printf 'after:%s len:%s\\n' \"${A[*]}\" \"${#A[@]}\"\n",
+                "printf 'inside:%s len:%s\\n' \"${A[*]}\" \"${#A[@]}\"\n",
+            ),
+            "builtin mutation persists": (
+                "VAR=old\n"
+                "VAR=foo builtin source ./dep.sh\n"
+                "printf 'after:%s\\n' \"$VAR\"\n",
+                "printf 'dep:%s\\n' \"$VAR\"\n"
+                "VAR=bar\n",
+            ),
+            "redirection": (
+                "VAR=old\n"
+                "VAR=foo > out.txt source ./dep.sh\n"
+                "printf 'after:%s\\n' \"$VAR\"\n"
+                "cat out.txt\n",
+                "printf 'dep:%s\\n' \"$VAR\"\n",
+            ),
+        }
+        for name, (script, dependency) in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("dep.sh", dependency)
+                project.write("main.sh", script)
+
+                project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_builtin_source_errexit_context_matches_bash(self):
+        cases = {
+            "builtin source or": "builtin source ./dep.sh || true\n",
+            "negated builtin source": "! builtin source ./dep.sh\n",
+        }
+        for name, command in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write(
+                    "main.sh",
+                    "set -e\n"
+                    + command
+                    + "printf 'after\\n'\n",
+                )
+                project.write(
+                    "dep.sh",
+                    "printf 'start:%s\\n' \"$?\"\n"
+                    "false\n"
+                    "printf 'afterfalse:%s\\n' \"$?\"\n",
+                )
+
+                project.assert_compiled_matches(self, "main.sh")
 
     def test_static_same_line_case_source_with_tail_matches_bash(self):
         with ScriptProject() as project:
