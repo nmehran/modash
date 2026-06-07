@@ -388,22 +388,52 @@ __modash_source_builtin_enabled() {
   esac
 }
 
-__modash_builtin_source_command_index() {
+__modash_wrapped_source_command_index() {
   __modash_source_command_index=-1
-  local index=0
-  if [[ ${__modash_source_call_args[0]-} == -- ]]; then
-    index=1
-  fi
-  case "${__modash_source_call_args[$index]-}" in
-    source|.)
-      __modash_source_command_index=$index
-      return 0
-      ;;
-  esac
+  local index=${1:-0} word option letters
+  while ((index < ${#__modash_source_call_args[@]})); do
+    word=${__modash_source_call_args[$index]}
+    case "$word" in
+      --)
+        ((index++))
+        ;;
+      source|.)
+        __modash_source_command_index=$index
+        return 0
+        ;;
+      builtin)
+        ((index++))
+        if [[ ${__modash_source_call_args[$index]-} == -- ]]; then
+          ((index++))
+        fi
+        ;;
+      command)
+        ((index++))
+        while ((index < ${#__modash_source_call_args[@]})); do
+          option=${__modash_source_call_args[$index]}
+          if [[ $option == -- ]]; then
+            ((index++))
+            break
+          fi
+          if [[ $option != -* ]]; then
+            break
+          fi
+          letters=${option#-}
+          if [[ -z $letters || $letters == *v* || $letters == *V* || ${letters//p/} != "" ]]; then
+            return 1
+          fi
+          ((index++))
+        done
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  done
   return 1
 }
 
-__modash_command_source_command_index() {
+__modash_command_args_source_command_index() {
   __modash_source_command_index=-1
   local index=0 option letters
   while ((index < ${#__modash_source_call_args[@]})); do
@@ -421,13 +451,7 @@ __modash_command_source_command_index() {
     fi
     ((index++))
   done
-  case "${__modash_source_call_args[$index]-}" in
-    source|.)
-      __modash_source_command_index=$index
-      return 0
-      ;;
-  esac
-  return 1
+  __modash_wrapped_source_command_index "$index"
 }
 
 __modash_trace_source_common() {
@@ -474,7 +498,7 @@ __modash_trace_source_common() {
       "modash: runtime trace cannot identify a stable source call site for ${source_path}"
   fi
 
-  if ((source_arg_count == 1)); then
+  if [[ -z $invalid_source_option ]] && ((source_arg_count == 1)); then
     if ((__modash_caller_positionals_captured == 0)); then
       __modash_trace_abort \
         "runtime.trace.nontransparent-source" \
@@ -485,13 +509,13 @@ __modash_trace_source_common() {
         "runtime.trace.nontransparent-source-positionals" \
         "modash: runtime trace cannot transparently observe no-argument source of a file that may mutate caller positionals: ${resolved_path}"
     fi
-  elif __modash_source_may_assign_positionals "$resolved_path"; then
+  elif [[ -z $invalid_source_option ]] && __modash_source_may_assign_positionals "$resolved_path"; then
     __modash_trace_abort \
       "runtime.trace.nontransparent-source-positionals" \
       "modash: runtime trace cannot transparently observe explicit-argument source of a file that may assign caller positionals: ${resolved_path}"
   fi
 
-  if [[ -n $source_path && -r $resolved_path ]]; then
+  if [[ -z $invalid_source_option && -n $source_path && -r $resolved_path ]]; then
     track_functions=1
     if [[ -f $resolved_path ]]; then
       if ! __modash_fingerprint_file "$resolved_path"; then
@@ -510,7 +534,7 @@ __modash_trace_source_common() {
     done < <(compgen -A function)
   fi
 
-  if [[ -n $source_path ]]; then
+  if [[ -z $invalid_source_option && -n $source_path ]]; then
     __modash_source_file_map["$source_path"]=$resolved_path
     __modash_source_file_map["$resolved_path"]=$resolved_path
     __modash_source_stack+=("$resolved_path")
@@ -579,7 +603,7 @@ __modash_trace_source_common() {
     __modash_record_sourced_functions "$resolved_path"
   fi
 
-  if [[ -n $source_path ]]; then
+  if [[ -z $invalid_source_option && -n $source_path ]]; then
     unset '__modash_source_stack[-1]'
   fi
 
@@ -619,7 +643,7 @@ __modash_trace_builtin() {
   shift
   __modash_capture_source_call "$caller_count" "$@"
   local builtin_name
-  if __modash_builtin_source_command_index; then
+  if __modash_wrapped_source_command_index; then
     builtin_name=${__modash_source_call_args[$__modash_source_command_index]}
     case "$builtin_name" in
       source)
@@ -651,7 +675,7 @@ __modash_trace_command() {
   shift
   __modash_capture_source_call "$caller_count" "$@"
   local command_name
-  if __modash_command_source_command_index; then
+  if __modash_command_args_source_command_index; then
     command_name=${__modash_source_call_args[$__modash_source_command_index]}
     case "$command_name" in
       source)

@@ -85,8 +85,8 @@ tripping `errexit` before the observed source operation runs.
 The compiler also rejects shapes that can make a trusted graph lie about what
 will run: reserved `__modash_` names, trace-instrumentation-sensitive shell
 state, aliases, dynamic or source-capable `eval`, source commands in
-subshells, pipelines, or command substitutions, process-substitution-backed
-source input, dynamic or multiline child `bash -c` payloads, unsupported
+subshells, pipelines, or command substitutions, heredoc and here-string source
+redirections, dynamic or multiline child `bash -c` payloads, unsupported
 external child-command wrappers that hide source operations from tracing,
 source-bearing `exec` shell payloads, trap manipulation, computed mutation of
 generated replay state, runtime `$0` / `BASH_SOURCE` references inside heredocs

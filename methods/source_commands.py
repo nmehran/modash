@@ -52,8 +52,10 @@ class SourceCommandInvocation:
     command_start_index: int
     source_index: int
     source_path_index: int
+    source_end_index: int
     source_path: str
     arguments: tuple[str, ...] = ()
+    source_argument_indexes: tuple[int, ...] = ()
     words: tuple[str, ...] = ()
     wrapped: bool = False
     option_terminator: bool = False
@@ -260,14 +262,13 @@ def _source_command_invocation_from_words(
     if position is None:
         return None
     command_start, source_index = position
-    if source_index >= len(words) or source_index + 1 >= len(words):
+    if source_index >= len(words):
         return None
 
     source_words = _source_path_and_arguments(words, source_index, stop_at_shell_control)
     if source_words is None:
         return None
-    source_path, arguments, source_path_index, option_terminator, invalid_option = source_words
-    source_word_count = 1 + len(arguments)
+    source_path, arguments, source_path_index, argument_indexes, source_end_index, option_terminator, invalid_option = source_words
 
     wrapped = source_index != command_start
     command_name = words[source_index]
@@ -275,7 +276,10 @@ def _source_command_invocation_from_words(
         return None
 
     if normalized:
-        source_expression_words = words[source_path_index:source_path_index + source_word_count] if stop_at_shell_control else words[source_path_index:]
+        if source_path:
+            source_expression_words = (words[source_path_index], *[words[index] for index in argument_indexes])
+        else:
+            source_expression_words = ()
         source_expression = " ".join(source_expression_words)
         source_site = " ".join(words)
         token_start = 0
@@ -285,10 +289,17 @@ def _source_command_invocation_from_words(
         if token_start is None:
             return None
         if stop_at_shell_control:
-            source_expression = " ".join(quoted_words[source_path_index:source_path_index + source_word_count])
+            if source_path:
+                source_expression_words = (quoted_words[source_path_index], *[quoted_words[index] for index in argument_indexes])
+            else:
+                source_expression_words = ()
+            source_expression = " ".join(source_expression_words)
         else:
-            expression_start = shell_word_start(command, quoted_words, source_path_index)
-            source_expression = command[expression_start:].strip() if expression_start is not None else command[token_start + len(quoted_words[source_index]):].strip()
+            if source_path:
+                expression_start = shell_word_start(command, quoted_words, source_path_index)
+                source_expression = command[expression_start:].strip() if expression_start is not None else command[token_start + len(quoted_words[source_index]):].strip()
+            else:
+                source_expression = ""
         if wrapped:
             command_start_token = shell_word_start(command, quoted_words, command_start)
             if command_start_token is None:
@@ -314,8 +325,10 @@ def _source_command_invocation_from_words(
         command_start_index=command_start,
         source_index=source_index,
         source_path_index=source_path_index,
+        source_end_index=source_end_index,
         source_path=source_path,
         arguments=arguments,
+        source_argument_indexes=argument_indexes,
         words=words,
         wrapped=wrapped,
         option_terminator=option_terminator,
@@ -324,28 +337,56 @@ def _source_command_invocation_from_words(
 
 
 def _source_path_and_arguments(words: Sequence[str], source_index: int, stop_at_shell_control: bool):
-    source_path_index = source_index + 1
+    index = source_index + 1
     option_terminator = False
-    if source_path_index < len(words) and clean_shell_word(words[source_path_index]) == "--":
+    if index < len(words) and clean_shell_word(words[index]) == "--":
         option_terminator = True
-        source_path_index += 1
-    if source_path_index >= len(words):
-        return None
-    source_path = clean_shell_word(words[source_path_index])
-    invalid_option = None
-    if not option_terminator and _invalid_source_option_word(source_path):
-        invalid_option = _source_option_diagnostic_word(source_path)
-    arguments = []
-    for word in words[source_path_index + 1:]:
-        cleaned = clean_shell_word(word)
-        if stop_at_shell_control and (
-            not cleaned
-            or cleaned in SHELL_CONTROL_WORDS
-            or cleaned in SHELL_CONTROL_OPERATORS
-        ):
+        index += 1
+    source_path_index = len(words)
+    source_path = ""
+    argument_indexes: list[int] = []
+    arguments: list[str] = []
+    while index < len(words):
+        cleaned = clean_shell_word(words[index])
+        if _is_source_word_boundary(cleaned, stop_at_shell_control):
             break
+        redirection = _redirection_token_kind(words[index])
+        if redirection is not None:
+            index += 1
+            if redirection == "separate-target" and index < len(words):
+                index += 1
+            continue
+        source_path_index = index
+        source_path = cleaned
+        index += 1
+        break
+
+    invalid_option = None
+    if source_path and not option_terminator and _invalid_source_option_word(source_path):
+        invalid_option = _source_option_diagnostic_word(source_path)
+    while index < len(words):
+        word = words[index]
+        cleaned = clean_shell_word(word)
+        if _is_source_word_boundary(cleaned, stop_at_shell_control):
+            break
+        redirection = _redirection_token_kind(word)
+        if redirection is not None:
+            index += 1
+            if redirection == "separate-target" and index < len(words):
+                index += 1
+            continue
+        argument_indexes.append(index)
         arguments.append(cleaned)
-    return source_path, tuple(arguments), source_path_index, option_terminator, invalid_option
+        index += 1
+    return source_path, tuple(arguments), source_path_index, tuple(argument_indexes), index, option_terminator, invalid_option
+
+
+def _is_source_word_boundary(word: str, stop_at_shell_control: bool):
+    return stop_at_shell_control and (
+        not word
+        or word in SHELL_CONTROL_WORDS
+        or word in SHELL_CONTROL_OPERATORS
+    )
 
 
 def _invalid_source_option_word(word: str):
@@ -476,15 +517,34 @@ def shell_quote_words(words: Sequence[str], *, always_quote: bool = False):
 
 
 def _builtin_source_command_index(words: Sequence[str], command_start: int = 0):
-    index = command_start + 1
-    if index < len(words) and words[index] == "--":
-        index += 1
-    if index < len(words) and words[index] in SOURCE_COMMAND_NAMES:
-        return index
-    return None
+    return _wrapped_source_command_index(words, command_start)
 
 
 def _command_source_command_index(words: Sequence[str], command_start: int = 0):
+    return _wrapped_source_command_index(words, command_start)
+
+
+def _wrapped_source_command_index(words: Sequence[str], command_start: int = 0):
+    index = command_start
+    while index < len(words):
+        word = words[index]
+        if word in SOURCE_COMMAND_NAMES:
+            return index
+        if word == "builtin":
+            index += 1
+            if index < len(words) and words[index] == "--":
+                index += 1
+            continue
+        if word == "command":
+            index = _command_wrapped_command_index(words, index)
+            if index is None:
+                return None
+            continue
+        return None
+    return None
+
+
+def _command_wrapped_command_index(words: Sequence[str], command_start: int):
     index = command_start + 1
     while index < len(words) and words[index].startswith("-"):
         option = words[index]
@@ -497,9 +557,7 @@ def _command_source_command_index(words: Sequence[str], command_start: int = 0):
         if set(option_letters) != {"p"}:
             return None
         index += 1
-    if index < len(words) and words[index] in SOURCE_COMMAND_NAMES:
-        return index
-    return None
+    return index
 
 
 def _trace_wrapper_separator(words: Sequence[str], start: int):

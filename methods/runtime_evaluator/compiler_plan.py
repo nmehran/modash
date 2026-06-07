@@ -233,6 +233,10 @@ def _source_candidates(unit: _RewriteUnit) -> tuple[_SourceCandidate, ...]:
 
 def _source_site_text_for_candidate(node: SourceSite) -> str:
     text = node.text.strip()
+    if text.startswith(("if ", "elif ", "while ", "until ")):
+        operation = _source_operation_text_for_candidate(text)
+        if operation is not None:
+            return operation
     if text.startswith("{") and node.source_site:
         return _source_operation_text_for_candidate(node.source_site) or node.source_site
     return node.text
@@ -309,7 +313,9 @@ def _source_operation_text_for_candidate(command: str) -> str | None:
     except UnsupportedSourceError:
         return invocation.source_site.strip()
     start_index = _source_operation_start_word_index(invocation)
-    end_index = invocation.source_path_index + len(invocation.arguments)
+    end_index = invocation.source_end_index - 1
+    if end_index < start_index or end_index >= len(raw_words):
+        return invocation.source_site.strip()
     start = shell_word_start(command, raw_words, start_index)
     end_start = shell_word_start(command, raw_words, end_index)
     if start is None or end_start is None:
@@ -332,12 +338,19 @@ def _source_operation_start_word_index(invocation) -> int:
         if word in {"command", "builtin"} or ASSIGNMENT_WORD_PATTERN.match(word) or _compiler_plan_redirection_word(word):
             start_index = index
             continue
+        if index > 0 and _compiler_plan_separate_redirection_word(words[index - 1]):
+            start_index = index - 1
+            continue
         break
     return start_index
 
 
 def _compiler_plan_redirection_word(word: str) -> bool:
     return bool(re.match(r"^(?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|)", word))
+
+
+def _compiler_plan_separate_redirection_word(word: str) -> bool:
+    return bool(re.fullmatch(r"(?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|)", word))
 
 
 def _continued_source_first_physical_fragment(line: str, logical: str) -> str | None:

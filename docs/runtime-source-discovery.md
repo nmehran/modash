@@ -258,8 +258,8 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
   expansion. Redirection target command substitutions participate in the
   source-entry status validated against the trusted graph, and replay aborts on
   runtime redirection drift before treating an observed edge as successfully
-  replayed. Heredoc source redirections, source commands in subshells,
-  pipelines, or command substitutions, process-substitution-backed source input,
+  replayed. Heredoc and here-string source redirections, source commands in
+  subshells, pipelines, or command substitutions,
   dynamic or multiline child `bash -c` payloads, external child-command wrappers
   that hide source operations from tracing, reserved `__modash_` names, and
   scripts that inspect trace-instrumentation-sensitive shell state remain

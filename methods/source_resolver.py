@@ -328,6 +328,14 @@ class SourceResolver:
                 context,
                 MISSING_SOURCE_INVALID_OPTION,
             )
+        if source_invocation is not None and source_invocation.source_path == "":
+            return _missing_source_result(
+                "",
+                source_expression,
+                source_site,
+                context,
+                MISSING_SOURCE_NO_FILENAME,
+            )
         if _source_site_has_no_source_path(source_site):
             return _missing_source_result(
                 "",

@@ -407,6 +407,9 @@ def _ensure_source_presence_matches_fingerprints(observation: RuntimeSourceObser
     source_paths = _source_fingerprint_paths(observation.files)
     for event in observation.sources:
         resolved_path = str(Path(event.resolved_path).resolve(strict=False))
+        invocation = _event_xtrace_invocation(observation, event)
+        if invocation is not None and (invocation.invalid_option is not None or invocation.source_path == ""):
+            continue
         if (
             resolved_path not in source_paths
             and Path(resolved_path).is_file()
@@ -416,6 +419,17 @@ def _ensure_source_presence_matches_fingerprints(observation: RuntimeSourceObser
                 f"runtime source observation is stale for {resolved_path}: source_presence mismatch",
                 code="runtime.graph.stale_observation",
             )
+
+
+def _event_xtrace_invocation(observation: RuntimeSourceObservation, event):
+    if event.xtrace_index is None:
+        return None
+    try:
+        command = observation.xtrace[event.xtrace_index].command
+    except IndexError:
+        return None
+    return source_command_invocation(command, normalize_trace_wrappers=True)
+
 
 def _file_roles(value, label: str):
     if not isinstance(value, list):

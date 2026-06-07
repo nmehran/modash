@@ -783,7 +783,7 @@ def _observation_file_fingerprints(entrypoint_path, entrypoint_fingerprint, raw_
         if event.function_call is not None and Path(event.function_call.file).is_file():
             add_role(event.function_call.file, "call-site")
         resolved_path = Path(event.resolved_path).resolve(strict=False)
-        if resolved_path.is_file():
+        if resolved_path in trace_source_fingerprints:
             add_role(resolved_path, "source")
 
     fingerprints = []

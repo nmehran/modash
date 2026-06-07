@@ -8,6 +8,7 @@ from methods.runtime_evaluator.compiler_model import RuntimeObservedCompileError
 from methods.runtime_evaluator.scanners import function_context_sensitive_top_level_lines, inert_function_body_lines
 from methods.shell.line import get_commands
 from methods.shell.scan import is_array_assignment_paren, read_backtick_body, read_balanced_body
+from methods.source_commands import source_command_invocation
 from methods.source_resolver import (
     ASSIGNMENT_WORD_PATTERN,
     UnsupportedSourceError,
@@ -208,8 +209,11 @@ def _validate_unit_text(
                     code="runtime.compile.dynamic_eval",
                 )
             if (
-                _dynamic_validation_bypass_command(parsed, exact_variables)
-                or _dynamic_validation_bypass_text(command, exact_variables)
+                source_command_invocation(command, stop_at_shell_control=True) is None
+                and (
+                    _dynamic_validation_bypass_command(parsed, exact_variables)
+                    or _dynamic_validation_bypass_text(command, exact_variables)
+                )
             ):
                 raise RuntimeObservedCompileError(
                     f"runtime graph compiler input uses dynamic validation-bypassing command dispatch at {label}:{line_number}",

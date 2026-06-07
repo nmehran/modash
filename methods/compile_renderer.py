@@ -540,9 +540,8 @@ def source_site_redirection_suffix(source_site: str):
         raw_words = tuple(parse_shell_words_preserving_quotes(source_site.strip()))
     except UnsupportedSourceError:
         return ""
-    source_word_count = 1 + len(invocation.arguments)
     prefix_words = raw_words[:invocation.source_index]
-    source_words = raw_words[invocation.source_path_index:invocation.source_path_index + source_word_count]
+    source_words = raw_words[invocation.source_index + 1:invocation.source_end_index]
     redirections = source_site_redirection_words(prefix_words) + source_site_redirection_words(source_words)
     return " ".join(redirections)
 

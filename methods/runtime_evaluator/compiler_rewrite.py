@@ -805,9 +805,10 @@ def _source_argv_words_and_redirections_for_candidate(candidate: _SourceCandidat
         _command_start, source_index = position
         source_words = raw_words[source_index + 1:source_index + 1]
     else:
-        source_word_count = 1 + len(invocation.arguments)
         prefix_words = raw_words[:invocation.source_index]
-        source_words = raw_words[invocation.source_path_index:invocation.source_path_index + source_word_count]
+        source_words = raw_words[invocation.source_index + 1:invocation.source_end_index]
+        if invocation.option_terminator and source_words and clean_shell_word(source_words[0]) == "--":
+            source_words = source_words[1:]
     _prefix_argv_words, leading_redirection_words = _split_source_redirections(prefix_words if invocation is not None else ())
     argv_words, redirection_words = _split_source_redirections(source_words)
     if not argv_words and not is_source_like_command_text(probe):
@@ -1467,6 +1468,12 @@ def _source_site_replay_prefix(source_site: str, separator: str) -> str:
     index = 0
     while index < invocation.source_index:
         word = words[index]
+        redirection = _source_redirection_token_kind(word)
+        if redirection is not None:
+            index += 1
+            if redirection == "separate-target" and index < invocation.source_index:
+                index += 1
+            continue
         if word == "{":
             index += 1
             continue

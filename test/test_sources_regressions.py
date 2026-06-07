@@ -205,6 +205,24 @@ class SourceRegressionTestCase(unittest.TestCase):
         self.assertEqual(leading.source_site, "> out.txt source ./dep.sh")
         self.assertEqual(leading.source_path, "./dep.sh")
 
+        dynamic_leading = source_command_invocation('> "$(false; echo out.txt)" source ./dep.sh')
+        self.assertIsNotNone(dynamic_leading)
+        self.assertEqual(dynamic_leading.source_expression, "./dep.sh")
+        self.assertEqual(dynamic_leading.source_site, '> "$(false; echo out.txt)" source ./dep.sh')
+        self.assertEqual(dynamic_leading.source_path, "./dep.sh")
+
+        no_argument = source_command_invocation("source -- 2>err.txt")
+        self.assertIsNotNone(no_argument)
+        self.assertEqual(no_argument.source_path, "")
+        self.assertEqual(no_argument.source_expression, "")
+        self.assertTrue(no_argument.option_terminator)
+
+        nested = source_command_invocation("builtin builtin source ./dep.sh")
+        self.assertIsNotNone(nested)
+        self.assertEqual(nested.command_name, "source")
+        self.assertEqual(nested.source_path, "./dep.sh")
+        self.assertEqual(nested.source_index, 2)
+
     def test_source_command_parser_matrix_stays_consistent(self):
         from methods.source_commands import source_command_index
         from methods.source_resolver import (
@@ -219,16 +237,22 @@ class SourceRegressionTestCase(unittest.TestCase):
             ". ./dep.sh",
             ". -- ./dep.sh",
             "builtin source ./dep.sh",
+            "builtin builtin source ./dep.sh",
+            "builtin command source ./dep.sh",
             "builtin source -- ./dep.sh",
             "builtin -- source ./dep.sh",
             "builtin -- source -- ./dep.sh",
             "builtin -- . ./dep.sh",
             "builtin -- . -- ./dep.sh",
             "command source ./dep.sh",
+            "command command source ./dep.sh",
+            "command builtin source ./dep.sh",
             "command source -- ./dep.sh",
             "command -- source ./dep.sh",
+            "command -- command source ./dep.sh",
             "command -- source -- ./dep.sh",
             "command -p source ./dep.sh",
+            "command -p command source ./dep.sh",
             "command -p source -- ./dep.sh",
             "command -p -- source ./dep.sh",
             "command -p -- source -- ./dep.sh",

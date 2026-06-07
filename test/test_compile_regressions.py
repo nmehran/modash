@@ -121,6 +121,30 @@ class CompileRegressionTestCase(unittest.TestCase):
         self.assertEqual(actual.stderr, expected.stderr)
         self.assertNotIn("> out.txt source ./dep.sh", compiled_text)
 
+    def test_static_source_terminator_without_filename_matches_bash(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source -- 2>err.txt || true\n"
+                "cat err.txt\n",
+            )
+
+            project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_nested_wrapper_sources_match_bash(self):
+        cases = {
+            "builtin builtin source": "builtin builtin source ./dep.sh\nprintf 'done\\n'\n",
+            "builtin builtin dot": "builtin builtin . ./dep.sh\nprintf 'done\\n'\n",
+            "command command source": "command command source ./dep.sh\nprintf 'done\\n'\n",
+            "command -- command source": "command -- command source ./dep.sh\nprintf 'done\\n'\n",
+        }
+        for name, script in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("dep.sh", "printf 'dep\\n'\n")
+                project.write("main.sh", script)
+
+                project.assert_compiled_matches(self, "main.sh")
+
     def test_missing_source_diagnostic_matches_bash_file_and_line(self):
         with ScriptProject() as project:
             entrypoint = project.write(

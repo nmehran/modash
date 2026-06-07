@@ -3132,6 +3132,21 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, expected.returncode, result.stdout)
         self.assertEqual(result.stdout, expected.stdout)
 
+    def test_runtime_compiler_replays_option_terminator_no_argument_source_failure(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source -- 2>err.txt || true\n"
+                "cat err.txt\n",
+            )
+            expected = project.run("main.sh")
+            compiled, graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(graph["edges"][0]["failure_kind"], "no-argument")
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
+
     def test_runtime_compiler_preserves_source_redirections(self):
         with ScriptProject() as project:
             project.write(
@@ -3167,6 +3182,23 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, expected.returncode, result.stdout)
         self.assertEqual(result.stdout, expected.stdout)
         self.assertEqual(result.stderr, expected.stderr)
+
+    def test_runtime_compiler_invalid_source_option_does_not_source_same_named_file(self):
+        with ScriptProject() as project:
+            project.write("-p", "SIDE=mutated\nreturn 2\n")
+            project.write(
+                "main.sh",
+                "source -p || true\n"
+                "printf 'after:%s\\n' \"${SIDE:-none}\"\n",
+            )
+            expected = project.run("main.sh")
+            compiled, graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(graph["edges"][0]["failure_kind"], "invalid-option")
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
+        self.assertNotIn("after:mutated", result.stdout)
 
     def test_runtime_compiler_source_option_terminator_allows_dash_filename(self):
         with ScriptProject() as project:
@@ -3217,6 +3249,55 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
             self.assertEqual(result.stdout, expected.stdout)
             self.assertEqual(result.stderr, expected.stderr)
 
+    def test_runtime_compiler_preserves_dynamic_leading_source_redirections(self):
+        cases = {
+            "separate-output": (
+                '> "$(false; echo out.txt)" source ./dep.sh\ncat out.txt\n',
+                "printf 'inside:%s\\n' \"$?\"\n",
+            ),
+            "combined-output": (
+                '>"$(false; echo out.txt)" source ./dep.sh\ncat out.txt\n',
+                "printf 'inside:%s\\n' \"$?\"\n",
+            ),
+            "input": (
+                '< "$(printf input.txt)" source ./dep.sh\n',
+                "read value\nprintf 'inside:%s\\n' \"$value\"\n",
+            ),
+        }
+        for name, (script, dep) in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("input.txt", "IN\n")
+                project.write("dep.sh", dep)
+                project.write("main.sh", "false\n" + script)
+                expected = project.run("main.sh")
+                compiled, _graph = self.compile_observed(project, "main.sh")
+                result = project.run(compiled)
+                bash_check = subprocess.run(["bash", "-n", str(compiled)], text=True, capture_output=True)
+
+            self.assertEqual(bash_check.returncode, 0, bash_check.stderr)
+            self.assertEqual(result.returncode, expected.returncode, result.stdout)
+            self.assertEqual(result.stdout, expected.stdout)
+            self.assertEqual(result.stderr, expected.stderr)
+
+    def test_runtime_compiler_replays_nested_wrapper_sources(self):
+        cases = {
+            "builtin builtin source": "builtin builtin source ./dep.sh\nprintf 'done\\n'\n",
+            "builtin builtin dot": "builtin builtin . ./dep.sh\nprintf 'done\\n'\n",
+            "command command source": "command command source ./dep.sh\nprintf 'done\\n'\n",
+            "command -- command source": "command -- command source ./dep.sh\nprintf 'done\\n'\n",
+        }
+        for name, script in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("dep.sh", "printf 'dep\\n'\n")
+                project.write("main.sh", script)
+                expected = project.run("main.sh")
+                compiled, graph = self.compile_observed(project, "main.sh")
+                result = project.run(compiled)
+
+            self.assertEqual(graph["edges"][0]["failure_kind"], "file")
+            self.assertEqual(result.returncode, expected.returncode, result.stdout)
+            self.assertEqual(result.stdout, expected.stdout)
+
     def test_runtime_compiler_replays_same_line_case_source_spans(self):
         cases = {
             "semicolon": "case x in\n  x) source ./dep.sh; printf 'case-after\\n' ;;\nesac\nprintf 'done\\n'\n",
@@ -3254,6 +3335,31 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, expected.returncode, result.stdout)
         self.assertEqual(result.stdout, expected.stdout)
         self.assertEqual(result.stderr, expected.stderr)
+
+    def test_runtime_compiler_replays_same_line_elif_brace_condition_source_span(self):
+        cases = {
+            "source-only": (
+                "if false; then :; elif { source ./dep.sh; }; then echo then; fi\n",
+                "dep\nthen\n",
+            ),
+            "source-and-tail": (
+                "if false; then :; elif { source ./dep.sh; printf after; }; then echo then; fi\n",
+                "dep\nafterthen\n",
+            ),
+        }
+        for name, (script, expected_stdout) in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("dep.sh", "printf 'dep\\n'\n")
+                project.write("main.sh", script)
+                expected = project.run("main.sh")
+                compiled, _graph = self.compile_observed(project, "main.sh")
+                result = project.run(compiled)
+                bash_check = subprocess.run(["bash", "-n", str(compiled)], text=True, capture_output=True)
+
+            self.assertEqual(expected.stdout, expected_stdout)
+            self.assertEqual(bash_check.returncode, 0, bash_check.stderr)
+            self.assertEqual(result.returncode, expected.returncode, result.stdout)
+            self.assertEqual(result.stdout, expected.stdout)
 
     def test_runtime_graph_rejects_assignment_prefixed_builtin_source(self):
         with ScriptProject() as project:
