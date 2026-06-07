@@ -312,6 +312,14 @@ class SourceFrontendLoopMixin:
         if not body_lines:
             return ()
 
+        line_numbers = [line_number for line_number, _ in body_lines]
+        if len(set(line_numbers)) != len(line_numbers):
+            nodes = []
+            for line_number, code_line in body_lines:
+                control_flow_source_ranges = self._control_flow_source_ranges(code_line, 0)
+                nodes.extend(self._parse_line(script_path, line_number, code_line, control_flow_source_ranges))
+            return tuple(nodes)
+
         start_index = min(line_number for line_number, _ in body_lines) - 1
         end_index = max(line_number for line_number, _ in body_lines)
         lines = [""] * end_index

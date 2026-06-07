@@ -11,6 +11,7 @@ declare -A __modash_function_metadata_map=()
 declare -A __modash_source_positional_mutation_cache=()
 declare -A __modash_source_positional_assignment_cache=()
 __modash_caller_positionals=()
+__modash_initial_positionals=("$@")
 __modash_source_call_args=()
 __modash_caller_positionals_captured=0
 
@@ -454,6 +455,21 @@ __modash_command_args_source_command_index() {
   __modash_wrapped_source_command_index "$index"
 }
 
+__modash_capture_top_level_initial_positionals_for_source_function() {
+  if ((source_arg_count != 1)); then
+    return 1
+  fi
+  if ((${#FUNCNAME[@]} != 4)); then
+    return 1
+  fi
+  if [[ ${FUNCNAME[2]-} != source || ${FUNCNAME[3]-} != main ]]; then
+    return 1
+  fi
+  __modash_caller_positionals=("${__modash_initial_positionals[@]}")
+  __modash_caller_positionals_captured=1
+  return 0
+}
+
 __modash_trace_source_common() {
   local prior_status=$1 kind=$2 builtin_name=$3
   shift 3
@@ -500,9 +516,11 @@ __modash_trace_source_common() {
 
   if [[ -z $invalid_source_option ]] && ((source_arg_count == 1)); then
     if ((__modash_caller_positionals_captured == 0)); then
-      __modash_trace_abort \
-        "runtime.trace.nontransparent-source" \
-        "modash: runtime trace cannot transparently observe source after its tracing alias was removed: ${source_path}"
+      if ! __modash_capture_top_level_initial_positionals_for_source_function; then
+        __modash_trace_abort \
+          "runtime.trace.nontransparent-source" \
+          "modash: runtime trace cannot transparently observe source after its tracing alias was removed: ${source_path}"
+      fi
     fi
     if __modash_source_may_mutate_positionals "$resolved_path"; then
       __modash_trace_abort \

@@ -3298,6 +3298,60 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
             self.assertEqual(result.returncode, expected.returncode, result.stdout)
             self.assertEqual(result.stdout, expected.stdout)
 
+    def test_runtime_compiler_preserves_interleaved_wrapper_source_redirections(self):
+        cases = {
+            "command redirection source": (
+                "command > out.txt source ./dep.sh\n"
+                "printf 'after\\n'\n"
+                "cat out.txt\n",
+                "printf 'dep\\n'\n",
+            ),
+            "builtin redirection source": (
+                "builtin > out.txt source ./dep.sh\n"
+                "printf 'after\\n'\n"
+                "cat out.txt\n",
+                "printf 'dep\\n'\n",
+            ),
+            "leading redirection command source": (
+                "2> err.txt command source ./dep.sh\n"
+                "printf 'after\\n'\n"
+                "cat err.txt\n",
+                "printf 'dep\\n' >&2\n",
+            ),
+        }
+        for name, (script, dependency) in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("dep.sh", dependency)
+                project.write("main.sh", script)
+                expected = project.run("main.sh")
+                compiled, graph = self.compile_observed(project, "main.sh")
+                result = project.run(compiled)
+                bash_check = subprocess.run(["bash", "-n", str(compiled)], text=True, capture_output=True)
+
+            self.assertEqual(len(graph["edges"]), 1)
+            self.assertEqual(graph["edges"][0]["failure_kind"], "file")
+            self.assertEqual(bash_check.returncode, 0, bash_check.stderr)
+            self.assertEqual(result.returncode, expected.returncode, result.stdout)
+            self.assertEqual(result.stdout, expected.stdout)
+
+    def test_runtime_compiler_preserves_top_level_assignment_redirection_source(self):
+        with ScriptProject() as project:
+            project.write("dep.sh", "printf 'dep:%s\\n' \"$VAR\"\n")
+            project.write(
+                "main.sh",
+                "VAR=foo > out.txt source ./dep.sh\n"
+                "printf 'after:%s\\n' \"${VAR:-}\"\n"
+                "cat out.txt\n",
+            )
+            expected = project.run("main.sh")
+            compiled, graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(len(graph["edges"]), 1)
+        self.assertEqual(graph["edges"][0]["failure_kind"], "file")
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
+
     def test_runtime_compiler_replays_same_line_case_source_spans(self):
         cases = {
             "semicolon": "case x in\n  x) source ./dep.sh; printf 'case-after\\n' ;;\nesac\nprintf 'done\\n'\n",
@@ -3357,6 +3411,38 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                 bash_check = subprocess.run(["bash", "-n", str(compiled)], text=True, capture_output=True)
 
             self.assertEqual(expected.stdout, expected_stdout)
+            self.assertEqual(bash_check.returncode, 0, bash_check.stderr)
+            self.assertEqual(result.returncode, expected.returncode, result.stdout)
+            self.assertEqual(result.stdout, expected.stdout)
+
+    def test_runtime_compiler_replays_multiple_same_line_branch_sources(self):
+        cases = {
+            "if branch": (
+                "if true; then source ./a.sh; source ./b.sh; fi\n"
+                "printf 'done\\n'\n"
+            ),
+            "elif branch": (
+                "if false; then :; elif true; then source ./a.sh; source ./b.sh; fi\n"
+                "printf 'done\\n'\n"
+            ),
+            "case branch": (
+                "case x in\n"
+                "  x) source ./a.sh; source ./b.sh ;;\n"
+                "esac\n"
+                "printf 'done\\n'\n"
+            ),
+        }
+        for name, script in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("a.sh", "printf 'A\\n'\n")
+                project.write("b.sh", "printf 'B\\n'\n")
+                project.write("main.sh", script)
+                expected = project.run("main.sh")
+                compiled, graph = self.compile_observed(project, "main.sh")
+                result = project.run(compiled)
+                bash_check = subprocess.run(["bash", "-n", str(compiled)], text=True, capture_output=True)
+
+            self.assertEqual(len(graph["edges"]), 2)
             self.assertEqual(bash_check.returncode, 0, bash_check.stderr)
             self.assertEqual(result.returncode, expected.returncode, result.stdout)
             self.assertEqual(result.stdout, expected.stdout)

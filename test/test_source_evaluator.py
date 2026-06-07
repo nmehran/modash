@@ -745,20 +745,21 @@ class SourceEvaluatorTestCase(unittest.TestCase):
         self.assertEqual(result.events[0].condition, 'case "$ENV" in prod')
         self.assertEqual(result.events[1].condition, 'case "$ENV" in dev')
 
-    def test_case_block_unknown_subject_rejects_state_expanded_eval_source(self):
+    def test_case_block_unknown_subject_lowers_state_expanded_eval_source(self):
         with ScriptProject() as project:
-            project.write("prod.sh", 'echo "prod"\n')
+            prod = project.write("prod.sh", 'echo "prod"\n')
             entry = project.write("main.sh", textwrap.dedent("""\
                 case "$ENV" in
                   prod) COMMAND="source ./prod.sh"; eval "$COMMAND" ;;
                 esac
                 """))
 
-            with self.assertRaisesRegex(NotImplementedError, "unresolved source command") as cm:
-                SourceEvaluator().evaluate(entry)
+            result = SourceEvaluator().evaluate(entry)
 
-        self.assertEqual(cm.exception.diagnostic.code, "unsupported.source.command-unresolved")
-        self.assertEqual(cm.exception.diagnostic.location.line, 2)
+        self.assertEqual([event.path for event in result.events], [prod])
+        self.assertEqual(result.events[0].source_site, 'eval "$COMMAND"')
+        self.assertEqual(result.events[0].occurrence_model, OccurrenceModel.CONDITIONAL)
+        self.assertEqual(result.events[0].condition, 'case "$ENV" in prod')
 
     def test_case_block_unknown_subject_rejects_positional_eval_payload(self):
         with ScriptProject() as project:

@@ -588,17 +588,21 @@ class SourceEvaluatorSupportMixin:
                 break
         invocation = source_command_invocation(stripped_text)
         if invocation is not None:
+            prefix_end = invocation.command_start_index if invocation.wrapped else invocation.source_index
             if (
                 invocation.command_start_index != 0
                 and not SourceEvaluatorSupportMixin._plain_source_prefix_words(
-                    invocation.words[:invocation.source_index]
+                    invocation.words[:prefix_end]
                 )
             ):
                 return False
             if not invocation.wrapped:
                 return True
             words = [strip_shell_word_quotes(word) for word in parse_shell_words_preserving_quotes(stripped_text)]
-            return words[0] in {"builtin", "command"}
+            return (
+                0 <= invocation.command_start_index < len(words)
+                and words[invocation.command_start_index] in {"builtin", "command"}
+            )
         return (
             stripped_text.startswith("source ")
             or stripped_text.startswith(". ")
@@ -611,6 +615,9 @@ class SourceEvaluatorSupportMixin:
         while index < len(words):
             word = words[index]
             if word == "!":
+                index += 1
+                continue
+            if ASSIGNMENT_WORD_PATTERN.match(word):
                 index += 1
                 continue
             if re.fullmatch(r"(?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|)", word):

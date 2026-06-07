@@ -478,34 +478,36 @@ def render_source_site_replacement(
 ):
     declaration = declarations[0]
     redirection_suffix = source_site_redirection_suffix(declaration.source_site)
+    negation_prefix = source_site_negation_prefix(declaration.source_site)
+    assignment_words = source_site_assignment_words(declaration.source_site)
     retained_declarations = [
         declaration for declaration in declarations
         if declaration.replacement_kind == "retained-source"
     ]
     if retained_declarations:
         replacement = render_retained_source_dispatch(retained_declarations, render_source, indent, positional_frame_names)
-        return append_source_site_redirections(f"{separator}{replacement}", redirection_suffix)
+        return render_source_site_shell_replacement(separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent)
 
     unique_paths = {source_declaration.path for source_declaration in declarations}
     if len(declarations) > 1 and len(unique_paths) > 1:
         replacement = render_source_dispatch(declaration.source_expression, declarations, render_source, indent, positional_frame_names)
-        return append_source_site_redirections(f"{separator}{replacement}", redirection_suffix)
+        return render_source_site_shell_replacement(separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent)
 
     if declaration.replacement_kind == "noop-source":
-        return append_source_site_redirections(f"{separator}:", redirection_suffix)
+        return render_source_site_shell_replacement(separator, negation_prefix, assignment_words, ":", redirection_suffix, indent)
     if is_missing_source_replacement_kind(declaration.replacement_kind):
-        replacement = f"{separator}{{\n{render_missing_source_failure(declaration, indent)}\n{indent}}}"
-        return append_source_site_redirections(replacement, redirection_suffix)
+        replacement = f"{{\n{render_missing_source_failure(declaration, indent)}\n{indent}}}"
+        return render_source_site_shell_replacement(separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent)
     if is_source_expansion_failure_replacement_kind(declaration.replacement_kind):
         if declaration.replacement_kind == SOURCE_EXPANSION_FAILURE_RETURN:
             replacement = (
-                f"{separator}{{\n"
+                "{\n"
                 f"{render_source_expansion_failure(declaration, indent, return_from_function=True)}\n"
                 f"{indent}}}"
             )
-            return append_source_site_redirections(replacement, redirection_suffix)
-        replacement = f"{separator}{{\n{render_source_expansion_failure(declaration, indent)}\n{indent}}}"
-        return append_source_site_redirections(replacement, redirection_suffix) + " #"
+            return render_source_site_shell_replacement(separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent)
+        replacement = f"{{\n{render_source_expansion_failure(declaration, indent)}\n{indent}}}"
+        return render_source_site_shell_replacement(separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent) + " #"
 
     rendered_source = indent_shell_block(
         render_source(
@@ -522,14 +524,93 @@ def render_source_site_replacement(
         positional_frame_names,
         indent,
     )
-    replacement = f"{separator}{{\n{rendered_source}\n{indent}}}"
-    return append_source_site_redirections(replacement, redirection_suffix)
+    replacement = f"{{\n{rendered_source}\n{indent}}}"
+    return render_source_site_shell_replacement(separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent)
+
+
+def render_source_site_shell_replacement(
+    separator: str,
+    negation_prefix: str,
+    assignment_words: tuple[str, ...],
+    replacement: str,
+    redirection_suffix: str,
+    indent: str,
+):
+    replacement = wrap_source_site_assignments(replacement, assignment_words, indent)
+    return append_source_site_redirections(f"{separator}{negation_prefix}{replacement}", redirection_suffix)
 
 
 def append_source_site_redirections(replacement: str, redirection_suffix: str):
     if not redirection_suffix:
         return replacement
     return f"{replacement} {redirection_suffix}"
+
+
+def wrap_source_site_assignments(replacement: str, assignment_words: tuple[str, ...], indent: str):
+    assignment_names = source_site_assignment_names(assignment_words)
+    if not assignment_names:
+        return replacement
+
+    inner_indent = f"{indent}  "
+    save_lines = []
+    restore_lines = []
+    for name in assignment_names:
+        safe_name = re.sub(r"[^A-Za-z0-9_]", "_", name)
+        set_var = f"__modash_source_assign_{safe_name}_set"
+        value_var = f"__modash_source_assign_{safe_name}_value"
+        save_lines.extend([
+            f"{inner_indent}{set_var}=${{{name}+x}}",
+            f"{inner_indent}{value_var}=${{{name}-}}",
+        ])
+        restore_lines.append(
+            f"{inner_indent}if [[ ${{{set_var}}} ]]; then {name}=${{{value_var}}}; else unset {name}; fi"
+        )
+
+    assignment_lines = [f"{inner_indent}{word}" for word in assignment_words]
+    replacement_block = indent_shell_block(replacement, inner_indent)
+    return "\n".join([
+        "{",
+        *save_lines,
+        *assignment_lines,
+        replacement_block,
+        f"{inner_indent}__modash_source_assign_status=$?",
+        *restore_lines,
+        f"{inner_indent}( exit \"$__modash_source_assign_status\" )",
+        f"{indent}}}",
+    ])
+
+
+def source_site_assignment_words(source_site: str):
+    invocation = source_command_invocation(source_site.strip(), stop_at_shell_control=True)
+    if invocation is None or invocation.source_index <= 0:
+        return ()
+    try:
+        raw_words = tuple(parse_shell_words_preserving_quotes(source_site.strip()))
+    except UnsupportedSourceError:
+        return ()
+    return tuple(
+        raw_word
+        for raw_word, word in zip(raw_words[:invocation.source_index], invocation.words[:invocation.source_index])
+        if ASSIGNMENT_WORD_PATTERN.match(word)
+    )
+
+
+def source_site_assignment_names(assignment_words: tuple[str, ...]):
+    names = []
+    seen = set()
+    for word in assignment_words:
+        clean_word = strip_shell_word_quotes(word)
+        if "=" not in clean_word:
+            continue
+        name = clean_word.split("=", 1)[0]
+        if name.endswith("+"):
+            name = name[:-1]
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            continue
+        if name not in seen:
+            names.append(name)
+            seen.add(name)
+    return tuple(names)
 
 
 def source_site_redirection_suffix(source_site: str):
@@ -544,6 +625,14 @@ def source_site_redirection_suffix(source_site: str):
     source_words = raw_words[invocation.source_index + 1:invocation.source_end_index]
     redirections = source_site_redirection_words(prefix_words) + source_site_redirection_words(source_words)
     return " ".join(redirections)
+
+
+def source_site_negation_prefix(source_site: str):
+    invocation = source_command_invocation(source_site.strip(), stop_at_shell_control=True)
+    if invocation is None or invocation.source_index <= 0:
+        return ""
+    negations = sum(1 for word in invocation.words[:invocation.source_index] if word == "!")
+    return "! " * negations
 
 
 def source_site_redirection_words(words: tuple[str, ...]):

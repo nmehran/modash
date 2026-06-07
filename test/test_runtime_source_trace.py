@@ -193,14 +193,14 @@ class RuntimeSourceTraceTestCase(unittest.TestCase):
             )
             dependency = project.write(
                 "dep.sh",
-                f'touch {str(sentinel)!r}\nprintf "dep:%s\\n" "${{1-unset}}"\n',
+                f'shift\ntouch {str(sentinel)!r}\nprintf "dep:%s\\n" "${{1-unset}}"\n',
             )
 
             with self.assertRaises(RuntimeSourceTraceError) as context:
                 project.trace("main.sh", argv=("A",), env={"DEP": str(dependency)})
 
-        self.assertEqual(context.exception.code, "runtime.trace.nontransparent-source")
-        self.assertIn("alias was removed", str(context.exception))
+        self.assertEqual(context.exception.code, "runtime.trace.nontransparent-source-positionals")
+        self.assertIn("may mutate caller positionals", str(context.exception))
         self.assertFalse(sentinel.exists())
 
     def test_trace_fails_closed_for_inherited_source_shift(self):

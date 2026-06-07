@@ -301,7 +301,8 @@ def _source_command_invocation_from_words(
             else:
                 source_expression = ""
         if wrapped:
-            command_start_token = shell_word_start(command, quoted_words, command_start)
+            site_start_index = 0 if _has_simple_command_prefix(words, command_start) else command_start
+            command_start_token = shell_word_start(command, quoted_words, site_start_index)
             if command_start_token is None:
                 return None
             source_site = command[command_start_token:].strip()
@@ -379,6 +380,24 @@ def _source_path_and_arguments(words: Sequence[str], source_index: int, stop_at_
         arguments.append(cleaned)
         index += 1
     return source_path, tuple(arguments), source_path_index, tuple(argument_indexes), index, option_terminator, invalid_option
+
+
+def _has_simple_command_prefix(words: Sequence[str], command_start: int):
+    if command_start <= 0:
+        return False
+    index = 0
+    while index < command_start:
+        if words[index] == "!" or ASSIGNMENT_WORD_PATTERN.match(words[index]):
+            index += 1
+            continue
+        redirection = _redirection_token_kind(words[index])
+        if redirection is not None:
+            index += 1
+            if redirection == "separate-target" and index < command_start:
+                index += 1
+            continue
+        return False
+    return True
 
 
 def _is_source_word_boundary(word: str, stop_at_shell_control: bool):
@@ -527,6 +546,10 @@ def _command_source_command_index(words: Sequence[str], command_start: int = 0):
 def _wrapped_source_command_index(words: Sequence[str], command_start: int = 0):
     index = command_start
     while index < len(words):
+        next_index = _skip_leading_redirections(words, index)
+        if next_index != index:
+            index = next_index
+            continue
         word = words[index]
         if word in SOURCE_COMMAND_NAMES:
             return index
@@ -534,11 +557,13 @@ def _wrapped_source_command_index(words: Sequence[str], command_start: int = 0):
             index += 1
             if index < len(words) and words[index] == "--":
                 index += 1
+            index = _skip_leading_redirections(words, index)
             continue
         if word == "command":
             index = _command_wrapped_command_index(words, index)
             if index is None:
                 return None
+            index = _skip_leading_redirections(words, index)
             continue
         return None
     return None

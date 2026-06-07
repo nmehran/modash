@@ -145,6 +145,85 @@ class CompileRegressionTestCase(unittest.TestCase):
 
                 project.assert_compiled_matches(self, "main.sh")
 
+    def test_static_negated_source_status_matches_bash(self):
+        cases = {
+            "source zero": ("! source ./dep.sh\nprintf 'status:%s\\n' \"$?\"\n", "return 0\n"),
+            "source nonzero": ("! source ./dep.sh\nprintf 'status:%s\\n' \"$?\"\n", "return 7\n"),
+            "dot zero": ("! . ./dep.sh\nprintf 'status:%s\\n' \"$?\"\n", "return 0\n"),
+            "dot nonzero": ("! . ./dep.sh\nprintf 'status:%s\\n' \"$?\"\n", "return 7\n"),
+        }
+        for name, (script, dependency) in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("dep.sh", "printf 'dep\\n'\n" + dependency)
+                project.write("main.sh", script)
+
+                project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_interleaved_redirection_source_forms_are_merged(self):
+        cases = {
+            "assignment redirection source": (
+                "VAR=foo > out.txt source ./dep.sh\n"
+                "printf 'after:%s\\n' \"${VAR:-}\"\n"
+                "cat out.txt\n",
+                "printf 'dep:%s\\n' \"$VAR\"\n",
+                "VAR=foo > out.txt source ./dep.sh",
+            ),
+            "assignment command source": (
+                "VAR=foo command source ./dep.sh\n"
+                "printf 'after:%s\\n' \"${VAR:-}\"\n",
+                "printf 'dep:%s\\n' \"$VAR\"\n",
+                "VAR=foo command source ./dep.sh",
+            ),
+            "command redirection source": (
+                "command > out.txt source ./dep.sh\n"
+                "printf 'after\\n'\n"
+                "cat out.txt\n",
+                "printf 'dep\\n'\n",
+                "command > out.txt source ./dep.sh",
+            ),
+            "builtin redirection source": (
+                "builtin > out.txt source ./dep.sh\n"
+                "printf 'after\\n'\n"
+                "cat out.txt\n",
+                "printf 'dep\\n'\n",
+                "builtin > out.txt source ./dep.sh",
+            ),
+            "leading redirection command source": (
+                "2> err.txt command source ./dep.sh\n"
+                "printf 'after\\n'\n"
+                "cat err.txt\n",
+                "printf 'dep\\n' >&2\n",
+                "2> err.txt command source ./dep.sh",
+            ),
+        }
+        for name, (script, dependency, live_source) in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("dep.sh", dependency)
+                project.write("main.sh", script)
+                compiled = project.compile("main.sh", mode="executable")
+                expected = project.run("main.sh")
+                actual = project.run(compiled)
+                compiled_text = compiled.read_text(encoding="utf-8")
+                bash_check = subprocess.run(["bash", "-n", str(compiled)], text=True, capture_output=True)
+
+            self.assertEqual(bash_check.returncode, 0, bash_check.stderr)
+            self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+            self.assertEqual(actual.stdout, expected.stdout)
+            self.assertNotIn(live_source, compiled_text)
+
+    def test_static_same_line_case_source_with_tail_matches_bash(self):
+        with ScriptProject() as project:
+            project.write("a.sh", "printf 'A\\n'\n")
+            project.write(
+                "main.sh",
+                "case x in\n"
+                "  x) source ./a.sh; printf 'after\\n' ;;\n"
+                "esac\n"
+                "printf 'done\\n'\n",
+            )
+
+            project.assert_compiled_matches(self, "main.sh")
+
     def test_missing_source_diagnostic_matches_bash_file_and_line(self):
         with ScriptProject() as project:
             entrypoint = project.write(
@@ -3446,10 +3525,6 @@ class CompileRegressionTestCase(unittest.TestCase):
                 'case "$ENV" in\n  "") DEP=./prod.sh ;;\nesac\nsource "$DEP"\n',
                 'source "$DEP"',
             ),
-            "case hidden eval source": (
-                'case "$ENV" in\n  prod) COMMAND="source ./prod.sh"; eval "$COMMAND" ;;\nesac\n',
-                'eval "$COMMAND"',
-            ),
             "case disabled extglob pattern": (
                 'ENV=prod\ncase "$ENV" in\n  @(prod|stage)) source ./prod.sh ;;\nesac\n',
                 'case "$ENV" in',
@@ -3481,14 +3556,6 @@ class CompileRegressionTestCase(unittest.TestCase):
             "branch-dependent function return": (
                 'load_dep() {\n  if [[ -n "$SKIP" ]]; then return 0; fi\n  source ./dep.sh\n}\nload_dep\n',
                 'if [[ -n "$SKIP" ]]',
-            ),
-            "assignment-prefixed source": (
-                'FOO=bar source ./dep.sh\n',
-                'FOO=bar source ./dep.sh',
-            ),
-            "assignment-prefixed command source": (
-                'FOO=bar command source ./dep.sh\n',
-                'FOO=bar command source ./dep.sh',
             ),
         }
 
