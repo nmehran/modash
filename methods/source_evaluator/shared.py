@@ -67,6 +67,7 @@ from methods.source_patterns import (
 from methods.source_resolver import (
     FailglobExpansionError,
     MISSING_SOURCE,
+    MISSING_SOURCE_INVALID_OPTION,
     MISSING_SOURCE_NO_FILENAME,
     SOURCE_EXPANSION_FAILURE,
     SOURCE_EXPANSION_FAILURE_RETURN,

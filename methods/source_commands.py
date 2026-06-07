@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -55,6 +56,8 @@ class SourceCommandInvocation:
     arguments: tuple[str, ...] = ()
     words: tuple[str, ...] = ()
     wrapped: bool = False
+    option_terminator: bool = False
+    invalid_option: str | None = None
 
 
 def clean_shell_word(word: str):
@@ -84,6 +87,7 @@ def source_command_word_index(words: Sequence[str]):
 
 def source_command_position(words: Sequence[str]):
     command_start = 0
+    command_start = _skip_leading_redirections(words, command_start)
     command_start = _skip_negation_and_assignments(words, command_start)
     effective_start = _source_effective_command_start(words, command_start)
     effective_command_start = _source_command_start_for_effective_start(words, command_start, effective_start)
@@ -134,10 +138,23 @@ def _skip_negation_and_assignments(words: Sequence[str], index: int):
         start = index
         while index < len(words) and words[index] == "!":
             index += 1
+        index = _skip_leading_redirections(words, index)
         while index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[index]):
             index += 1
+        index = _skip_leading_redirections(words, index)
         if index == start:
             break
+    return index
+
+
+def _skip_leading_redirections(words: Sequence[str], index: int):
+    while index < len(words):
+        redirection = _redirection_token_kind(words[index])
+        if redirection is None:
+            break
+        index += 1
+        if redirection == "separate-target" and index < len(words):
+            index += 1
     return index
 
 
@@ -168,6 +185,7 @@ def _assignment_prefix_start(words: Sequence[str], start: int, source_index: int
 def _source_effective_command_start(words: Sequence[str], index: int):
     while index < len(words) and words[index] == "!":
         index += 1
+    index = _skip_leading_redirections(words, index)
     while index < len(words) and words[index] in SOURCE_COMMAND_PREFIX_WORDS:
         word = words[index]
         index += 1
@@ -248,7 +266,7 @@ def _source_command_invocation_from_words(
     source_words = _source_path_and_arguments(words, source_index, stop_at_shell_control)
     if source_words is None:
         return None
-    source_path, arguments, source_path_index = source_words
+    source_path, arguments, source_path_index, option_terminator, invalid_option = source_words
     source_word_count = 1 + len(arguments)
 
     wrapped = source_index != command_start
@@ -277,6 +295,12 @@ def _source_command_invocation_from_words(
                 return None
             source_site = command[command_start_token:].strip()
             source_site_column_offset = command_start_token
+        elif source_index > 0:
+            command_start_token = shell_word_start(command, quoted_words, 0)
+            if command_start_token is None:
+                return None
+            source_site = command[command_start_token:].strip()
+            source_site_column_offset = command_start_token
         else:
             source_site = command[token_start:].strip()
             source_site_column_offset = token_start
@@ -294,16 +318,23 @@ def _source_command_invocation_from_words(
         arguments=arguments,
         words=words,
         wrapped=wrapped,
+        option_terminator=option_terminator,
+        invalid_option=invalid_option,
     )
 
 
 def _source_path_and_arguments(words: Sequence[str], source_index: int, stop_at_shell_control: bool):
     source_path_index = source_index + 1
+    option_terminator = False
     if source_path_index < len(words) and clean_shell_word(words[source_path_index]) == "--":
+        option_terminator = True
         source_path_index += 1
     if source_path_index >= len(words):
         return None
     source_path = clean_shell_word(words[source_path_index])
+    invalid_option = None
+    if not option_terminator and _invalid_source_option_word(source_path):
+        invalid_option = _source_option_diagnostic_word(source_path)
     arguments = []
     for word in words[source_path_index + 1:]:
         cleaned = clean_shell_word(word)
@@ -314,7 +345,47 @@ def _source_path_and_arguments(words: Sequence[str], source_index: int, stop_at_
         ):
             break
         arguments.append(cleaned)
-    return source_path, tuple(arguments), source_path_index
+    return source_path, tuple(arguments), source_path_index, option_terminator, invalid_option
+
+
+def _invalid_source_option_word(word: str):
+    return word.startswith("-") and word != "-"
+
+
+def _source_option_diagnostic_word(word: str):
+    if word.startswith("--"):
+        return "--"
+    return word[:2]
+
+
+def invalid_source_option_word(word: str):
+    return _invalid_source_option_word(word)
+
+
+def source_option_diagnostic_word(word: str):
+    return _source_option_diagnostic_word(word)
+
+
+def _redirection_token_kind(word: str) -> str | None:
+    if _redirection_word_is_heredoc(word):
+        return "unsupported"
+    if _redirection_word_needs_target(word):
+        return "separate-target"
+    if _redirection_word_has_target(word):
+        return "combined-target"
+    return None
+
+
+def _redirection_word_is_heredoc(word: str):
+    return bool(re.match(r"^(?:[0-9]+)?<<", word))
+
+
+def _redirection_word_needs_target(word: str):
+    return bool(re.fullmatch(r"(?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|)", word))
+
+
+def _redirection_word_has_target(word: str):
+    return bool(re.match(r"^(?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|).+", word))
 
 
 def shell_word_start(command: str, words: Sequence[str], word_index: int):

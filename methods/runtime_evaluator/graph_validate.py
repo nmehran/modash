@@ -33,6 +33,7 @@ from methods.compile_renderer import find_unquoted_substring
 from methods.shell.line import get_commands
 from methods.source_commands import is_source_like_command_text, is_trace_wrapper_source_command, source_command_invocation
 from methods.source_resolver import parse_shell_words_preserving_quotes, strip_shell_word_quotes
+from methods.source_words import ASSIGNMENT_WORD_PATTERN
 def load_observed_source_graph(path: str | os.PathLike):
     graph_path = Path(path)
     if not graph_path.is_file():
@@ -178,7 +179,7 @@ _positive_int = partial(runtime_schema.positive_int, error_factory=_schema_error
 _nonnegative_int = partial(runtime_schema.nonnegative_int, error_factory=_schema_error)
 _integer = partial(runtime_schema.integer, error_factory=_schema_error)
 
-SOURCE_FAILURE_KINDS = frozenset({"file", "missing", "directory", "unreadable", "no-argument"})
+SOURCE_FAILURE_KINDS = frozenset({"file", "missing", "directory", "unreadable", "no-argument", "invalid-option"})
 
 def _source_failure_kind(value):
     failure_kind = _exact_string(value, "edges[].failure_kind")
@@ -353,6 +354,15 @@ def _validate_edge_xtrace(edge, xtrace, process_index, call_site, source_identit
         raise RuntimeSourceGraphError("edges[].call_site.command must be a replayable source command")
     if not _is_trusted_xtrace_source_command(xtrace["command"]):
         raise RuntimeSourceGraphError("edges[].xtrace.command must be a source-like command")
+    if (
+        _is_assignment_prefixed_builtin_source(command=call_site["command"])
+        or _is_assignment_prefixed_builtin_source(command=xtrace["command"])
+    ):
+        raise RuntimeSourceGraphError(
+            "runtime source graph cannot trust assignment-prefixed builtin source; "
+            "the trace wrapper cannot preserve caller mutation semantics",
+            code="runtime.graph.nontransparent_builtin_source",
+        )
 
 def _ensure_source_failure_edges_still_current(graph):
     for edge in graph["edges"]:
@@ -361,6 +371,8 @@ def _ensure_source_failure_edges_still_current(graph):
             continue
         path = Path(edge["resolved_path"])
         if failure_kind == "no-argument":
+            continue
+        if failure_kind == "invalid-option":
             continue
         if failure_kind == "missing":
             if path.exists() or path.is_symlink():
@@ -438,6 +450,24 @@ def _is_trusted_xtrace_source_command(command: str):
 
 def _is_trace_wrapper_source_command(command: str):
     return is_trace_wrapper_source_command(command)
+
+
+def _is_assignment_prefixed_builtin_source(command: str):
+    for segment in get_commands(command.strip()):
+        invocation = source_command_invocation(segment.strip(), stop_at_shell_control=True)
+        if invocation is None:
+            continue
+        words = invocation.words
+        builtin_index = None
+        for index in range(invocation.source_index):
+            if words[index] == "builtin":
+                builtin_index = index
+                break
+        if builtin_index is None:
+            continue
+        if any(ASSIGNMENT_WORD_PATTERN.match(word) for word in words[:builtin_index]):
+            return True
+    return False
 
 def _coerce_observation(observation):
     if isinstance(observation, RuntimeSourceObservation):

@@ -177,6 +177,34 @@ class SourceRegressionTestCase(unittest.TestCase):
                 self.assertEqual(invocation.arguments, ("arg",))
                 self.assertEqual(invocation.source_expression, "./dep.sh arg")
 
+    def test_source_invalid_options_and_leading_redirections_are_parsed(self):
+        from methods.source_resolver import source_command_invocation
+
+        invalid_cases = {
+            "short": ("source -p", "-p"),
+            "compact": ("source -abc", "-a"),
+            "long": ("source --made-up", "--"),
+            "dot": (". -p", "-p"),
+        }
+        for name, (command, diagnostic) in invalid_cases.items():
+            with self.subTest(name=name):
+                invocation = source_command_invocation(command)
+                self.assertIsNotNone(invocation)
+                self.assertEqual(invocation.source_path, command.split()[-1])
+                self.assertEqual(invocation.invalid_option, diagnostic)
+
+        dash_filename = source_command_invocation("source -- -p")
+        self.assertIsNotNone(dash_filename)
+        self.assertTrue(dash_filename.option_terminator)
+        self.assertEqual(dash_filename.source_path, "-p")
+        self.assertIsNone(dash_filename.invalid_option)
+
+        leading = source_command_invocation("> out.txt source ./dep.sh")
+        self.assertIsNotNone(leading)
+        self.assertEqual(leading.source_expression, "./dep.sh")
+        self.assertEqual(leading.source_site, "> out.txt source ./dep.sh")
+        self.assertEqual(leading.source_path, "./dep.sh")
+
     def test_source_command_parser_matrix_stays_consistent(self):
         from methods.source_commands import source_command_index
         from methods.source_resolver import (

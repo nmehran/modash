@@ -588,7 +588,12 @@ class SourceEvaluatorSupportMixin:
                 break
         invocation = source_command_invocation(stripped_text)
         if invocation is not None:
-            if invocation.command_start_index != 0:
+            if (
+                invocation.command_start_index != 0
+                and not SourceEvaluatorSupportMixin._plain_source_prefix_words(
+                    invocation.words[:invocation.source_index]
+                )
+            ):
                 return False
             if not invocation.wrapped:
                 return True
@@ -599,6 +604,23 @@ class SourceEvaluatorSupportMixin:
             or stripped_text.startswith(". ")
             or stripped_text == "."
         )
+
+    @staticmethod
+    def _plain_source_prefix_words(words):
+        index = 0
+        while index < len(words):
+            word = words[index]
+            if word == "!":
+                index += 1
+                continue
+            if re.fullmatch(r"(?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|)", word):
+                index += 2
+                continue
+            if re.match(r"^(?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|).+", word):
+                index += 1
+                continue
+            return False
+        return True
 
     @staticmethod
     def _with_occurrence_models(events: list[SourceEvent]):

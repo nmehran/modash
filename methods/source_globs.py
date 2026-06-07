@@ -15,7 +15,12 @@ from methods.source_words import (
 UNSUPPORTED_GLOB_OPTIONS = frozenset()
 MISSING_SOURCE = "missing-source"
 MISSING_SOURCE_NO_FILENAME = "missing-source-no-filename"
-MISSING_SOURCE_REPLACEMENT_KINDS = frozenset({MISSING_SOURCE, MISSING_SOURCE_NO_FILENAME})
+MISSING_SOURCE_INVALID_OPTION = "missing-source-invalid-option"
+MISSING_SOURCE_REPLACEMENT_KINDS = frozenset({
+    MISSING_SOURCE,
+    MISSING_SOURCE_NO_FILENAME,
+    MISSING_SOURCE_INVALID_OPTION,
+})
 SOURCE_EXPANSION_FAILURE = "source-expansion-failure"
 SOURCE_EXPANSION_FAILURE_RETURN = "source-expansion-failure-return"
 SOURCE_EXPANSION_FAILURE_REPLACEMENT_KINDS = frozenset({
@@ -36,6 +41,8 @@ def missing_source_status(replacement_kind: str):
     if replacement_kind == MISSING_SOURCE:
         return 1
     if replacement_kind == MISSING_SOURCE_NO_FILENAME:
+        return 2
+    if replacement_kind == MISSING_SOURCE_INVALID_OPTION:
         return 2
     raise ValueError(f"unknown missing-source replacement kind: {replacement_kind}")
 
@@ -433,5 +440,4 @@ def expand_glob_word(
         glob_matches.append(GlobMatch(word=match, path=resolved_path, is_file=is_file))
 
     return tuple(glob_matches)
-
 

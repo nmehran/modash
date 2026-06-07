@@ -5,9 +5,11 @@ from fnmatch import fnmatch
 from methods.shell_commands import create_command_pattern, extract_bash_commands
 from methods.shell_text import strip_matching_quotes
 from methods.source_commands import SOURCE_PATTERN
+from methods.source_commands import source_command_invocation as shared_source_command_invocation
 from methods.source_errors import FailglobExpansionError, UnsupportedSourceError
 from methods.source_globs import (
     MISSING_SOURCE,
+    MISSING_SOURCE_INVALID_OPTION,
     MISSING_SOURCE_NO_FILENAME,
     MISSING_SOURCE_REPLACEMENT_KINDS,
     SOURCE_EXPANSION_FAILURE,
@@ -50,8 +52,6 @@ def source_command_index(command: str):
 
 
 def source_command_invocation(command: str):
-    from methods.source_commands import source_command_invocation as shared_source_command_invocation
-
     return shared_source_command_invocation(command)
 
 
@@ -312,6 +312,31 @@ class SourceResolver:
         if '`' in source_expression:
             raise UnsupportedSourceError(f"unsupported backtick source command: {source_site.strip()}")
 
+        source_invocation = shared_source_command_invocation(source_site, stop_at_shell_control=True)
+        invalid_option = source_invocation.invalid_option if source_invocation is not None else None
+        if invalid_option is None and (source_invocation is None or not source_invocation.option_terminator):
+            expression_invocation = shared_source_command_invocation(
+                f"source {source_expression}",
+                stop_at_shell_control=True,
+            )
+            invalid_option = expression_invocation.invalid_option if expression_invocation is not None else None
+        if invalid_option is not None:
+            return _missing_source_result(
+                invalid_option,
+                source_expression,
+                source_site,
+                context,
+                MISSING_SOURCE_INVALID_OPTION,
+            )
+        if _source_site_has_no_source_path(source_site):
+            return _missing_source_result(
+                "",
+                source_expression,
+                source_site,
+                context,
+                MISSING_SOURCE_NO_FILENAME,
+            )
+
         if (
             has_unquoted_glob(source_expression)
             or has_unquoted_brace_expansion(source_expression)
@@ -511,3 +536,23 @@ class SourceResolver:
                     resolved_sources.append(resolved_source)
 
         return resolved_sources
+
+
+def _source_site_has_no_source_path(source_site: str):
+    try:
+        words = [strip_shell_word_quotes(word) for word in parse_shell_words_preserving_quotes(source_site)]
+    except UnsupportedSourceError:
+        return False
+    index = 0
+    while index < len(words) and ASSIGNMENT_WORD_PATTERN.match(words[index]):
+        index += 1
+    if index < len(words) and words[index] in {"builtin", "command"}:
+        index += 1
+        while index < len(words) and words[index].startswith("-") and words[index] != "--":
+            index += 1
+        if index < len(words) and words[index] == "--":
+            index += 1
+    if index >= len(words) or words[index] not in {"source", "."}:
+        return False
+    arguments = words[index + 1:]
+    return not arguments or arguments == ["--"]

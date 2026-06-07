@@ -75,6 +75,52 @@ class CompileRegressionTestCase(unittest.TestCase):
 
                 project.assert_compiled_matches(self, entry_path, cwd=cwd)
 
+    def test_static_invalid_source_option_matches_bash_and_allows_followup_source(self):
+        with ScriptProject() as project:
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            project.write(
+                "main.sh",
+                "source -p 2>err.txt || true\n"
+                "if grep -q 'invalid option' err.txt; then\n"
+                "  source ./dep.sh\n"
+                "fi\n"
+                "cat err.txt\n"
+                "printf 'done\\n'\n",
+            )
+
+            project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_source_option_terminator_allows_dash_filename(self):
+        with ScriptProject() as project:
+            project.write("-p", "printf 'dashp:%s\\n' \"$1\"\n")
+            project.write(
+                "main.sh",
+                "source -- -p arg\n"
+                "printf 'done\\n'\n",
+            )
+
+            project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_leading_source_redirection_is_merged(self):
+        with ScriptProject() as project:
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            project.write(
+                "main.sh",
+                "> out.txt source ./dep.sh\n"
+                "printf 'after\\n'\n"
+                "cat out.txt\n",
+            )
+
+            compiled = project.compile("main.sh", mode="executable")
+            expected = project.run("main.sh")
+            actual = project.run(compiled)
+            compiled_text = compiled.read_text(encoding="utf-8")
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stderr)
+        self.assertEqual(actual.stdout, expected.stdout)
+        self.assertEqual(actual.stderr, expected.stderr)
+        self.assertNotIn("> out.txt source ./dep.sh", compiled_text)
+
     def test_missing_source_diagnostic_matches_bash_file_and_line(self):
         with ScriptProject() as project:
             entrypoint = project.write(

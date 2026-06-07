@@ -149,7 +149,10 @@ def _source_failure_kind(event, xtrace, source_fingerprint_paths):
     resolved_path = str(Path(event.resolved_path).resolve(strict=False))
     if resolved_path in source_fingerprint_paths:
         return "file"
-    if not event.arguments and source_command_invocation(xtrace.command, normalize_trace_wrappers=True) is None:
+    invocation = source_command_invocation(xtrace.command, normalize_trace_wrappers=True)
+    if invocation is not None and invocation.invalid_option is not None:
+        return "invalid-option"
+    if not event.arguments and invocation is None:
         return "no-argument"
     resolved = Path(resolved_path)
     if resolved.is_dir():

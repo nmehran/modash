@@ -45,7 +45,10 @@ class _ReplayEdge:
     def source_value(self) -> str:
         if self.failure_kind == "no-argument":
             return ""
-        invocation = source_command_invocation(_first_source_segment(self.xtrace_command) or "")
+        invocation = source_command_invocation(
+            _first_source_segment(self.xtrace_command) or "",
+            normalize_trace_wrappers=True,
+        )
         if invocation is None:
             return self.resolved_path
         try:

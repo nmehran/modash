@@ -806,14 +806,16 @@ def _source_argv_words_and_redirections_for_candidate(candidate: _SourceCandidat
         source_words = raw_words[source_index + 1:source_index + 1]
     else:
         source_word_count = 1 + len(invocation.arguments)
+        prefix_words = raw_words[:invocation.source_index]
         source_words = raw_words[invocation.source_path_index:invocation.source_path_index + source_word_count]
+    _prefix_argv_words, leading_redirection_words = _split_source_redirections(prefix_words if invocation is not None else ())
     argv_words, redirection_words = _split_source_redirections(source_words)
     if not argv_words and not is_source_like_command_text(probe):
         raise RuntimeObservedCompileError(
             f"could not render source argv validation for observed source site: {candidate.text!r}",
             code="runtime.compile.mapping_failed",
         )
-    return argv_words, redirection_words
+    return argv_words, leading_redirection_words + redirection_words
 
 
 def _source_assignment_words_for_candidate(candidate: _SourceCandidate) -> tuple[str, ...]:
@@ -1473,6 +1475,10 @@ def _source_site_replay_prefix(source_site: str, separator: str) -> str:
             index += 1
             continue
         if word == "do":
+            prefix_words.append(raw_words[index])
+            index += 1
+            continue
+        if word.endswith(")") and not ASSIGNMENT_WORD_PATTERN.match(word):
             prefix_words.append(raw_words[index])
             index += 1
             continue

@@ -594,6 +594,9 @@ __modash_validate_source_failure_kind() {{
     no-argument)
       [[ -z $source_path ]] || __modash_abort "observed no-argument source drift"
       ;;
+    invalid-option)
+      [[ $source_path == -?* && $source_path != - ]] || __modash_abort "observed invalid source option drift"
+      ;;
     *)
       __modash_abort "observed source failure kind drift"
       ;;
@@ -809,6 +812,10 @@ def _source_failure_message(edge: _ReplayEdge) -> str:
     if edge.failure_kind == "no-argument":
         command_name = _source_failure_command_name(edge)
         return f"{command_name}: filename argument required\n{command_name}: usage: {command_name} filename [arguments]"
+    if edge.failure_kind == "invalid-option":
+        command_name = _source_failure_command_name(edge)
+        invalid_option = _source_failure_invalid_option(edge)
+        return f"{command_name}: {invalid_option}: invalid option\n{command_name}: usage: {command_name} filename [arguments]"
     if edge.failure_kind == "directory":
         return f"{_source_failure_command_name(edge)}: {value}: is a directory"
     if edge.failure_kind == "unreadable":
@@ -817,10 +824,21 @@ def _source_failure_message(edge: _ReplayEdge) -> str:
 
 def _source_failure_command_name(edge: _ReplayEdge) -> str:
     source_segment = _first_source_segment(edge.xtrace_command) or ""
-    invocation = source_command_invocation(source_segment)
+    invocation = source_command_invocation(source_segment, normalize_trace_wrappers=True)
     if invocation is not None:
         return invocation.command_name
     for word in source_segment.split():
         if word in {"source", "."}:
             return word
     return "source"
+
+
+def _source_failure_invalid_option(edge: _ReplayEdge) -> str:
+    source_segment = _first_source_segment(edge.xtrace_command) or ""
+    invocation = source_command_invocation(source_segment, normalize_trace_wrappers=True)
+    if invocation is not None and invocation.invalid_option is not None:
+        return invocation.invalid_option
+    value = edge.source_value
+    if value.startswith("--"):
+        return "--"
+    return value[:2] if value.startswith("-") else value

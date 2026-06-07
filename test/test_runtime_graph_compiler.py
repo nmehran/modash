@@ -3147,6 +3147,134 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "after\ndep\n")
 
+    def test_runtime_compiler_replays_invalid_source_option_failure(self):
+        with ScriptProject() as project:
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            project.write(
+                "main.sh",
+                "source -p 2>err.txt || true\n"
+                "if grep -q 'invalid option' err.txt; then\n"
+                "  source ./dep.sh\n"
+                "fi\n"
+                "cat err.txt\n"
+                "printf 'done\\n'\n",
+            )
+            expected = project.run("main.sh")
+            compiled, graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual([edge["failure_kind"] for edge in graph["edges"]], ["invalid-option", "file"])
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
+        self.assertEqual(result.stderr, expected.stderr)
+
+    def test_runtime_compiler_source_option_terminator_allows_dash_filename(self):
+        with ScriptProject() as project:
+            project.write("-p", "printf 'dashp:%s\\n' \"$1\"\n")
+            project.write(
+                "main.sh",
+                "source -- -p arg\n"
+                "printf 'done\\n'\n",
+            )
+            compiled, graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(graph["edges"][0]["failure_kind"], "file")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "dashp:arg\ndone\n")
+
+    def test_runtime_compiler_preserves_leading_source_redirections(self):
+        cases = {
+            "stdout": (
+                "> out.txt source ./dep.sh\n"
+                "printf 'after\\n'\n"
+                "cat out.txt\n",
+                "printf 'dep\\n'\n",
+            ),
+            "stderr": (
+                "2> err.txt source ./dep.sh\n"
+                "printf 'after\\n'\n"
+                "cat err.txt\n",
+                "printf 'dep\\n' >&2\n",
+            ),
+            "stdin": (
+                "< input.txt source ./dep.sh\n"
+                "printf 'after\\n'\n",
+                "read value\n"
+                "printf 'dep:%s\\n' \"$value\"\n",
+            ),
+        }
+        for name, (script, dep) in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("input.txt", "IN\n")
+                project.write("dep.sh", dep)
+                project.write("main.sh", script)
+                expected = project.run("main.sh")
+                compiled, _graph = self.compile_observed(project, "main.sh")
+                result = project.run(compiled)
+
+            self.assertEqual(result.returncode, expected.returncode, result.stdout)
+            self.assertEqual(result.stdout, expected.stdout)
+            self.assertEqual(result.stderr, expected.stderr)
+
+    def test_runtime_compiler_replays_same_line_case_source_spans(self):
+        cases = {
+            "semicolon": "case x in\n  x) source ./dep.sh; printf 'case-after\\n' ;;\nesac\nprintf 'done\\n'\n",
+            "and": "case x in\n  x) source ./dep.sh && printf 'case-after\\n' ;;\nesac\nprintf 'done\\n'\n",
+        }
+        for name, script in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("dep.sh", "printf 'dep\\n'\n")
+                project.write("main.sh", script)
+                expected = project.run("main.sh")
+                compiled, _graph = self.compile_observed(project, "main.sh")
+                result = project.run(compiled)
+                bash_check = subprocess.run(["bash", "-n", str(compiled)], text=True, capture_output=True)
+
+            self.assertEqual(bash_check.returncode, 0, bash_check.stderr)
+            self.assertEqual(result.returncode, expected.returncode, result.stdout)
+            self.assertEqual(result.stdout, expected.stdout)
+            self.assertEqual(result.stderr, expected.stderr)
+
+    def test_runtime_compiler_replays_brace_condition_source_span(self):
+        with ScriptProject() as project:
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            project.write(
+                "main.sh",
+                "if { source ./dep.sh; }; then\n"
+                "  printf 'then\\n'\n"
+                "fi\n",
+            )
+            expected = project.run("main.sh")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+            bash_check = subprocess.run(["bash", "-n", str(compiled)], text=True, capture_output=True)
+
+        self.assertEqual(bash_check.returncode, 0, bash_check.stderr)
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
+        self.assertEqual(result.stderr, expected.stderr)
+
+    def test_runtime_graph_rejects_assignment_prefixed_builtin_source(self):
+        with ScriptProject() as project:
+            project.write(
+                "dep.sh",
+                "printf 'dep:%s\\n' \"$VAR\"\n"
+                "VAR=bar\n",
+            )
+            project.write(
+                "main.sh",
+                "VAR=old\n"
+                "VAR=foo builtin source ./dep.sh\n"
+                "printf 'after:%s\\n' \"$VAR\"\n",
+            )
+
+            self.assert_compile_observed_error(
+                project,
+                "main.sh",
+                code="runtime.graph.nontransparent_builtin_source",
+            )
+
     def test_runtime_compiler_preserves_source_process_substitution_redirections(self):
         cases = {
             "input": (

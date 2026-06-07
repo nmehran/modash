@@ -202,6 +202,12 @@ def _source_candidates(unit: _RewriteUnit) -> tuple[_SourceCandidate, ...]:
     collect(ir.nodes)
     for line, command, physical_lines in _continued_source_sites(unit.content):
         add_site(line, command, end_line=line + len(physical_lines) - 1, physical_lines=physical_lines)
+    modeled_lines = {line for line, *_rest in raw_sites}
+    for line_number, line_text in enumerate(unit.content.splitlines(), start=1):
+        if line_number in modeled_lines:
+            continue
+        for text in _line_source_operation_sites(line_text):
+            add_site(line_number, text)
     candidates: list[_SourceCandidate] = []
     ordinals_by_line: dict[int, int] = {}
     for line, text, separator, status_before, repeatable, end_line, physical_lines in raw_sites:
@@ -228,7 +234,7 @@ def _source_candidates(unit: _RewriteUnit) -> tuple[_SourceCandidate, ...]:
 def _source_site_text_for_candidate(node: SourceSite) -> str:
     text = node.text.strip()
     if text.startswith("{") and node.source_site:
-        return node.source_site
+        return _source_operation_text_for_candidate(node.source_site) or node.source_site
     return node.text
 
 
@@ -280,6 +286,58 @@ def _continued_source_command(logical: str) -> tuple[str, str] | None:
     if replacement_command is None:
         return None
     return command, replacement_command
+
+
+def _line_source_operation_sites(line: str) -> tuple[str, ...]:
+    sites: list[str] = []
+    for command in get_commands(line.strip()):
+        text = _source_operation_text_for_candidate(command.strip())
+        if text is not None:
+            sites.append(text)
+    return tuple(sites)
+
+
+def _source_operation_text_for_candidate(command: str) -> str | None:
+    invocation = source_command_invocation(command, stop_at_shell_control=True)
+    if invocation is None:
+        command = _strip_leading_control_keyword(command)
+        invocation = source_command_invocation(command, stop_at_shell_control=True)
+        if invocation is None:
+            return None
+    try:
+        raw_words = tuple(parse_shell_words_preserving_quotes(command))
+    except UnsupportedSourceError:
+        return invocation.source_site.strip()
+    start_index = _source_operation_start_word_index(invocation)
+    end_index = invocation.source_path_index + len(invocation.arguments)
+    start = shell_word_start(command, raw_words, start_index)
+    end_start = shell_word_start(command, raw_words, end_index)
+    if start is None or end_start is None:
+        return invocation.source_site.strip()
+    return command[start:end_start + len(raw_words[end_index])].strip()
+
+
+def _source_operation_start_word_index(invocation) -> int:
+    words = invocation.words
+    if any(
+        word == "{"
+        or word.endswith("{")
+        or (word.endswith(")") and not ASSIGNMENT_WORD_PATTERN.match(word))
+        for word in words[:invocation.source_index]
+    ):
+        return invocation.source_index
+    start_index = invocation.source_index
+    for index in range(invocation.source_index - 1, -1, -1):
+        word = words[index]
+        if word in {"command", "builtin"} or ASSIGNMENT_WORD_PATTERN.match(word) or _compiler_plan_redirection_word(word):
+            start_index = index
+            continue
+        break
+    return start_index
+
+
+def _compiler_plan_redirection_word(word: str) -> bool:
+    return bool(re.match(r"^(?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|)", word))
 
 
 def _continued_source_first_physical_fragment(line: str, logical: str) -> str | None:
@@ -457,6 +515,12 @@ def _condition_source_sites(condition: str) -> tuple[tuple[str, str, int | None]
             ir = LineParserFrontend().parse("<condition>", condition + "\n")
         except Exception:
             return ()
+        fallback_sites = [
+            (text, "", None)
+            for text in _line_source_operation_sites(condition)
+        ]
+        if fallback_sites:
+            return tuple(fallback_sites)
         return tuple((site.text, site.separator, None) for site in ir.source_sites)
 
     sites = []

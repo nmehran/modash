@@ -438,6 +438,7 @@ __modash_trace_source_common() {
   event_index=$(__modash_next_source_index)
 
   local caller_file caller_line cwd source_path resolved_path status source_arg_count track_functions
+  local source_option_terminator=0 invalid_source_option=""
   local source_size="" source_mtime_ns="" source_sha256=""
   local after_source_size="" after_source_mtime_ns="" after_source_sha256=""
   local function_name function_definition
@@ -446,6 +447,7 @@ __modash_trace_source_common() {
   source_args=("$@")
   normalized_source_args=("${source_args[@]}")
   if [[ ${normalized_source_args[0]-} == -- ]]; then
+    source_option_terminator=1
     normalized_source_args=("${normalized_source_args[@]:1}")
   fi
   source_arg_count=${#normalized_source_args[@]}
@@ -453,6 +455,10 @@ __modash_trace_source_common() {
   caller_line=${BASH_LINENO[1]:-1}
   cwd=$PWD
   source_path=${normalized_source_args[0]-}
+  if ((source_option_terminator == 0)) && [[ $source_path == -?* ]]; then
+    invalid_source_option=${source_path:0:2}
+    [[ $source_path == --* ]] && invalid_source_option=--
+  fi
   resolved_path=$(__modash_resolve_source_path "$source_path")
   track_functions=0
 
@@ -510,7 +516,11 @@ __modash_trace_source_common() {
     __modash_source_stack+=("$resolved_path")
   fi
 
-  if [[ -n $source_path && ! -e $resolved_path && ! -L $resolved_path ]]; then
+  if [[ -n $invalid_source_option ]]; then
+    builtin printf '%s: line %s: %s: %s: invalid option\n' "$caller_file" "$caller_line" "$builtin_name" "$invalid_source_option" >&2
+    builtin printf '%s: usage: %s filename [arguments]\n' "$builtin_name" "$builtin_name" >&2
+    status=2
+  elif [[ -n $source_path && ! -e $resolved_path && ! -L $resolved_path ]]; then
     builtin printf '%s: line %s: %s: No such file or directory\n' "$caller_file" "$caller_line" "$source_path" >&2
     status=1
   elif ((source_arg_count == 0)); then

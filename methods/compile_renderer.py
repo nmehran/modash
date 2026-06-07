@@ -21,6 +21,7 @@ from methods.source_commands import (
 )
 from methods.source_resolver import (
     ASSIGNMENT_WORD_PATTERN,
+    MISSING_SOURCE_INVALID_OPTION,
     MISSING_SOURCE_NO_FILENAME,
     SOURCE_EXPANSION_FAILURE_RETURN,
     UnsupportedSourceError,
@@ -140,6 +141,11 @@ def render_missing_source_failure(source_declaration, indent: str):
     if source_declaration.replacement_kind == MISSING_SOURCE_NO_FILENAME:
         messages = [
             f"{command_name}: filename argument required",
+            f"{command_name}: usage: {command_name} filename [arguments]",
+        ]
+    elif source_declaration.replacement_kind == MISSING_SOURCE_INVALID_OPTION:
+        messages = [
+            f"{command_name}: {source_declaration.source_value}: invalid option",
             f"{command_name}: usage: {command_name} filename [arguments]",
         ]
     else:
@@ -470,30 +476,36 @@ def render_source_site_replacement(
     indent: str,
     positional_frame_names: dict[str, str] | None = None,
 ):
+    declaration = declarations[0]
+    redirection_suffix = source_site_redirection_suffix(declaration.source_site)
     retained_declarations = [
         declaration for declaration in declarations
         if declaration.replacement_kind == "retained-source"
     ]
     if retained_declarations:
-        return f"{separator}{render_retained_source_dispatch(retained_declarations, render_source, indent, positional_frame_names)}"
+        replacement = render_retained_source_dispatch(retained_declarations, render_source, indent, positional_frame_names)
+        return append_source_site_redirections(f"{separator}{replacement}", redirection_suffix)
 
-    declaration = declarations[0]
     unique_paths = {source_declaration.path for source_declaration in declarations}
     if len(declarations) > 1 and len(unique_paths) > 1:
-        return f"{separator}{render_source_dispatch(declaration.source_expression, declarations, render_source, indent, positional_frame_names)}"
+        replacement = render_source_dispatch(declaration.source_expression, declarations, render_source, indent, positional_frame_names)
+        return append_source_site_redirections(f"{separator}{replacement}", redirection_suffix)
 
     if declaration.replacement_kind == "noop-source":
-        return f"{separator}:"
+        return append_source_site_redirections(f"{separator}:", redirection_suffix)
     if is_missing_source_replacement_kind(declaration.replacement_kind):
-        return f"{separator}{{\n{render_missing_source_failure(declaration, indent)}\n{indent}}}"
+        replacement = f"{separator}{{\n{render_missing_source_failure(declaration, indent)}\n{indent}}}"
+        return append_source_site_redirections(replacement, redirection_suffix)
     if is_source_expansion_failure_replacement_kind(declaration.replacement_kind):
         if declaration.replacement_kind == SOURCE_EXPANSION_FAILURE_RETURN:
-            return (
+            replacement = (
                 f"{separator}{{\n"
                 f"{render_source_expansion_failure(declaration, indent, return_from_function=True)}\n"
                 f"{indent}}}"
             )
-        return f"{separator}{{\n{render_source_expansion_failure(declaration, indent)}\n{indent}}} #"
+            return append_source_site_redirections(replacement, redirection_suffix)
+        replacement = f"{separator}{{\n{render_source_expansion_failure(declaration, indent)}\n{indent}}}"
+        return append_source_site_redirections(replacement, redirection_suffix) + " #"
 
     rendered_source = indent_shell_block(
         render_source(
@@ -510,7 +522,57 @@ def render_source_site_replacement(
         positional_frame_names,
         indent,
     )
-    return f"{separator}{{\n{rendered_source}\n{indent}}}"
+    replacement = f"{separator}{{\n{rendered_source}\n{indent}}}"
+    return append_source_site_redirections(replacement, redirection_suffix)
+
+
+def append_source_site_redirections(replacement: str, redirection_suffix: str):
+    if not redirection_suffix:
+        return replacement
+    return f"{replacement} {redirection_suffix}"
+
+
+def source_site_redirection_suffix(source_site: str):
+    invocation = source_command_invocation(source_site.strip(), stop_at_shell_control=True)
+    if invocation is None:
+        return ""
+    try:
+        raw_words = tuple(parse_shell_words_preserving_quotes(source_site.strip()))
+    except UnsupportedSourceError:
+        return ""
+    source_word_count = 1 + len(invocation.arguments)
+    prefix_words = raw_words[:invocation.source_index]
+    source_words = raw_words[invocation.source_path_index:invocation.source_path_index + source_word_count]
+    redirections = source_site_redirection_words(prefix_words) + source_site_redirection_words(source_words)
+    return " ".join(redirections)
+
+
+def source_site_redirection_words(words: tuple[str, ...]):
+    redirections: list[str] = []
+    index = 0
+    while index < len(words):
+        redirection = source_site_redirection_token_kind(words[index])
+        if redirection is None:
+            index += 1
+            continue
+        if redirection == "unsupported":
+            return ()
+        redirections.append(words[index])
+        index += 1
+        if redirection == "separate-target" and index < len(words):
+            redirections.append(words[index])
+            index += 1
+    return tuple(redirections)
+
+
+def source_site_redirection_token_kind(word: str):
+    if re.match(r"^(?:[0-9]+)?<<", word):
+        return "unsupported"
+    if re.fullmatch(r"(?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|)", word):
+        return "separate-target"
+    if re.match(r"^(?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|).+", word):
+        return "combined-target"
+    return None
 
 
 def source_declaration_groups(source_declarations):
