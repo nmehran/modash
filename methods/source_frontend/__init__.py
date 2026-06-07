@@ -125,13 +125,23 @@ class LineParserFrontend(
                     continue
 
                 text = ''.join(part or '' for part in (separator, command_name, arguments)).strip()
+                invocation = source_command_invocation(text)
+                if invocation is None:
+                    parsed_command_name = command_name.strip()
+                    source_expression = (arguments or '').strip()
+                    source_site = ""
+                else:
+                    parsed_command_name = invocation.command_name
+                    source_expression = invocation.source_expression
+                    source_site = invocation.source_site
                 column = match.start(2) + 1
                 is_control_flow = self._column_in_ranges(column, control_flow_source_ranges)
                 nodes.append(SourceSite(
                     location=SourceLocation(script_path, line_number, column),
                     text=text,
-                    command_name=command_name.strip(),
-                    source_expression=(arguments or '').strip(),
+                    command_name=parsed_command_name,
+                    source_expression=source_expression,
+                    source_site=source_site,
                     separator=(separator or '').strip(),
                     is_control_flow=is_control_flow,
                 ))

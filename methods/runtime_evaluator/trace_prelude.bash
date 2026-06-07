@@ -441,14 +441,18 @@ __modash_trace_source_common() {
   local source_size="" source_mtime_ns="" source_sha256=""
   local after_source_size="" after_source_mtime_ns="" after_source_sha256=""
   local function_name function_definition
-  local -a source_args explicit_source_args
+  local -a source_args normalized_source_args explicit_source_args
   local -A function_definitions_before
   source_args=("$@")
-  source_arg_count=${#source_args[@]}
+  normalized_source_args=("${source_args[@]}")
+  if [[ ${normalized_source_args[0]-} == -- ]]; then
+    normalized_source_args=("${normalized_source_args[@]:1}")
+  fi
+  source_arg_count=${#normalized_source_args[@]}
   caller_file=$(__modash_current_source_file "${BASH_SOURCE[2]:-}" "${FUNCNAME[2]:-}")
   caller_line=${BASH_LINENO[1]:-1}
   cwd=$PWD
-  source_path=${source_args[0]-}
+  source_path=${normalized_source_args[0]-}
   resolved_path=$(__modash_resolve_source_path "$source_path")
   track_functions=0
 
@@ -522,24 +526,24 @@ __modash_trace_source_common() {
   elif ((source_arg_count == 1)); then
     if ((${#__modash_caller_positionals[@]} > 0)); then
       if ((prior_status == 0)); then
-        builtin "$builtin_name" "$source_path" "${__modash_caller_positionals[@]}"
+        command "$builtin_name" "${source_args[@]}" "${__modash_caller_positionals[@]}"
       else
-        ( exit "$prior_status" ) || builtin "$builtin_name" "$source_path" "${__modash_caller_positionals[@]}"
+        ( exit "$prior_status" ) || command "$builtin_name" "${source_args[@]}" "${__modash_caller_positionals[@]}"
       fi
     else
       set --
       if ((prior_status == 0)); then
-        builtin "$builtin_name" "$source_path"
+        command "$builtin_name" "${source_args[@]}"
       else
-        ( exit "$prior_status" ) || builtin "$builtin_name" "$source_path"
+        ( exit "$prior_status" ) || command "$builtin_name" "${source_args[@]}"
       fi
     fi
     status=$?
   else
     if ((prior_status == 0)); then
-      builtin "$builtin_name" "${source_args[@]}"
+      command "$builtin_name" "${source_args[@]}"
     else
-      ( exit "$prior_status" ) || builtin "$builtin_name" "${source_args[@]}"
+      ( exit "$prior_status" ) || command "$builtin_name" "${source_args[@]}"
     fi
     status=$?
   fi
@@ -571,7 +575,7 @@ __modash_trace_source_common() {
 
   if ((source_arg_count > 0)) || ((status == 2)); then
     if ((source_arg_count > 1)); then
-      explicit_source_args=("${source_args[@]:1}")
+      explicit_source_args=("${normalized_source_args[@]:1}")
       __modash_emit_source_event_with_stack \
         "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$source_size" "$source_mtime_ns" "$source_sha256" "$status" "$prior_status" \
         "${explicit_source_args[@]}"
@@ -685,8 +689,6 @@ __modash_trace_run_child_bash() {
 }
 
 bash() {
-  local prior_status=$?
-  ( exit "$prior_status" )
   __modash_trace_run_child_bash bash "$@"
 }
 
@@ -727,8 +729,6 @@ __modash_env_launches_child_bash() {
 }
 
 env() {
-  local prior_status=$?
-  ( exit "$prior_status" )
   if __modash_env_launches_child_bash "$@"; then
     __modash_trace_run_child_bash env "$@"
     return

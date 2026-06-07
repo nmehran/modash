@@ -380,7 +380,7 @@ def _render_replay_group(
         )
     file_source_operation = redirected_validation + (
         _source_with_entry_status(
-            "builtin source <(__modash_emit_embedded_file \"$__modash_replay_target\") \"${__modash_replay_args[@]}\""
+            "command source <(__modash_emit_embedded_file \"$__modash_replay_target\") \"${__modash_replay_args[@]}\""
         )
         + "__modash_replay_actual_status=$?; "
     )
@@ -489,7 +489,7 @@ def _render_process_substitution_argument_replay_group(
     live_arguments = f" {argument_expression}" if argument_expression else ""
     file_source_operation = redirected_validation + (
         "__modash_live_source_path=$(__modash_materialize_embedded_file \"$__modash_replay_target\"); "
-        + _source_with_entry_status(f"builtin source \"$__modash_live_source_path\"{live_arguments}")
+        + _source_with_entry_status(f"command source \"$__modash_live_source_path\"{live_arguments}")
         + "__modash_replay_actual_status=$?; "
     )
     missing_source_operation = redirected_validation + (
@@ -806,7 +806,7 @@ def _source_argv_words_and_redirections_for_candidate(candidate: _SourceCandidat
         source_words = raw_words[source_index + 1:source_index + 1]
     else:
         source_word_count = 1 + len(invocation.arguments)
-        source_words = raw_words[invocation.source_index + 1:invocation.source_index + 1 + source_word_count]
+        source_words = raw_words[invocation.source_path_index:invocation.source_path_index + source_word_count]
     argv_words, redirection_words = _split_source_redirections(source_words)
     if not argv_words and not is_source_like_command_text(probe):
         raise RuntimeObservedCompileError(
@@ -1469,6 +1469,10 @@ def _source_site_replay_prefix(source_site: str, separator: str) -> str:
             index += 1
             continue
         if word == "!":
+            prefix_words.append(raw_words[index])
+            index += 1
+            continue
+        if word == "do":
             prefix_words.append(raw_words[index])
             index += 1
             continue

@@ -318,13 +318,20 @@ __modash_guard_exec_argv() {{
 }}
 
 __modash_validate_printf_v_target() {{
-  local target=$1
+  local target=$1 base subscript
   if [[ $target =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
     [[ $target != __modash_* ]] || __modash_abort "runtime replay cannot allow dynamic printf -v target"
     return
   fi
-  if [[ $target =~ ^([A-Za-z_][A-Za-z0-9_]*)\\[[A-Za-z0-9_./:+,@%-]+\\]$ ]]; then
-    [[ ${{BASH_REMATCH[1]}} != __modash_* ]] || __modash_abort "runtime replay cannot allow dynamic printf -v target"
+  if [[ $target =~ ^([A-Za-z_][A-Za-z0-9_]*)\\[(.*)\\]$ ]]; then
+    base=${{BASH_REMATCH[1]}}
+    subscript=${{BASH_REMATCH[2]}}
+    [[ $base != __modash_* ]] || __modash_abort "runtime replay cannot allow dynamic printf -v target"
+    case "$subscript" in
+      *'$'*|*'`'*|*';'*|*'&'*|*'|'*|*'<'*|*'>'*|*'('*|*')'*|*']'*)
+        __modash_abort "runtime replay cannot allow dynamic printf -v target"
+        ;;
+    esac
     return
   fi
   __modash_abort "runtime replay cannot allow dynamic printf -v target"

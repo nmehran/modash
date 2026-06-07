@@ -34,6 +34,18 @@ class CompileRegressionTestCase(unittest.TestCase):
         cases = {
             "relative source": ("main.sh", 'source ./dep.sh\necho "main"\n', {"dep.sh": 'echo "dep"\n'}, None),
             "dot source": ("main.sh", '. ./dep.sh\necho "main"\n', {"dep.sh": 'echo "dep"\n'}, None),
+            "source option terminator": (
+                "main.sh",
+                'source -- ./dep.sh arg1\necho "main:$VALUE"\n',
+                {"dep.sh": 'VALUE="$1"; echo "dep:$VALUE"\n'},
+                None,
+            ),
+            "dot option terminator": (
+                "main.sh",
+                '. -- ./dep.sh arg1\necho "main:$VALUE"\n',
+                {"dep.sh": 'VALUE="$1"; echo "dep:$VALUE"\n'},
+                None,
+            ),
             "parent relative source": (
                 "app/main.sh",
                 'source ../shared/dep.sh\necho "main"\n',
@@ -99,11 +111,18 @@ class CompileRegressionTestCase(unittest.TestCase):
             "builtin source": 'builtin source ./dep.sh builtin-source "two words"\n',
             "builtin dot": 'builtin . ./dep.sh builtin-dot\n',
             "builtin delimiter source": 'builtin -- source ./dep.sh builtin-delimiter-source\n',
+            "builtin source option terminator": 'builtin source -- ./dep.sh builtin-source-delimiter\n',
+            "builtin delimiter source option terminator": 'builtin -- source -- ./dep.sh builtin-double-delimiter\n',
             "builtin delimiter dot": 'builtin -- . ./dep.sh builtin-delimiter-dot\n',
+            "builtin dot option terminator": 'builtin . -- ./dep.sh builtin-dot-delimiter\n',
             "command source": 'command source ./dep.sh command-source\n',
+            "command source option terminator": 'command source -- ./dep.sh command-source-delimiter\n',
             "command dot": 'command . ./dep.sh command-dot\n',
+            "command dot option terminator": 'command . -- ./dep.sh command-dot-delimiter\n',
             "command path source": 'command -p source ./dep.sh command-path\n',
+            "command path source option terminator": 'command -p source -- ./dep.sh command-path-delimiter\n',
             "command delimiter source": 'command -- source ./dep.sh command-delimiter\n',
+            "command delimiter source option terminator": 'command -- source -- ./dep.sh command-double-delimiter\n',
         }
 
         for name, main_content in cases.items():

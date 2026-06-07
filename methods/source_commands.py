@@ -50,6 +50,7 @@ class SourceCommandInvocation:
     source_column_offset: int
     command_start_index: int
     source_index: int
+    source_path_index: int
     source_path: str
     arguments: tuple[str, ...] = ()
     words: tuple[str, ...] = ()
@@ -247,7 +248,7 @@ def _source_command_invocation_from_words(
     source_words = _source_path_and_arguments(words, source_index, stop_at_shell_control)
     if source_words is None:
         return None
-    source_path, arguments = source_words
+    source_path, arguments, source_path_index = source_words
     source_word_count = 1 + len(arguments)
 
     wrapped = source_index != command_start
@@ -256,7 +257,7 @@ def _source_command_invocation_from_words(
         return None
 
     if normalized:
-        source_expression_words = words[source_index + 1:source_index + 1 + source_word_count] if stop_at_shell_control else words[source_index + 1:]
+        source_expression_words = words[source_path_index:source_path_index + source_word_count] if stop_at_shell_control else words[source_path_index:]
         source_expression = " ".join(source_expression_words)
         source_site = " ".join(words)
         token_start = 0
@@ -266,9 +267,10 @@ def _source_command_invocation_from_words(
         if token_start is None:
             return None
         if stop_at_shell_control:
-            source_expression = " ".join(quoted_words[source_index + 1:source_index + 1 + source_word_count])
+            source_expression = " ".join(quoted_words[source_path_index:source_path_index + source_word_count])
         else:
-            source_expression = command[token_start + len(quoted_words[source_index]):].strip()
+            expression_start = shell_word_start(command, quoted_words, source_path_index)
+            source_expression = command[expression_start:].strip() if expression_start is not None else command[token_start + len(quoted_words[source_index]):].strip()
         if wrapped:
             command_start_token = shell_word_start(command, quoted_words, command_start)
             if command_start_token is None:
@@ -276,7 +278,7 @@ def _source_command_invocation_from_words(
             source_site = command[command_start_token:].strip()
             source_site_column_offset = command_start_token
         else:
-            source_site = f"{command_name} {source_expression}".strip()
+            source_site = command[token_start:].strip()
             source_site_column_offset = token_start
 
     return SourceCommandInvocation(
@@ -287,6 +289,7 @@ def _source_command_invocation_from_words(
         source_column_offset=token_start,
         command_start_index=command_start,
         source_index=source_index,
+        source_path_index=source_path_index,
         source_path=source_path,
         arguments=arguments,
         words=words,
@@ -295,9 +298,14 @@ def _source_command_invocation_from_words(
 
 
 def _source_path_and_arguments(words: Sequence[str], source_index: int, stop_at_shell_control: bool):
-    source_path = clean_shell_word(words[source_index + 1])
+    source_path_index = source_index + 1
+    if source_path_index < len(words) and clean_shell_word(words[source_path_index]) == "--":
+        source_path_index += 1
+    if source_path_index >= len(words):
+        return None
+    source_path = clean_shell_word(words[source_path_index])
     arguments = []
-    for word in words[source_index + 2:]:
+    for word in words[source_path_index + 1:]:
         cleaned = clean_shell_word(word)
         if stop_at_shell_control and (
             not cleaned
@@ -306,7 +314,7 @@ def _source_path_and_arguments(words: Sequence[str], source_index: int, stop_at_
         ):
             break
         arguments.append(cleaned)
-    return source_path, tuple(arguments)
+    return source_path, tuple(arguments), source_path_index
 
 
 def shell_word_start(command: str, words: Sequence[str], word_index: int):

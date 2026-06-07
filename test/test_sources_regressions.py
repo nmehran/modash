@@ -157,6 +157,26 @@ class SourceRegressionTestCase(unittest.TestCase):
         self.assertEqual(invocation.source_site, 'builtin -- source ./dep.sh arg')
         self.assertTrue(invocation.wrapped)
 
+    def test_source_option_terminator_is_not_treated_as_source_path(self):
+        from methods.source_resolver import source_command_invocation
+
+        cases = {
+            "source": ("source -- ./dep.sh arg", "source", 2),
+            "dot": (". -- ./dep.sh arg", ".", 2),
+            "command source": ("command source -- ./dep.sh arg", "source", 3),
+            "builtin source": ("builtin source -- ./dep.sh arg", "source", 3),
+        }
+        for name, (command, command_name, source_path_index) in cases.items():
+            with self.subTest(name=name):
+                invocation = source_command_invocation(command)
+
+                self.assertIsNotNone(invocation)
+                self.assertEqual(invocation.command_name, command_name)
+                self.assertEqual(invocation.source_path_index, source_path_index)
+                self.assertEqual(invocation.source_path, "./dep.sh")
+                self.assertEqual(invocation.arguments, ("arg",))
+                self.assertEqual(invocation.source_expression, "./dep.sh arg")
+
     def test_source_command_parser_matrix_stays_consistent(self):
         from methods.source_commands import source_command_index
         from methods.source_resolver import (
@@ -167,14 +187,23 @@ class SourceRegressionTestCase(unittest.TestCase):
 
         positive_commands = (
             "source ./dep.sh",
+            "source -- ./dep.sh",
             ". ./dep.sh",
+            ". -- ./dep.sh",
             "builtin source ./dep.sh",
+            "builtin source -- ./dep.sh",
             "builtin -- source ./dep.sh",
+            "builtin -- source -- ./dep.sh",
             "builtin -- . ./dep.sh",
+            "builtin -- . -- ./dep.sh",
             "command source ./dep.sh",
+            "command source -- ./dep.sh",
             "command -- source ./dep.sh",
+            "command -- source -- ./dep.sh",
             "command -p source ./dep.sh",
+            "command -p source -- ./dep.sh",
             "command -p -- source ./dep.sh",
+            "command -p -- source -- ./dep.sh",
             "command -pp source ./dep.sh",
             "command -p -p source ./dep.sh",
         )

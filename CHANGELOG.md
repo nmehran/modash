@@ -12,7 +12,7 @@
   unconsumed, stale, or unbundled graph edges before or during generated script
   execution.
 - Runtime graph compilation preserves Bash's own source mechanics for trusted
-  graph edges by executing `builtin source` at the rewritten source site,
+  graph edges by executing Bash `source` at the rewritten source site,
   including caller locals, inherited no-argument source positionals, explicit
   source arguments, top-level `return`, nested observed sources, child
   `bash -c` payload arguments, and stable original physical-path `$0` /
@@ -115,6 +115,9 @@
   source files that assign caller positionals, source-free dynamic external `-c`
   payloads, child-shell source diagnostics, and process-substitution-backed
   source diagnostics.
+- Added review-driven regressions and fixes for `source --` / `. --` option
+  terminators, `set -e`-suppressed source contexts, one-line `select` source
+  replay, and safe literal associative `printf -v` targets.
 
 ### Changed
 
