@@ -207,11 +207,20 @@ def _replace_entrypoint_parameter_ops(segment: str, entry_point_value: str):
         '${0##*/}': _shell_hash_hash_slash_star(entry_point_value),
         '${0%/*}': _shell_percent_slash_star(entry_point_value),
     }
-    for parameter_op, value in replacements.items():
-        quoted_value = shell_quote(value)
-        for token in (f'"{parameter_op}"', parameter_op):
-            segment = _replace_shell_word_token(segment, token, quoted_value)
-    return segment
+    replaced_segments = []
+    for part, in_double_quote in _double_quote_aware_segments(segment):
+        if in_double_quote:
+            for parameter_op, value in replacements.items():
+                part = part.replace(parameter_op, _double_quote_literal(value))
+        else:
+            for parameter_op, value in replacements.items():
+                part = _replace_shell_word_token(part, parameter_op, shell_quote(value))
+        replaced_segments.append(part)
+    return ''.join(replaced_segments)
+
+
+def _double_quote_literal(value: str):
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
 
 
 def _replace_shell_word_token(segment: str, token: str, replacement: str):

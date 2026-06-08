@@ -863,6 +863,24 @@ class CompileRegressionTestCase(unittest.TestCase):
         self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
         self.assertEqual(actual.stdout, expected.stdout)
 
+    def test_static_entrypoint_parameter_ops_inside_quoted_scalar_match_bash(self):
+        with ScriptProject() as project:
+            output = project.path("compiled.sh")
+            project.write("main.sh", "source ./dep.sh\n")
+            project.write("dep.sh", 'printf "zero:%s\\n" "dep:${0##*/}:${0%/*}"\n')
+            project.compile("./main.sh", output=output, cwd=project.root, mode="executable")
+            expected = subprocess.run(
+                ["bash", "./main.sh"],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            actual = project.run(output)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
+
     def test_static_unsupported_entrypoint_parameter_ops_fail_before_output(self):
         with ScriptProject() as project:
             output = project.path("compiled.sh")
