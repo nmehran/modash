@@ -642,23 +642,75 @@ def _render_assignment_prefixed_replay_group(
     redirection_suffix: str = "",
     negated: bool = False,
 ) -> str:
-    _source_assignment_names(assignment_words)
+    assignment_names = _source_assignment_names(assignment_words)
     redirection_sets_status = _has_command_substitution(redirection_suffix)
+    assignment_sets_status = any(_has_command_substitution(word) for word in assignment_words)
+    assignment_setup = ""
+    assignment_cleanup = ""
+    replay_assignment_words = assignment_words
+    if assignment_sets_status:
+        quoted_names = " ".join(shlex.quote(name) for name in assignment_names)
+        value_names = " ".join(f"__modash_assignment_value_{name}" for name in assignment_names)
+        assignment_setup = (
+            "__modash_capture_source_assignments() { "
+            "__modash_assignment_source_entry_status=$?; "
+            "local __modash_assignment_name; "
+            "for __modash_assignment_name in \"$@\"; do "
+            "builtin printf -v \"__modash_assignment_value_${__modash_assignment_name}\" '%s' \"${!__modash_assignment_name-}\"; "
+            "done; "
+            "}; "
+            f"{' '.join(assignment_words)} __modash_capture_source_assignments {quoted_names}; "
+            "unset -f __modash_capture_source_assignments; "
+        )
+        assignment_cleanup = f"unset {value_names}; " if value_names else ""
+        replay_assignment_words = tuple(
+            f'{name}="${{__modash_assignment_value_{name}}}"'
+            for name in assignment_names
+        )
+
+    redirection_setup = ""
+    redirection_cleanup = ""
+    replay_redirection_suffix = redirection_suffix
+    if redirection_sets_status:
+        captured = _captured_redirection_suffix(redirection_suffix)
+        if captured is None:
+            raise RuntimeObservedCompileError(
+                f"runtime graph compiler cannot replay this assignment-prefixed source redirection safely: {redirection_suffix!r}",
+                code="runtime.compile.source_redirection",
+            )
+        operator, target = captured
+        redirection_setup = (
+            "__modash_capture_source_redirection() { "
+            "__modash_source_redirection_status=$?; "
+            "__modash_source_redirection_target=$1; "
+            "}; "
+            f"__modash_capture_source_redirection {target}; "
+            "unset -f __modash_capture_source_redirection; "
+        )
+        redirection_cleanup = "unset __modash_source_redirection_status __modash_source_redirection_target; "
+        replay_redirection_suffix = f'{operator} "$__modash_source_redirection_target"'
+
     shim = _render_assignment_prefixed_replay_shim(
         candidate.base_id,
         "",
         source_expression_sets_status=(
             _has_command_substitution(source_expression) and not redirection_sets_status
         ),
-        assignment_sets_status=any(_has_command_substitution(word) for word in assignment_words),
-        redirection_sets_status=False,
+        assignment_sets_status=assignment_sets_status,
+        redirection_sets_status=redirection_sets_status,
     )
-    outer_redirection = f" {redirection_suffix}" if redirection_suffix else ""
+    outer_redirection = f" {replay_redirection_suffix}" if replay_redirection_suffix else ""
     group = (
-        "{ __modash_source_command_prior_status=$?; __modash_source_argv=(); "
+        "{ __modash_source_command_prior_status=$?; "
+        "__modash_assignment_source_entry_status=$__modash_source_command_prior_status; "
+        f"{assignment_setup}"
+        f"{redirection_setup}"
+        "__modash_source_argv=(); "
         f"{_array_assignment_with_status('__modash_source_argv', source_expression, '__modash_source_expansion_status')}"
-        f"{' '.join(assignment_words)} command source <({shim}){outer_redirection}; "
+        f"{' '.join(replay_assignment_words)} command source <({shim}){outer_redirection}; "
         "__modash_replay_actual_status=$?; "
+        f"{assignment_cleanup}"
+        f"{redirection_cleanup}"
         "( exit \"$__modash_replay_actual_status\" ); "
         "}"
     )
@@ -674,7 +726,6 @@ def _render_assignment_prefixed_replay_shim(
     redirection_sets_status: bool,
 ) -> str:
     status_initializer = [
-        "__modash_assignment_source_entry_status=$?",
         "__modash_source_entry_status=$__modash_assignment_source_entry_status",
     ]
     if source_expression_sets_status and not assignment_sets_status and not redirection_sets_status:
@@ -687,7 +738,6 @@ def _render_assignment_prefixed_replay_shim(
     )
     if redirection_sets_status:
         redirected_validation = (
-            "__modash_source_redirection_status=$?; "
             "__modash_source_entry_status=$__modash_source_redirection_status; "
             "__modash_validate_source_argv \"$__modash_source_entry_status\" \"${__modash_source_argv[@]}\"; "
         )
@@ -932,6 +982,24 @@ def _source_redirection_token_kind(word: str) -> str | None:
         return "separate-target"
     if re.match(r"^(?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|).+", word):
         return "combined-target"
+    return None
+
+
+def _captured_redirection_suffix(redirection_suffix: str) -> tuple[str, str] | None:
+    if not redirection_suffix.strip():
+        return None
+    try:
+        words = parse_shell_words_preserving_quotes(redirection_suffix)
+    except UnsupportedSourceError:
+        return None
+    if not words:
+        return None
+    if len(words) == 2 and _source_redirection_token_kind(words[0]) == "separate-target":
+        return words[0], words[1]
+    if len(words) == 1 and _source_redirection_token_kind(words[0]) == "combined-target":
+        match = re.match(r"^((?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|))(.+)$", words[0])
+        if match:
+            return match.group(1), match.group(2)
     return None
 
 

@@ -1,3 +1,4 @@
+import re
 import sys
 import textwrap
 import unittest
@@ -507,7 +508,18 @@ class RealWorldPatternCatalogTestCase(unittest.TestCase):
 
     def assert_no_live_source(self, script):
         text = Path(script).read_text()
-        self.assertNotRegex(text, r"(?m)^[ \t]*(?:source|\.)[ \t]+")
+        live_source_lines = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not re.match(r"^(?:source|\.)[ \t]+", stripped):
+                continue
+            if re.match(
+                r"^(?:source|\.)[ \t]+[\"']?\$?\{?__modash_source_payload_[A-Fa-f0-9]{12}_file\}?[\"']?(?:[ \t]|$)",
+                stripped,
+            ):
+                continue
+            live_source_lines.append(line)
+        self.assertEqual(live_source_lines, [])
 
 
 if __name__ == "__main__":

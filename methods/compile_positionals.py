@@ -59,7 +59,7 @@ def render_shift_positional_capture(
         capture_condition = f"{capture_condition} && {names['positionals_set']}"
     return (
         f"{{ {command}; "
-        f"local {names['shift_status']}=$?; "
+        f"{names['shift_status']}=$?; "
         f"if (( {capture_condition} )); then "
         f"{names['positionals']}=(\"$@\"); "
         f"{names['positionals_set']}=1; "

@@ -43,10 +43,8 @@ class SourceEvaluatorSourceSiteMixin:
         source_site = self._source_site_text(node)
 
         try:
-            self._ensure_source_state_can_resolve(node, node.source_expression, state)
-            resolved_expression = self._expand_array_indexes(node.source_expression, node, state)
             invocation = self._resolve_source_invocation(
-                resolved_expression,
+                node.source_expression,
                 node,
                 state,
             )
@@ -194,9 +192,6 @@ class SourceEvaluatorSourceSiteMixin:
                 source_argument_words=positional_source.source_argument_words,
             )
 
-        if self._source_expression_needs_word_expansion(resolved_expression):
-            return self._resolve_expanded_source_invocation(resolved_expression, node, state)
-
         source_site = self._source_site_text(node)
         path_expression, source_arguments, source_argument_words, source_arguments_dynamic = (
             self._split_source_expression_arguments(
@@ -205,6 +200,26 @@ class SourceEvaluatorSourceSiteMixin:
                 state,
             )
         )
+        self._ensure_source_state_can_resolve(node, path_expression, state)
+        path_expression = self._expand_array_indexes(path_expression, node, state)
+
+        if (
+            source_argument_words
+            and "failglob" in state.glob_options
+            and any(self._source_expression_needs_word_expansion(word) for word in source_argument_words)
+        ):
+            return self._resolve_expanded_source_invocation(
+                " ".join((path_expression, *source_argument_words)),
+                node,
+                state,
+            )
+
+        if self._source_expression_needs_word_expansion(path_expression):
+            expanded_expression = " ".join(
+                word for word in (path_expression, *(source_argument_words or ())) if word
+            )
+            return self._resolve_expanded_source_invocation(expanded_expression, node, state)
+
         try:
             resolved_source = SOURCE_RESOLVER.resolve_source_expression(
                 path_expression,

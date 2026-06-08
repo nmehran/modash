@@ -404,6 +404,27 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
             self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
             self.assertEqual(actual.stdout, expected.stdout)
 
+    def test_runtime_compiler_preserves_assignment_prefixed_source_prior_status(self):
+        cases = {
+            "literal argument": "VAR=foo source ./dep.sh a\n",
+            "quoted positional argument": "set -- a\nVAR=foo source ./dep.sh \"$@\"\n",
+            "command source literal argument": "VAR=foo command source ./dep.sh a\n",
+        }
+        for name, source_line in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write(
+                    "main.sh",
+                    "false\n"
+                    f"{source_line}",
+                )
+                project.write("dep.sh", "printf 'dep-status:%s arg:%s var:%s\\n' \"$?\" \"$1\" \"$VAR\"\n")
+                expected = project.run("main.sh")
+                compiled, _graph = self.compile_observed(project, "main.sh")
+                actual = project.run(compiled)
+
+            self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+            self.assertEqual(actual.stdout, expected.stdout)
+
     def test_runtime_compiler_preserves_assignment_prefixed_sourcepath_lookup(self):
         with ScriptProject() as project:
             project.mkdir("lib")

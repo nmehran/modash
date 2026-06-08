@@ -543,6 +543,79 @@ class CompileRegressionTestCase(unittest.TestCase):
         self.assertTrue(cm.exception.diagnostic.code.startswith("unsupported.source."))
         self.assertFalse(output.exists())
 
+    def test_explicit_source_arguments_preserve_top_level_source_context(self):
+        cases = {
+            "local remains top-level": (
+                "local x=1 2>/dev/null\nprintf 'dep x:%s status:%s\\n' \"${x-}\" \"$?\"\n",
+                "source ./dep.sh arg\nprintf 'after:%s\\n' \"${x-}\"\n",
+            ),
+            "declare remains top-level": (
+                "declare VAR=foo\nprintf 'dep:%s\\n' \"$VAR\"\n",
+                "source ./dep.sh arg\nprintf 'after:%s\\n' \"$VAR\"\n",
+            ),
+            "funcname remains top-level": (
+                "printf 'func0:%s\\n' \"${FUNCNAME[0]-}\"\n",
+                "source ./dep.sh arg\n",
+            ),
+            "prior status": (
+                "printf 'status:%s arg:%s\\n' \"$?\" \"$1\"\n",
+                "false\nsource ./dep.sh arg\n",
+            ),
+            "assignment prior status": (
+                "printf 'status:%s arg:%s var:%s\\n' \"$?\" \"$1\" \"$VAR\"\n",
+                "false\nVAR=foo source ./dep.sh arg\n",
+            ),
+            "command source assignment prior status": (
+                "printf 'status:%s arg:%s var:%s\\n' \"$?\" \"$1\" \"$VAR\"\n",
+                "false\nVAR=foo command source ./dep.sh arg\n",
+            ),
+        }
+        for name, (dep_content, main_content) in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("dep.sh", dep_content)
+                project.write("main.sh", main_content)
+
+                project.assert_compiled_matches(self, "main.sh")
+
+    def test_array_source_arguments_are_preserved_when_path_is_static(self):
+        cases = {
+            "quoted at": (
+                'ARR=(one "two words")\nsource ./dep.sh "${ARR[@]}"\n',
+                "n:2 1:one 2:two words\n",
+            ),
+            "quoted star": (
+                'ARR=(one "two words")\nsource ./dep.sh "${ARR[*]}"\n',
+                "n:1 1:one two words 2:\n",
+            ),
+            "unquoted at": (
+                'ARR=(one "two words")\nsource ./dep.sh ${ARR[@]}\n',
+                "n:3 1:one 2:two\n",
+            ),
+            "assignment quoted at": (
+                'ARR=(one "two words")\nVAR=foo source ./dep.sh "${ARR[@]}"\n',
+                "n:2 1:one 2:two words\n",
+            ),
+        }
+        for name, (main_content, expected_stdout) in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("dep.sh", "printf 'n:%s 1:%s 2:%s\\n' \"$#\" \"$1\" \"$2\"\n")
+                project.write("main.sh", main_content)
+
+                project.assert_compiled_matches(self, "main.sh")
+                self.assertEqual(project.run("compiled.sh").stdout, expected_stdout)
+
+    def test_array_expansion_source_path_remains_targeted_static_limitation(self):
+        with ScriptProject() as project:
+            project.write("main.sh", 'ARR=(./dep.sh arg)\nsource "${ARR[@]}"\n')
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            output = project.path("compiled.sh")
+
+            with self.assertRaisesRegex(NotImplementedError, "array source expression") as cm:
+                project.compile("main.sh", output=output, mode="executable")
+
+        self.assertEqual(cm.exception.diagnostic.code, "unsupported.source.array-index")
+        self.assertFalse(output.exists())
+
     def test_dynamic_bash_c_source_remains_fail_closed(self):
         cases = {
             "dynamic source path": 'DEP=./dep.sh\nbash -c "source $DEP"\n',

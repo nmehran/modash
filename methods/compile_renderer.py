@@ -489,12 +489,23 @@ def render_source_site_replacement(
     render_source,
     indent: str,
     positional_frame_names: dict[str, str] | None = None,
+    force_source_site_payload: bool = False,
 ):
     declaration = declarations[0]
     redirection_suffix = source_site_redirection_suffix(declaration.source_site)
     negation_prefix = source_site_negation_prefix(declaration.source_site)
     assignment_words = source_site_assignment_words(declaration.source_site)
-    source_argument_replay = source_site_argument_replay(declaration, assignment_words)
+    uses_embedded_payload = bool(assignment_words) or source_site_uses_builtin_wrapper(declaration.source_site)
+    force_embedded_payload = (
+        force_source_site_payload
+        or uses_embedded_payload
+        or source_site_needs_embedded_payload(declaration)
+    )
+    source_argument_replay = source_site_argument_replay(
+        declaration,
+        assignment_words,
+        force_embedded_payload=force_embedded_payload,
+    )
     retained_declarations = [
         declaration for declaration in declarations
         if declaration.replacement_kind == "retained-source"
@@ -542,33 +553,59 @@ def render_source_site_replacement(
             declaration.source_site, source_argument_replay=source_argument_replay,
         ) + " #"
 
-    rendered_source = indent_shell_block(
-        render_source(
-            declaration.path,
-            source_arguments=declaration.source_arguments,
-            source_argument_words=source_argument_replay.render_words,
-            source_state_generation=declaration.positional_assignment_generation,
-            sync_positionals=declaration.sync_positionals,
+    rendered_source = render_source(
+        declaration.path,
+        source_arguments=declaration.source_arguments,
+        source_argument_words=(
+            declaration.source_argument_words
+            if force_embedded_payload
+            else source_argument_replay.render_words
         ),
-        indent,
+        source_state_generation=declaration.positional_assignment_generation,
+        sync_positionals=declaration.sync_positionals,
+        wrap_source_call=not force_embedded_payload,
+        force_source_site_payloads=force_embedded_payload,
     )
-    rendered_source = wrap_rendered_source_for_positional_frame(
-        rendered_source,
-        declaration,
-        positional_frame_names,
-        indent,
-    )
-    replacement = f"{{\n{rendered_source}\n{indent}}}"
+    if force_embedded_payload:
+        replacement = rendered_source
+    else:
+        rendered_source = indent_shell_block(
+            rendered_source,
+            indent,
+        )
+        rendered_source = wrap_rendered_source_for_positional_frame(
+            rendered_source,
+            declaration,
+            positional_frame_names,
+            indent,
+        )
+        replacement = f"{{\n{rendered_source}\n{indent}}}"
     return render_source_site_shell_replacement(
         separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent,
-        declaration.source_site, source_argument_replay=source_argument_replay,
+        declaration.source_site,
+        source_argument_replay=source_argument_replay,
+        force_embedded_payload=force_embedded_payload,
     )
 
 
-def source_site_argument_replay(declaration, assignment_words: tuple[str, ...]):
+def source_site_needs_embedded_payload(declaration):
+    return declaration.source_arguments is not None or declaration.source_argument_words is not None
+
+
+def source_site_argument_replay(
+    declaration,
+    assignment_words: tuple[str, ...],
+    *,
+    force_embedded_payload: bool = False,
+):
     source_argument_words = declaration.source_argument_words
     if source_argument_words is None:
+        if force_embedded_payload and declaration.source_arguments is not None:
+            quoted_arguments = tuple(shell_quote(argument) for argument in declaration.source_arguments)
+            return SourceArgumentReplay(outer_words=quoted_arguments)
         return SourceArgumentReplay(render_words=None)
+    if force_embedded_payload:
+        return SourceArgumentReplay(outer_words=source_argument_words)
     if not assignment_words:
         return SourceArgumentReplay(render_words=source_argument_words)
 
@@ -610,8 +647,9 @@ def render_source_site_shell_replacement(
     indent: str,
     source_site: str = "",
     source_argument_replay: SourceArgumentReplay | None = None,
+    force_embedded_payload: bool = False,
 ):
-    if assignment_words or source_site_uses_builtin_wrapper(source_site):
+    if force_embedded_payload or assignment_words or source_site_uses_builtin_wrapper(source_site):
         replay = source_argument_replay or SourceArgumentReplay()
         replacement = wrap_source_site_embedded_payload(
             replacement,
@@ -643,6 +681,7 @@ def wrap_source_site_embedded_payload(
 ):
     digest = hashlib.sha1(f"{source_site}\0{replacement}".encode("utf-8")).hexdigest()[:12]
     payload_variable = f"__modash_source_payload_{digest}_file"
+    entry_status_variable = f"__modash_source_payload_{digest}_entry_status"
     status_variable = f"__modash_source_payload_{digest}_status"
     delimiter = source_site_payload_delimiter(replacement, digest)
     source_call = source_site_embedded_source_call(
@@ -658,15 +697,18 @@ def wrap_source_site_embedded_payload(
     cleanup_lines = [f"{inner_indent}{line}" for line in source_argument_replay.cleanup_lines]
     return "\n".join([
         "{",
+        f"{inner_indent}{entry_status_variable}=$?",
         f"{inner_indent}{payload_variable}=$(mktemp \"${{TMPDIR:-/tmp}}/modash-source.XXXXXXXXXX\") || exit",
         f"{inner_indent}command cat > \"${{{payload_variable}}}\" <<'{delimiter}'",
         replacement,
         delimiter,
         *setup_lines,
+        f"{inner_indent}( exit \"${{{entry_status_variable}}}\" )",
         f"{inner_indent}{source_call}",
         f"{inner_indent}{status_variable}=$?",
         *cleanup_lines,
         f"{inner_indent}command rm -f -- \"${{{payload_variable}}}\"",
+        f"{inner_indent}unset {entry_status_variable}",
         f"{inner_indent}( exit \"${{{status_variable}}}\" )",
         f"{indent}}}",
     ])
@@ -924,6 +966,7 @@ def replace_source_site_declarations(
     *,
     runtime_reference_path: str | None = None,
     entry_point: str | None = None,
+    force_source_site_payloads: bool = False,
 ):
     if not source_declarations:
         return line
@@ -951,6 +994,7 @@ def replace_source_site_declarations(
             render_source,
             indent,
             positional_frame_names,
+            force_source_site_payload=force_source_site_payloads,
         )
         replacements.append((*span, replacement))
         occupied_spans.append(span)
@@ -1021,6 +1065,8 @@ def render_executable_script(entry_point: str, context: dict):
         source_argument_words=None,
         source_state_generation=None,
         sync_positionals=False,
+        wrap_source_call=True,
+        force_source_site_payloads=False,
     ):
         filepath = os.path.abspath(filepath)
         if filepath in render_stack:
@@ -1038,6 +1084,8 @@ def render_executable_script(entry_point: str, context: dict):
                 source_argument_words=None,
                 source_state_generation=None,
                 sync_positionals=False,
+                wrap_source_call=True,
+                force_source_site_payloads=False,
             ):
                 return render_file(
                     source_filepath,
@@ -1046,11 +1094,13 @@ def render_executable_script(entry_point: str, context: dict):
                     source_argument_words=source_argument_words,
                     source_state_generation=source_state_generation,
                     sync_positionals=sync_positionals,
+                    wrap_source_call=wrap_source_call,
+                    force_source_site_payloads=force_source_site_payloads,
                 )
 
             content = get_content(filepath)
             has_top_level_return, has_top_level_positional_mutation = top_level_traits(filepath, content)
-            wraps_top_level_return = as_source and has_top_level_return
+            wraps_top_level_return = wrap_source_call and as_source and has_top_level_return
             positional_frame_names = (
                 source_positional_capture_names(filepath)
                 if (
@@ -1136,14 +1186,18 @@ def render_executable_script(entry_point: str, context: dict):
                         positional_frame_names,
                         runtime_reference_path=filepath,
                         entry_point=entry_point,
+                        force_source_site_payloads=force_source_site_payloads,
                     )
                 output.append(line)
 
             rendered = '\n'.join(output)
             if as_source and (
-                source_arguments is not None
-                or source_argument_words is not None
-                or wraps_top_level_return
+                wrap_source_call
+                and (
+                    source_arguments is not None
+                    or source_argument_words is not None
+                    or wraps_top_level_return
+                )
             ):
                 return render_source_call_wrapper(
                     filepath,
