@@ -146,20 +146,20 @@ def _replace_runtime_source_references_segment(
             segment = _replace_shell_word_token(segment, token, entry_source)
 
     if include_zero:
-        segment = re.sub(r'\$0(?![0-9])', entry_source, segment)
-    if include_zero and re.search(r'\$\{0[^}]+\}', segment):
+        segment = _replace_unescaped_regex(segment, r'\$0(?![0-9])', entry_source)
+    if include_zero and _has_unescaped_regex(segment, r'\$\{0[^}]+\}'):
         raise UnsupportedSourceError(
             f"unsupported $0 runtime reference in executable output: {segment.strip()}",
             code="unsupported.source.runtime-reference",
             hint="Use simple $0, ${0}, ${0##*/}, or ${0%/*} forms.",
         )
-    if reject_unsupported_bash_source and re.search(r'\$(?:\{BASH_SOURCE(?:[^}]*)?\}|BASH_SOURCE\b)', segment):
+    if reject_unsupported_bash_source and _has_unescaped_regex(segment, r'\$(?:\{BASH_SOURCE(?:[^}]*)?\}|BASH_SOURCE\b)'):
         raise UnsupportedSourceError(
             f"unsupported BASH_SOURCE runtime reference in executable output: {segment.strip()}",
             code="unsupported.source.runtime-reference",
             hint="Use simple BASH_SOURCE scalar indexes or a standalone BASH_SOURCE[@] expansion.",
         )
-    if reject_unsupported_bash_source and re.search(r'\$(?:\{BASH_LINENO(?:[^}]*)?\}|BASH_LINENO\b)', segment):
+    if reject_unsupported_bash_source and _has_unescaped_regex(segment, r'\$(?:\{BASH_LINENO(?:[^}]*)?\}|BASH_LINENO\b)'):
         raise UnsupportedSourceError(
             f"unsupported BASH_LINENO runtime reference in executable output: {segment.strip()}",
             code="unsupported.source.runtime-reference",
@@ -211,7 +211,7 @@ def _replace_entrypoint_parameter_ops(segment: str, entry_point_value: str):
     for part, in_double_quote in _double_quote_aware_segments(segment):
         if in_double_quote:
             for parameter_op, value in replacements.items():
-                part = part.replace(parameter_op, _double_quote_literal(value))
+                part = _replace_unescaped_literal(part, parameter_op, _double_quote_literal(value))
         else:
             for parameter_op, value in replacements.items():
                 part = _replace_shell_word_token(part, parameter_op, shell_quote(value))
@@ -225,12 +225,44 @@ def _double_quote_literal(value: str):
 
 def _replace_shell_word_token(segment: str, token: str, replacement: str):
     pattern = rf"(?<![A-Za-z0-9_./:}}]){re.escape(token)}(?![A-Za-z0-9_./:{{])"
+    replace_match = lambda match: match.group(0) if _is_escaped(segment, match.start()) else replacement
     if token.startswith('"'):
-        return re.sub(pattern, lambda _match: replacement, segment)
+        return re.sub(pattern, replace_match, segment)
     return ''.join(
-        re.sub(pattern, lambda _match: replacement, part) if not in_double_quote else part
+        re.sub(pattern, lambda match: match.group(0) if _is_escaped(part, match.start()) else replacement, part)
+        if not in_double_quote
+        else part
         for part, in_double_quote in _double_quote_aware_segments(segment)
     )
+
+
+def _replace_unescaped_literal(segment: str, token: str, replacement: str):
+    return re.sub(
+        re.escape(token),
+        lambda match: match.group(0) if _is_escaped(segment, match.start()) else replacement,
+        segment,
+    )
+
+
+def _replace_unescaped_regex(segment: str, pattern: str, replacement: str):
+    return re.sub(
+        pattern,
+        lambda match: match.group(0) if _is_escaped(segment, match.start()) else replacement,
+        segment,
+    )
+
+
+def _has_unescaped_regex(segment: str, pattern: str):
+    return any(not _is_escaped(segment, match.start()) for match in re.finditer(pattern, segment))
+
+
+def _is_escaped(text: str, index: int):
+    slash_count = 0
+    cursor = index - 1
+    while cursor >= 0 and text[cursor] == "\\":
+        slash_count += 1
+        cursor -= 1
+    return slash_count % 2 == 1
 
 
 def _double_quote_aware_segments(segment: str):

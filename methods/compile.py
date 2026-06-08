@@ -1,4 +1,5 @@
 import os
+import stat
 
 from methods.compile_context import (
     context_from_source_events,
@@ -50,7 +51,7 @@ def compile_sources(
     content = '\n'.join(output)
     write_output(output_file, content)
     if mode == "executable":
-        current_mode = os.stat(output_file).st_mode
+        current_mode = stat.S_IMODE(os.stat(output_file).st_mode)
         executable_bits = 0
         for read_bit, execute_bit in ((0o400, 0o100), (0o040, 0o010), (0o004, 0o001)):
             if current_mode & read_bit:
