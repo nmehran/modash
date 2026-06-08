@@ -49,3 +49,5 @@ def compile_sources(
         output = render_context_files(sources, entry_point, context)
     content = '\n'.join(output)
     write_output(output_file, content)
+    if mode == "executable":
+        os.chmod(output_file, 0o755)

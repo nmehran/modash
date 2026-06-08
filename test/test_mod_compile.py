@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import tempfile
@@ -27,8 +28,9 @@ class TestCompile(unittest.TestCase):
                              msg=f"Error compiling output to '{output_file}' using `modash.py`\n"
                                  f"Error: {compile_result.stdout}")
             self.assertTrue(output_file.exists(), "Output file was not created")
+            self.assertTrue(os.access(output_file, os.X_OK), "Executable output was not marked executable")
 
-            execution_command = ['bash', str(output_file)]
+            execution_command = [str(output_file)]
             execution_result = subprocess.run(execution_command,
                                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                               text=True)
