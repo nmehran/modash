@@ -2,6 +2,7 @@ import hashlib
 import os
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 
 from methods.compile_context import (
     construct_file_separator,
@@ -37,6 +38,14 @@ from methods.source_resolver import (
 from methods.source_traits import file_top_level_source_traits
 
 SET_SHEBANG = "#!/bin/bash"
+
+
+@dataclass(frozen=True)
+class SourceArgumentReplay:
+    render_words: tuple[str, ...] | None = None
+    setup_lines: tuple[str, ...] = ()
+    cleanup_lines: tuple[str, ...] = ()
+    outer_words: tuple[str, ...] = ()
 
 def replace_runtime_source_references(line: str, filepath: str, entry_point: str, *, include_zero: bool = True):
     return ''.join(
@@ -485,6 +494,7 @@ def render_source_site_replacement(
     redirection_suffix = source_site_redirection_suffix(declaration.source_site)
     negation_prefix = source_site_negation_prefix(declaration.source_site)
     assignment_words = source_site_assignment_words(declaration.source_site)
+    source_argument_replay = source_site_argument_replay(declaration, assignment_words)
     retained_declarations = [
         declaration for declaration in declarations
         if declaration.replacement_kind == "retained-source"
@@ -493,7 +503,7 @@ def render_source_site_replacement(
         replacement = render_retained_source_dispatch(retained_declarations, render_source, indent, positional_frame_names)
         return render_source_site_shell_replacement(
             separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent,
-            declaration.source_site, declaration.source_arguments,
+            declaration.source_site, source_argument_replay=source_argument_replay,
         )
 
     unique_paths = {source_declaration.path for source_declaration in declarations}
@@ -501,19 +511,19 @@ def render_source_site_replacement(
         replacement = render_source_dispatch(declaration.source_expression, declarations, render_source, indent, positional_frame_names)
         return render_source_site_shell_replacement(
             separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent,
-            declaration.source_site, declaration.source_arguments,
+            declaration.source_site, source_argument_replay=source_argument_replay,
         )
 
     if declaration.replacement_kind == "noop-source":
         return render_source_site_shell_replacement(
             separator, negation_prefix, assignment_words, ":", redirection_suffix, indent,
-            declaration.source_site, declaration.source_arguments,
+            declaration.source_site, source_argument_replay=source_argument_replay,
         )
     if is_missing_source_replacement_kind(declaration.replacement_kind):
         replacement = f"{{\n{render_missing_source_failure(declaration, indent)}\n{indent}}}"
         return render_source_site_shell_replacement(
             separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent,
-            declaration.source_site, declaration.source_arguments,
+            declaration.source_site, source_argument_replay=source_argument_replay,
         )
     if is_source_expansion_failure_replacement_kind(declaration.replacement_kind):
         if declaration.replacement_kind == SOURCE_EXPANSION_FAILURE_RETURN:
@@ -524,19 +534,19 @@ def render_source_site_replacement(
             )
             return render_source_site_shell_replacement(
                 separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent,
-                declaration.source_site, declaration.source_arguments,
+                declaration.source_site, source_argument_replay=source_argument_replay,
             )
         replacement = f"{{\n{render_source_expansion_failure(declaration, indent)}\n{indent}}}"
         return render_source_site_shell_replacement(
             separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent,
-            declaration.source_site, declaration.source_arguments,
+            declaration.source_site, source_argument_replay=source_argument_replay,
         ) + " #"
 
     rendered_source = indent_shell_block(
         render_source(
             declaration.path,
             source_arguments=declaration.source_arguments,
-            source_argument_words=declaration.source_argument_words,
+            source_argument_words=source_argument_replay.render_words,
             source_state_generation=declaration.positional_assignment_generation,
             sync_positionals=declaration.sync_positionals,
         ),
@@ -551,8 +561,44 @@ def render_source_site_replacement(
     replacement = f"{{\n{rendered_source}\n{indent}}}"
     return render_source_site_shell_replacement(
         separator, negation_prefix, assignment_words, replacement, redirection_suffix, indent,
-        declaration.source_site, declaration.source_arguments,
+        declaration.source_site, source_argument_replay=source_argument_replay,
     )
+
+
+def source_site_argument_replay(declaration, assignment_words: tuple[str, ...]):
+    source_argument_words = declaration.source_argument_words
+    if source_argument_words is None:
+        return SourceArgumentReplay(render_words=None)
+    if not assignment_words:
+        return SourceArgumentReplay(render_words=source_argument_words)
+
+    if any(source_argument_word_has_process_substitution(word) for word in source_argument_words):
+        return SourceArgumentReplay(
+            render_words=('"$@"',),
+            outer_words=source_argument_words,
+        )
+
+    digest = hashlib.sha1(
+        f"{declaration.source_site}\0{' '.join(source_argument_words)}".encode("utf-8")
+    ).hexdigest()[:12]
+    args_variable = f"__modash_source_args_{digest}"
+    capture_function = f"{args_variable}_capture"
+    return SourceArgumentReplay(
+        render_words=(f'"${{{args_variable}[@]}}"',),
+        setup_lines=(
+            f"{args_variable}=()",
+            f"{capture_function}() {{ {args_variable}=(\"$@\"); }}",
+            f"{capture_function} {' '.join(source_argument_words)}",
+        ),
+        cleanup_lines=(
+            f"unset -f {capture_function}",
+            f"unset {args_variable}",
+        ),
+    )
+
+
+def source_argument_word_has_process_substitution(word: str):
+    return "<(" in word or ">(" in word
 
 
 def render_source_site_shell_replacement(
@@ -563,9 +609,10 @@ def render_source_site_shell_replacement(
     redirection_suffix: str,
     indent: str,
     source_site: str = "",
-    source_arguments: tuple[str, ...] | None = None,
+    source_argument_replay: SourceArgumentReplay | None = None,
 ):
     if assignment_words or source_site_uses_builtin_wrapper(source_site):
+        replay = source_argument_replay or SourceArgumentReplay()
         replacement = wrap_source_site_embedded_payload(
             replacement,
             assignment_words,
@@ -573,6 +620,7 @@ def render_source_site_shell_replacement(
             source_site,
             negation_prefix,
             redirection_suffix,
+            replay,
         )
         return f"{separator}{replacement}"
     return append_source_site_redirections(f"{separator}{negation_prefix}{replacement}", redirection_suffix)
@@ -591,6 +639,7 @@ def wrap_source_site_embedded_payload(
     source_site: str,
     negation_prefix: str,
     redirection_suffix: str,
+    source_argument_replay: SourceArgumentReplay,
 ):
     digest = hashlib.sha1(f"{source_site}\0{replacement}".encode("utf-8")).hexdigest()[:12]
     payload_variable = f"__modash_source_payload_{digest}_file"
@@ -602,16 +651,21 @@ def wrap_source_site_embedded_payload(
         assignment_words,
         negation_prefix,
         redirection_suffix,
+        source_argument_replay.outer_words,
     )
     inner_indent = f"{indent}  "
+    setup_lines = [f"{inner_indent}{line}" for line in source_argument_replay.setup_lines]
+    cleanup_lines = [f"{inner_indent}{line}" for line in source_argument_replay.cleanup_lines]
     return "\n".join([
         "{",
         f"{inner_indent}{payload_variable}=$(mktemp \"${{TMPDIR:-/tmp}}/modash-source.XXXXXXXXXX\") || exit",
         f"{inner_indent}command cat > \"${{{payload_variable}}}\" <<'{delimiter}'",
         replacement,
         delimiter,
+        *setup_lines,
         f"{inner_indent}{source_call}",
         f"{inner_indent}{status_variable}=$?",
+        *cleanup_lines,
         f"{inner_indent}command rm -f -- \"${{{payload_variable}}}\"",
         f"{inner_indent}( exit \"${{{status_variable}}}\" )",
         f"{indent}}}",
@@ -635,6 +689,7 @@ def source_site_embedded_source_call(
     assignment_words: tuple[str, ...],
     negation_prefix: str,
     redirection_suffix: str,
+    source_argument_words: tuple[str, ...] = (),
 ):
     invocation = source_command_invocation(source_site.strip(), stop_at_shell_control=True)
     if invocation is None:
@@ -649,6 +704,7 @@ def source_site_embedded_source_call(
             raw_words[invocation.source_index],
         )
     argument_words = [f'"${{{payload_variable}}}"']
+    argument_words.extend(source_argument_words)
     command = " ".join((*assignment_words, *command_words, *argument_words))
     if negation_prefix:
         command = f"{negation_prefix}{command}"
@@ -739,6 +795,8 @@ def source_site_redirection_words(words: tuple[str, ...]):
 
 
 def source_site_redirection_token_kind(word: str):
+    if word.startswith("<(") or word.startswith(">("):
+        return None
     if re.match(r"^(?:[0-9]+)?<<", word):
         return "unsupported"
     if re.fullmatch(r"(?:[0-9]+)?(?:>|>>|<|<>|>&|<&|&>|>\|)", word):

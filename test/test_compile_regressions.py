@@ -486,6 +486,63 @@ class CompileRegressionTestCase(unittest.TestCase):
                 if "parent:" in main_content:
                     self.assertIn("${VALUE-unset}", compiled)
 
+    def test_source_process_substitution_arguments_and_redirections_match_bash(self):
+        cases = {
+            "argument": (
+                "dep.sh",
+                "printf 'psub:'\ncat \"$1\"\n",
+                "VAR=old\nsource ./dep.sh <(printf '%s\\n' \"$VAR\")\n",
+            ),
+            "assignment argument": (
+                "dep.sh",
+                "printf 'dep-var:%s arg:' \"$VAR\"\ncat \"$1\"\n",
+                "VAR=old\nVAR=foo source ./dep.sh <(printf '%s\\n' \"$VAR\")\nprintf 'after:%s\\n' \"$VAR\"\n",
+            ),
+            "input redirection": (
+                "dep.sh",
+                "read x || true\nprintf 'x:%s\\n' \"$x\"\n",
+                "source ./dep.sh < <(printf 'IN')\nprintf 'after:%s\\n' \"$?\"\n",
+            ),
+            "output redirection": (
+                "dep.sh",
+                "printf 'dep\\n'\n",
+                "source ./dep.sh > >(cat)\nprintf 'after:%s\\n' \"$?\"\n",
+            ),
+        }
+        for name, (dep_path, dep_content, main_content) in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write(dep_path, dep_content)
+                project.write("main.sh", main_content)
+
+                compiled = project.compile("main.sh", mode="executable")
+                bash_check = subprocess.run(
+                    ["bash", "-n", str(compiled)],
+                    cwd=project.root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                expected = project.run("main.sh")
+                actual = project.run(compiled)
+
+            self.assertEqual(bash_check.returncode, 0, bash_check.stderr)
+            self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+            if name == "output redirection":
+                self.assertEqual(sorted(actual.stdout.splitlines()), sorted(expected.stdout.splitlines()))
+            else:
+                self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_process_substitution_source_path_remains_targeted_static_limitation(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "source <(printf 'printf process-sub-source\\\\n')\n")
+            output = project.path("compiled.sh")
+
+            with self.assertRaisesRegex(NotImplementedError, "source") as cm:
+                project.compile("main.sh", output=output, mode="executable")
+
+        self.assertTrue(cm.exception.diagnostic.code.startswith("unsupported.source."))
+        self.assertFalse(output.exists())
+
     def test_dynamic_bash_c_source_remains_fail_closed(self):
         cases = {
             "dynamic source path": 'DEP=./dep.sh\nbash -c "source $DEP"\n',
@@ -3554,6 +3611,51 @@ class CompileRegressionTestCase(unittest.TestCase):
                 """))
 
             project.assert_compiled_matches(self, "main.sh")
+
+    def test_assignment_prefixed_source_expands_arguments_and_redirections_before_assignment(self):
+        cases = {
+            "argument": (
+                "printf 'dep-var:%s arg:%s\\n' \"$VAR\" \"$1\"\n",
+                textwrap.dedent("""\
+                    VAR=old
+                    VAR=foo source ./dep.sh "$VAR"
+                    printf 'after:%s\\n' "$VAR"
+                    """),
+            ),
+            "command source argument": (
+                "printf 'dep-var:%s arg:%s\\n' \"$VAR\" \"$1\"\n",
+                textwrap.dedent("""\
+                    VAR=old
+                    VAR=foo command source ./dep.sh "$VAR"
+                    printf 'after:%s\\n' "$VAR"
+                    """),
+            ),
+            "command substitution argument": (
+                "printf 'dep-var:%s arg:%s\\n' \"$VAR\" \"$1\"\n",
+                textwrap.dedent("""\
+                    VAR=old
+                    VAR=foo source ./dep.sh "$(printf '%s' "$VAR")"
+                    printf 'after:%s\\n' "$VAR"
+                    """),
+            ),
+            "redirection": (
+                "printf 'dep-var:%s\\n' \"$VAR\"\n",
+                textwrap.dedent("""\
+                    rm -f old.txt foo.txt
+                    VAR=old
+                    VAR=foo source ./dep.sh > "${VAR}.txt"
+                    printf 'after:%s\\n' "$VAR"
+                    printf 'old:'; cat old.txt 2>/dev/null || true; printf '\\n'
+                    printf 'foo:'; cat foo.txt 2>/dev/null || true; printf '\\n'
+                    """),
+            ),
+        }
+        for name, (dep_content, main_content) in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("dep.sh", dep_content)
+                project.write("main.sh", main_content)
+
+                project.assert_compiled_matches(self, "main.sh")
 
     def test_wrapped_source_forms_preserve_dynamic_source_argument_words(self):
         with ScriptProject() as project:

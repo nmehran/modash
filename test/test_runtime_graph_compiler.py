@@ -376,6 +376,34 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertIn("VAR: readonly variable", actual.stdout)
         self.assertTrue(actual.stdout.endswith("dep:old status:0\nafter:old status:0\n"), actual.stdout)
 
+    def test_runtime_compiler_preserves_assignment_prefixed_source_redirection_expansion_order(self):
+        cases = {
+            "variable target": (
+                "VAR=foo source ./dep.sh > \"${VAR}.txt\"\n",
+            ),
+            "command substitution target": (
+                "VAR=foo source ./dep.sh > \"$(printf '%s.txt' \"$VAR\")\"\n",
+            ),
+        }
+        for name, (source_line,) in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write(
+                    "main.sh",
+                    "rm -f old.txt foo.txt\n"
+                    "VAR=old\n"
+                    f"{source_line}"
+                    "printf 'after:%s\\n' \"$VAR\"\n"
+                    "printf 'old:'; cat old.txt 2>/dev/null || true; printf '\\n'\n"
+                    "printf 'foo:'; cat foo.txt 2>/dev/null || true; printf '\\n'\n",
+                )
+                project.write("dep.sh", "printf 'dep-var:%s\\n' \"$VAR\"\n")
+                expected = project.run("main.sh")
+                compiled, _graph = self.compile_observed(project, "main.sh")
+                actual = project.run(compiled)
+
+            self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+            self.assertEqual(actual.stdout, expected.stdout)
+
     def test_runtime_compiler_preserves_assignment_prefixed_sourcepath_lookup(self):
         with ScriptProject() as project:
             project.mkdir("lib")

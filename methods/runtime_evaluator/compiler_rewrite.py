@@ -643,17 +643,21 @@ def _render_assignment_prefixed_replay_group(
     negated: bool = False,
 ) -> str:
     _source_assignment_names(assignment_words)
+    redirection_sets_status = _has_command_substitution(redirection_suffix)
     shim = _render_assignment_prefixed_replay_shim(
         candidate.base_id,
-        redirection_suffix,
-        source_expression_sets_status=_has_command_substitution(source_expression),
+        "",
+        source_expression_sets_status=(
+            _has_command_substitution(source_expression) and not redirection_sets_status
+        ),
         assignment_sets_status=any(_has_command_substitution(word) for word in assignment_words),
-        redirection_sets_status=_has_command_substitution(redirection_suffix),
+        redirection_sets_status=False,
     )
+    outer_redirection = f" {redirection_suffix}" if redirection_suffix else ""
     group = (
         "{ __modash_source_command_prior_status=$?; __modash_source_argv=(); "
         f"{_array_assignment_with_status('__modash_source_argv', source_expression, '__modash_source_expansion_status')}"
-        f"{' '.join(assignment_words)} command source <({shim}); "
+        f"{' '.join(assignment_words)} command source <({shim}){outer_redirection}; "
         "__modash_replay_actual_status=$?; "
         "( exit \"$__modash_replay_actual_status\" ); "
         "}"

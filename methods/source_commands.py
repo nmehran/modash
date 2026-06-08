@@ -423,6 +423,8 @@ def source_option_diagnostic_word(word: str):
 
 
 def _redirection_token_kind(word: str) -> str | None:
+    if word.startswith("<(") or word.startswith(">("):
+        return None
     if _redirection_word_is_heredoc(word):
         return "unsupported"
     if _redirection_word_needs_target(word):

@@ -197,6 +197,18 @@ def parse_shell_words_preserving_quotes(command: str):
             index += 1
             continue
 
+        if not in_single_quote and (command.startswith('<(', index) or command.startswith('>(', index)):
+            opener = command[index:index + 2]
+            body, end_index = read_balanced_body(command, index + 2)
+            if end_index is None:
+                raise UnsupportedSourceError(
+                    f"unsupported source command syntax: {command.strip()} (unterminated process substitution)"
+                )
+            current.append(f"{opener}{body})")
+            current_started = True
+            index = end_index + 1
+            continue
+
         if not in_single_quote and command.startswith('$(', index):
             body, end_index = read_balanced_body(command, index + 2)
             if end_index is None:

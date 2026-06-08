@@ -125,7 +125,7 @@ class LineParserFrontend(
                     continue
 
                 text = ''.join(part or '' for part in (separator, command_name, arguments)).strip()
-                invocation = source_command_invocation(text)
+                invocation = source_command_invocation(text, stop_at_shell_control=True)
                 if invocation is None:
                     parsed_command_name = command_name.strip()
                     source_expression = (arguments or '').strip()

@@ -149,7 +149,7 @@ class SourceFrontendCommandMixin:
     @staticmethod
     def _fallback_source_site(script_path: Path, line_number: int, line: str, command: str,
                               control_flow_source_ranges):
-        invocation = source_command_invocation(command)
+        invocation = source_command_invocation(command, stop_at_shell_control=True)
         if invocation is None:
             words = command.split()
             source_index = source_command_index(command)
