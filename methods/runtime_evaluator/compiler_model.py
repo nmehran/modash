@@ -6,11 +6,6 @@ from pathlib import PurePosixPath
 from methods.runtime_evaluator.graph import RuntimeSourceGraphError
 from methods.shell.line import get_commands
 from methods.source_commands import is_source_like_command_text, source_command_invocation
-from methods.source_resolver import (
-    UnsupportedSourceError,
-    parse_shell_words_preserving_quotes,
-    strip_shell_word_quotes,
-)
 
 RUNTIME_COMPILER_VERSION = 2
 ENTRYPOINT_LOGICAL_PATH = "__entrypoint__"
@@ -31,6 +26,7 @@ class _ReplayEdge:
     site_line: int
     site_command: str
     resolved_path: str
+    source_value: str
     failure_kind: str
     source_entry_status: int
     status: int
@@ -40,24 +36,6 @@ class _ReplayEdge:
     @property
     def is_file(self) -> bool:
         return self.to_node.startswith("file:")
-
-    @property
-    def source_value(self) -> str:
-        if self.failure_kind == "no-argument":
-            return ""
-        invocation = source_command_invocation(
-            _first_source_segment(self.xtrace_command) or "",
-            normalize_trace_wrappers=True,
-        )
-        if invocation is None:
-            return self.resolved_path
-        try:
-            words = parse_shell_words_preserving_quotes(invocation.source_expression)
-        except UnsupportedSourceError:
-            return self.resolved_path
-        if not words:
-            return ""
-        return strip_shell_word_quotes(words[0])
 
 @dataclass(frozen=True)
 class _SourceCandidate:
@@ -111,14 +89,16 @@ class _CompilePlan:
     process_plans: dict[int, _ProcessPlan]
     process_payloads: dict[int, _ProcessPayload]
 
+def _base_id(process_index: int, logical_path: str, line: int, ordinal: int) -> str:
+    return f"p{process_index}:{logical_path}:{line}:{ordinal}"
+
+
 def _first_source_segment(command: str) -> str | None:
     for segment in get_commands(command):
         if source_command_invocation(segment) is not None or is_source_like_command_text(segment):
             return segment
     return command if source_command_invocation(command) is not None or is_source_like_command_text(command) else None
 
-def _base_id(process_index: int, logical_path: str, line: int, ordinal: int) -> str:
-    return f"p{process_index}:{logical_path}:{line}:{ordinal}"
 
 def _validate_logical_path(path: str) -> None:
     pure = PurePosixPath(path)

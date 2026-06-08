@@ -20,7 +20,7 @@ class EvaluationState:
     shell_options: set[str] = field(default_factory=set)
     glob_options: set[str] = field(default_factory=set)
     missing_source_words: set[str] = field(default_factory=set)
-    bash_source_stack: tuple[Path, ...] = ()
+    bash_source_stack: tuple[str, ...] = ()
     occurrence_context: OccurrenceModel = OccurrenceModel.ONCE
     condition_context: str | None = None
     ambiguous_cwd: bool = False

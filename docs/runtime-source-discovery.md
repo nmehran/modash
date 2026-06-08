@@ -65,7 +65,7 @@ The separation matters:
 
 ## Observation Schema
 
-Current observations use schema `9`. They record:
+Current observations use schema `11`. They record:
 
 - entrypoint, cwd, argv, Bash version, trace implementation version
 - run metadata: observed timestamp, modash version, platform, Python version,
@@ -78,8 +78,8 @@ Current observations use schema `9`. They record:
 - source call-site provenance
 - source function stacks and file-backed observed helper-call provenance for
   review and compatibility with graph validation
-- resolved source paths, source arguments, source-entry status, and source
-  completion status
+- expanded source paths, Bash-visible source values, resolved physical source
+  paths, source arguments, source-entry status, and source completion status
 - trace-time file fingerprints for the entrypoint, file-backed source files,
   and file-backed call sites, including sourced files that return non-zero
   status
@@ -93,7 +93,7 @@ Small example:
 
 ```json
 {
-  "version": 9,
+  "version": 11,
   "entrypoint": "/abs/project/entry.sh",
   "cwd": "/abs/project",
   "argv": ["--flag"],
@@ -141,8 +141,11 @@ Small example:
       },
       "function_stack": [],
       "function_call": null,
+      "source_path": "./lib/util.sh",
       "resolved_path": "/abs/project/lib/util.sh",
+      "source_value": "./lib/util.sh",
       "arguments": [],
+      "source_entry_status": 0,
       "status": 0
     }
   ],
@@ -179,7 +182,7 @@ Small example:
 
 ## Trusted Source Graph
 
-`modash graph` consumes a schema `9` observation and writes a schema `4` graph
+`modash graph` consumes a schema `11` observation and writes a schema `5` graph
 artifact.
 The graph is still data, not executable shell code. It contains:
 
@@ -298,9 +301,10 @@ runtime-dynamic sites remain review warnings instead of compiler truth.
 - observed child Bash script invocation replay with runtime path validation
 - persisted xtrace provenance linked to wrapper-observed source events
 - observed helper-call provenance for trusted runtime graph replay
-- schema `9` source identities, source-entry status, file fingerprints, and
+- schema `11` source identities, expanded source paths, Bash-visible source
+  values, source-entry status, file fingerprints, and
   stale observation rejection
-- schema `4` trusted runtime graphs with explicit source failure kinds
+- schema `5` trusted runtime graphs with explicit source failure kinds
 - replayable failed source operations for missing paths, directory paths,
   unreadable paths, and no-argument source calls
 - trusted runtime source graph construction

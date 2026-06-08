@@ -20,12 +20,14 @@ class CompileRegressionTestCase(unittest.TestCase):
     def normalized_bash_source_errors(output: str):
         return re.sub(r"^.*?: line [0-9]+: ", "<script>: line N: ", output, flags=re.MULTILINE)
 
-    def test_relative_entry_point_compiles_to_runnable_script(self):
+    def test_sample_tree_compiles_to_runnable_script(self):
         with ScriptProject() as project:
             output_file = project.path("merged_script.sh")
+            sample_dir = REPO_ROOT / "test/sample_dir"
+            entrypoint = sample_dir / "script_main.sh"
 
-            project.compile("test/sample_dir/script_main.sh", output=output_file, cwd=REPO_ROOT, mode="executable")
-            result = project.run(output_file, cwd=REPO_ROOT)
+            project.compile(str(entrypoint), output=output_file, cwd=sample_dir, mode="executable")
+            result = project.run(output_file, cwd=sample_dir)
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("This is the main script", result.stdout)
@@ -738,6 +740,22 @@ class CompileRegressionTestCase(unittest.TestCase):
 
                 project.assert_compiled_matches(self, "main.sh")
 
+    def test_static_assignment_prefixed_sourcepath_bash_source_matches_bash(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "PATH=./lib source dep.sh\n")
+            project.write(
+                "lib/dep.sh",
+                'printf "bs:%s\\n" "${BASH_SOURCE[0]}"\n'
+                'if [[ ${BASH_SOURCE[0]} == ./lib/dep.sh ]]; then\n'
+                "  printf 'ok\\n'\n"
+                "else\n"
+                "  source ./nested.sh\n"
+                "fi\n",
+            )
+            project.write("nested.sh", "printf 'nested\\n'\n")
+
+            project.assert_compiled_matches(self, "main.sh")
+
     def test_static_sourcepath_lookup_prefers_path_before_current_directory(self):
         with ScriptProject() as project:
             project.write("main.sh", "PATH=./lib source dep.sh\n")
@@ -745,6 +763,98 @@ class CompileRegressionTestCase(unittest.TestCase):
             project.write("lib/dep.sh", "printf 'lib\\n'\n")
 
             project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_embedded_source_payload_uses_trusted_tools_when_path_changes(self):
+        with ScriptProject() as project:
+            project.mkdir("none")
+            project.write("main.sh", "PATH=./none\nsource ./dep.sh arg\nprintf 'done\\n'\n")
+            project.write("dep.sh", "printf 'dep:%s\\n' \"$1\"\n")
+
+            project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_assignment_prefixed_embedded_source_payload_uses_trusted_tools(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "PATH=./lib source dep.sh\nprintf 'main done\\n'\n")
+            project.write(
+                "lib/dep.sh",
+                "source ./nested.sh\n"
+                "printf 'dep done\\n'\n",
+            )
+            project.write("nested.sh", "printf 'nested\\n'\n")
+
+            project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_relative_entrypoint_spelling_matches_bash(self):
+        with ScriptProject() as project:
+            output = project.path("compiled.sh")
+            project.write(
+                "main.sh",
+                'if [[ $0 == main.sh ]]; then\n'
+                "  source ./dep.sh\n"
+                "else\n"
+                "  printf 'nope:%s\\n' \"$0\"\n"
+                "fi\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            project.compile("main.sh", output=output, cwd=project.root, mode="executable")
+            expected = subprocess.run(
+                ["bash", "main.sh"],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            actual = project.run(output)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_static_relative_entrypoint_caller_bash_source_matches_bash(self):
+        with ScriptProject() as project:
+            output = project.path("compiled.sh")
+            project.write("main.sh", "source ./dep.sh\n")
+            project.write(
+                "dep.sh",
+                'if [[ ${BASH_SOURCE[1]} == main.sh ]]; then\n'
+                "  printf 'caller-rel\\n'\n"
+                "else\n"
+                "  printf 'caller-other:%s\\n' \"${BASH_SOURCE[1]}\"\n"
+                "fi\n",
+            )
+            project.compile("main.sh", output=output, cwd=project.root, mode="executable")
+            expected = subprocess.run(
+                ["bash", "main.sh"],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            actual = project.run(output)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_static_dot_relative_entrypoint_spelling_matches_bash(self):
+        with ScriptProject() as project:
+            output = project.path("compiled.sh")
+            project.write(
+                "main.sh",
+                'printf "zero:%s\\n" "$0"\n'
+                "source ./dep.sh\n",
+            )
+            project.write("dep.sh", 'printf "caller:%s\\n" "${BASH_SOURCE[1]}"\n')
+            project.compile("./main.sh", output=output, cwd=project.root, mode="executable")
+            expected = subprocess.run(
+                ["bash", "./main.sh"],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            actual = project.run(output)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
 
     def test_dynamic_bash_c_source_remains_fail_closed(self):
         cases = {

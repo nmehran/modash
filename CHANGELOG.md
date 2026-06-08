@@ -151,11 +151,21 @@
 - Child replay tokens are no longer injected into child `bash -c` command-line
   payloads; generated child setup reads them from short-lived replay files before
   user payload execution.
-- Runtime observations now use schema `9` and trusted runtime graphs use schema
-  `4`. Graph edges record source-entry status and source failure kind so replay
-  can validate the status Bash exposes to sourced files after source argument
-  expansion and can faithfully replay missing, directory, unreadable, and
-  no-argument source failures.
+- Runtime observations now use schema `11` and trusted runtime graphs use schema
+  `5`. Observed source events carry the expanded source path, Bash-visible
+  `BASH_SOURCE[0]` value, and physical resolved path separately. Graph edges
+  record source-entry status and source failure kind so replay can validate the
+  status Bash exposes to sourced files after source argument expansion and can
+  faithfully replay missing, directory, unreadable, and no-argument source
+  failures.
+- Static and runtime observed compilation now preserve Bash-visible sourcepath
+  spelling for slashless `source` forms resolved through `PATH`, while runtime
+  graph replay records implicit inherited `PATH` dependencies for those
+  sourcepath edges.
+- Static executable rendering now preserves the entrypoint invocation spelling
+  for `$0` and caller `BASH_SOURCE`, and embedded source payload replay uses
+  compile-time absolute helper paths so user `PATH` changes do not break
+  generated output.
 - Runtime graph replay now expands the original source argument words before
   selecting the trusted edge, validates the selected source path and arguments
   against the graph, and aborts on replay-time drift instead of blindly replaying

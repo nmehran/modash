@@ -54,8 +54,8 @@ __modash_source_function_stack() {
 }
 
 __modash_emit_source_event_with_stack() {
-  local index=$1 pid=$2 kind=$3 caller_file=$4 caller_line=$5 cwd=$6 source_path=$7 resolved_path=$8 source_size=$9 source_mtime_ns=${10} source_sha256=${11} status=${12} source_entry_status=${13}
-  shift 13
+  local index=$1 pid=$2 kind=$3 caller_file=$4 caller_line=$5 cwd=$6 source_path=$7 source_value=$8 resolved_path=$9 source_size=${10} source_mtime_ns=${11} source_sha256=${12} status=${13} source_entry_status=${14}
+  shift 14
   __modash_source_function_stack
   printf '%s\0' \
     'MODASH_SOURCE_EVENT' \
@@ -66,6 +66,7 @@ __modash_emit_source_event_with_stack() {
     "$caller_line" \
     "$cwd" \
     "$source_path" \
+    "$source_value" \
     "$resolved_path" \
     "$source_size" \
     "$source_mtime_ns" \
@@ -152,6 +153,41 @@ __modash_resolve_source_path() {
   done
   IFS=$old_ifs
   printf '%s/%s' "$cwd" "$source_path"
+}
+
+__modash_visible_source_value() {
+  local source_path=${1-}
+
+  if [[ -z $source_path ]]; then
+    return
+  fi
+
+  if [[ $source_path == */* ]]; then
+    printf '%s' "$source_path"
+    return
+  fi
+
+  if ! shopt -q sourcepath; then
+    printf '%s' "$source_path"
+    return
+  fi
+
+  local old_ifs=$IFS directory visible_directory
+  IFS=:
+  for directory in $PATH; do
+    visible_directory=${directory:-.}
+    if [[ -f $visible_directory/$source_path ]]; then
+      if [[ $visible_directory == . ]]; then
+        printf './%s' "$source_path"
+      else
+        printf '%s/%s' "$visible_directory" "$source_path"
+      fi
+      IFS=$old_ifs
+      return
+    fi
+  done
+  IFS=$old_ifs
+  printf '%s' "$source_path"
 }
 
 __modash_source_file_from_bash_source() {
@@ -477,7 +513,7 @@ __modash_trace_source_common() {
   local event_index
   event_index=$(__modash_next_source_index)
 
-  local caller_file caller_line cwd source_path resolved_path status source_arg_count track_functions
+  local caller_file caller_line cwd source_path source_value resolved_path status source_arg_count track_functions
   local source_option_terminator=0 invalid_source_option=""
   local source_size="" source_mtime_ns="" source_sha256=""
   local after_source_size="" after_source_mtime_ns="" after_source_sha256=""
@@ -495,6 +531,7 @@ __modash_trace_source_common() {
   caller_line=${BASH_LINENO[1]:-1}
   cwd=$PWD
   source_path=${normalized_source_args[0]-}
+  source_value=$(__modash_visible_source_value "$source_path")
   if ((source_option_terminator == 0)) && [[ $source_path == -?* ]]; then
     invalid_source_option=${source_path:0:2}
     [[ $source_path == --* ]] && invalid_source_option=--
@@ -629,11 +666,11 @@ __modash_trace_source_common() {
     if ((source_arg_count > 1)); then
       explicit_source_args=("${normalized_source_args[@]:1}")
       __modash_emit_source_event_with_stack \
-        "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$source_size" "$source_mtime_ns" "$source_sha256" "$status" "$prior_status" \
+        "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$source_value" "$resolved_path" "$source_size" "$source_mtime_ns" "$source_sha256" "$status" "$prior_status" \
         "${explicit_source_args[@]}"
     else
       __modash_emit_source_event_with_stack \
-        "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$resolved_path" "$source_size" "$source_mtime_ns" "$source_sha256" "$status" "$prior_status"
+        "$event_index" "$BASHPID" "$kind" "$caller_file" "$caller_line" "$cwd" "$source_path" "$source_value" "$resolved_path" "$source_size" "$source_mtime_ns" "$source_sha256" "$status" "$prior_status"
     fi
   fi
 

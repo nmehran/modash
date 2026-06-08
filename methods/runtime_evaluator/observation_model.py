@@ -6,7 +6,7 @@ from functools import partial
 
 from methods.runtime_evaluator import schema as runtime_schema
 
-OBSERVATION_VERSION = 9
+OBSERVATION_VERSION = 11
 TOP_LEVEL_KEYS = frozenset({
     "version",
     "entrypoint",
@@ -51,7 +51,9 @@ SOURCE_EVENT_KEYS = frozenset({
     "function_stack",
     "function_call",
     "xtrace_index",
+    "source_path",
     "resolved_path",
+    "source_value",
     "arguments",
     "source_entry_status",
     "status",
@@ -327,7 +329,9 @@ class RuntimeProcess:
 class RuntimeSourceEvent:
     index: int
     call_site: SourceCallSite
+    source_path: str
     resolved_path: str
+    source_value: str = ""
     source_identity: str = ""
     arguments: tuple[str, ...] = field(default_factory=tuple)
     function_stack: tuple[str, ...] = field(default_factory=tuple)
@@ -357,7 +361,9 @@ class RuntimeSourceEvent:
             )
         if not isinstance(self.call_site, SourceCallSite):
             raise _schema_error("sources[].call_site must be a SourceCallSite")
+        object.__setattr__(self, "source_path", _exact_string(self.source_path, "sources[].source_path"))
         object.__setattr__(self, "resolved_path", _absolute_path(self.resolved_path, "sources[].resolved_path"))
+        object.__setattr__(self, "source_value", _exact_string(self.source_value, "sources[].source_value"))
         object.__setattr__(
             self,
             "arguments",
@@ -400,7 +406,9 @@ class RuntimeSourceEvent:
                 if data["function_call"] is not None
                 else None
             ),
+            source_path=data["source_path"],
             resolved_path=data["resolved_path"],
+            source_value=data["source_value"],
             arguments=_string_list(data["arguments"], "sources[].arguments"),
             source_entry_status=data["source_entry_status"],
             status=data["status"],
@@ -415,7 +423,9 @@ class RuntimeSourceEvent:
             "call_site": self.call_site.to_dict(),
             "function_stack": list(self.function_stack),
             "function_call": self.function_call.to_dict() if self.function_call is not None else None,
+            "source_path": self.source_path,
             "resolved_path": self.resolved_path,
+            "source_value": self.source_value,
             "arguments": list(self.arguments),
             "source_entry_status": self.source_entry_status,
             "status": self.status,

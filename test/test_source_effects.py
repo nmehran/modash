@@ -19,7 +19,7 @@ class SourceEffectsTestCase(unittest.TestCase):
             cwd=Path("/workspace/project"),
             variables={"DEP": "./dep.sh"},
             shell_options=frozenset({"nounset"}),
-            bash_source_stack=(Path("main.sh"),),
+            bash_source_stack=("main.sh",),
         )
 
         event = SourceEvent(

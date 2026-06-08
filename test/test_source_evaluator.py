@@ -73,7 +73,7 @@ class SourceEvaluatorTestCase(unittest.TestCase):
         self.assertEqual(event.execution_model, ExecutionModel.PARENT_SOURCE)
         self.assertEqual(event.state_before.variables["FOO"], "bar")
         self.assertEqual(event.state_before.cwd, entry.parent)
-        self.assertEqual(event.state_before.bash_source_stack, (entry,))
+        self.assertEqual(event.state_before.bash_source_stack, (str(entry),))
 
     def test_cd_updates_state_for_relative_source_resolution(self):
         with ScriptProject() as project:

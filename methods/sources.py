@@ -282,12 +282,16 @@ def get_sources(entrypoint, mode="executable", source_supplement=None):
     from methods.source_evaluator import SourceEvaluator
     from methods.source_supplements import load_source_supplement
 
-    if not validate_path(entrypoint):
-        raise FileNotFoundError(f"Error: File does not exist - {entrypoint}")
+    entrypoint_value = os.fspath(entrypoint)
+    if not validate_path(entrypoint_value):
+        raise FileNotFoundError(f"Error: File does not exist - {entrypoint_value}")
 
-    entrypoint = os.path.abspath(entrypoint)
+    entrypoint = os.path.abspath(entrypoint_value)
     supplement = load_source_supplement(source_supplement, os.path.dirname(entrypoint))
-    evaluation = SourceEvaluator(mode=mode, source_supplement=supplement).evaluate(entrypoint)
+    evaluation = SourceEvaluator(
+        mode=mode,
+        source_supplement=supplement,
+    ).evaluate(entrypoint, entrypoint_source_value=entrypoint_value)
     sources = context_paths_from_source_events(entrypoint, evaluation.events)
     context = context_from_source_events(evaluation.events, evaluation.disabled_sources)
     context.update({

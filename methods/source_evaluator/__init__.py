@@ -54,19 +54,20 @@ class SourceEvaluator(
         self._retained_helper_stack: list[str] = []
         self._source_line_cache: dict[Path, tuple[str, ...]] = {}
 
-    def evaluate(self, entrypoint: str | Path):
+    def evaluate(self, entrypoint: str | Path, *, entrypoint_source_value: str | None = None):
         entrypoint = Path(entrypoint).resolve()
+        entrypoint_bash_source = entrypoint_source_value or str(entrypoint)
         initial_variables = {
             **self.source_supplement.variables,
-            '0': str(entrypoint),
-            'BASH_SOURCE': str(entrypoint),
+            '0': entrypoint_bash_source,
+            'BASH_SOURCE': entrypoint_bash_source,
         }
         state = EvaluationState(
             cwd=entrypoint.parent,
             variables=copy.deepcopy(initial_variables),
             runtime_variables=copy.deepcopy(initial_variables),
             shell_options=set(DEFAULT_ENABLED_SHOPT_OPTIONS),
-            bash_source_stack=(entrypoint,),
+            bash_source_stack=(entrypoint_bash_source,),
         )
         self.events = []
         self.disabled_sources = []
@@ -107,7 +108,7 @@ class SourceEvaluator(
         bash_source = bash_source_value or str(path)
         state.variables['BASH_SOURCE'] = bash_source
         state.runtime_variables['BASH_SOURCE'] = bash_source
-        state.bash_source_stack = (*previous_stack, Path(bash_source)) if previous_stack[-1:] != (Path(bash_source),) else previous_stack
+        state.bash_source_stack = (*previous_stack, bash_source) if previous_stack[-1:] != (bash_source,) else previous_stack
         if as_source:
             state.source_depth += 1
             state.function_body_depth = 0

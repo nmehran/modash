@@ -454,7 +454,9 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
                             line=1,
                             command='source "$LIB/one.sh"',
                         ),
+                        source_path=str(project.path("lib-one/one.sh")),
                         resolved_path=str(project.path("lib-one/one.sh")),
+                        source_value=str(project.path("lib-one/one.sh")),
                     ),
                     RuntimeSourceEvent(
                         index=1,
@@ -465,7 +467,9 @@ class RuntimeSourceSupplementGenerationTestCase(unittest.TestCase):
                             line=1,
                             command='source "$LIB/two.sh"',
                         ),
+                        source_path=str(project.path("lib-two/two.sh")),
                         resolved_path=str(project.path("lib-two/two.sh")),
+                        source_value=str(project.path("lib-two/two.sh")),
                     ),
                 ),
                 files=(

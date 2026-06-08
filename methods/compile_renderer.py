@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import shutil
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -47,11 +48,34 @@ class SourceArgumentReplay:
     cleanup_lines: tuple[str, ...] = ()
     outer_words: tuple[str, ...] = ()
 
+_TRUSTED_TOOL_CACHE: dict[str, str] = {}
+
+
+def trusted_tool_path(name: str) -> str:
+    cached = _TRUSTED_TOOL_CACHE.get(name)
+    if cached is not None:
+        return cached
+    candidates = [
+        shutil.which(name),
+        os.path.join("/usr/bin", name),
+        os.path.join("/bin", name),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            _TRUSTED_TOOL_CACHE[name] = candidate
+            return candidate
+    raise UnsupportedSourceError(
+        f"unable to find required executable helper for generated source replay: {name}",
+        code="unsupported.source.helper-missing",
+        hint=f"Install {name} or make it available in /usr/bin, /bin, or the compile-time PATH.",
+    )
+
 def replace_runtime_source_references(
     line: str,
     filepath: str,
     entry_point: str,
     *,
+    entry_point_value: str | None = None,
     include_zero: bool = True,
     bash_source_stack: tuple[str, ...] | None = None,
     bash_source_stack_array: str | None = None,
@@ -65,6 +89,7 @@ def replace_runtime_source_references(
             segment,
             filepath,
             entry_point,
+            entry_point_value=entry_point_value,
             include_zero=include_zero,
             bash_source_stack=bash_source_stack,
             bash_source_stack_array=bash_source_stack_array,
@@ -82,6 +107,7 @@ def _replace_runtime_source_references_segment(
     filepath: str,
     entry_point: str,
     *,
+    entry_point_value: str | None,
     include_zero: bool,
     bash_source_stack: tuple[str, ...],
     bash_source_stack_array: str | None,
@@ -93,7 +119,7 @@ def _replace_runtime_source_references_segment(
         if bash_source_stack_array is not None
         else shell_quote(bash_source_stack[0] if bash_source_stack else os.path.abspath(filepath))
     )
-    entry_source = shell_quote(os.path.abspath(entry_point))
+    entry_source = shell_quote(entry_point_value or os.path.abspath(entry_point))
 
     if support_extended_bash_source:
         segment = _replace_bash_source_array_word(segment, bash_source_stack)
@@ -857,11 +883,14 @@ def wrap_source_site_embedded_payload(
     inner_indent = f"{indent}  "
     setup_lines = [f"{inner_indent}{line}" for line in source_argument_replay.setup_lines]
     cleanup_lines = [f"{inner_indent}{line}" for line in source_argument_replay.cleanup_lines]
+    mktemp_tool = shell_quote(trusted_tool_path("mktemp"))
+    cat_tool = shell_quote(trusted_tool_path("cat"))
+    rm_tool = shell_quote(trusted_tool_path("rm"))
     return "\n".join([
         "{",
         f"{inner_indent}{entry_status_variable}=$?",
-        f"{inner_indent}{payload_variable}=$(mktemp \"${{TMPDIR:-/tmp}}/modash-source.XXXXXXXXXX\") || exit",
-        f"{inner_indent}command cat > \"${{{payload_variable}}}\" <<'{delimiter}'",
+        f"{inner_indent}{payload_variable}=$({mktemp_tool} \"${{TMPDIR:-/tmp}}/modash-source.XXXXXXXXXX\") || exit",
+        f"{inner_indent}{cat_tool} > \"${{{payload_variable}}}\" <<'{delimiter}'",
         replacement,
         delimiter,
         *setup_lines,
@@ -872,7 +901,7 @@ def wrap_source_site_embedded_payload(
         f"{inner_indent}fi",
         f"{inner_indent}{status_variable}=$?",
         *cleanup_lines,
-        f"{inner_indent}command rm -f -- \"${{{payload_variable}}}\"",
+        f"{inner_indent}{rm_tool} -f -- \"${{{payload_variable}}}\"",
         f"{inner_indent}unset {entry_status_variable}",
         f"{inner_indent}( exit \"${{{status_variable}}}\" )",
         f"{indent}}}",
@@ -1229,7 +1258,7 @@ def command_sources_generated_payload(command: str):
     )
 
 
-def render_executable_script(entry_point: str, context: dict):
+def render_executable_script(entry_point: str, context: dict, *, entrypoint_source_value: str | None = None):
     file_contents = {}
     top_level_trait_cache = {}
     render_stack = []
@@ -1258,7 +1287,7 @@ def render_executable_script(entry_point: str, context: dict):
         bash_source_stack=None,
     ):
         filepath = os.path.abspath(filepath)
-        bash_source_stack = bash_source_stack or (os.path.abspath(entry_point),)
+        bash_source_stack = bash_source_stack or (entrypoint_source_value or os.path.abspath(entry_point),)
         if filepath in render_stack:
             chain = " -> ".join([*render_stack, filepath])
             raise RecursionError(f"Circular source dependency while rendering: {chain}")
@@ -1358,6 +1387,7 @@ def render_executable_script(entry_point: str, context: dict):
                     line,
                     filepath,
                     entry_point,
+                    entry_point_value=entrypoint_source_value,
                     bash_source_stack=bash_source_stack,
                 )
                 line = replace_lineno_references(line, num + 1)

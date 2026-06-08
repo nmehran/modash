@@ -28,21 +28,22 @@ def compile_sources(
     if mode not in {"context", "executable"}:
         raise ValueError(f"Unsupported compile mode: {mode}")
 
-    if not validate_path(entry_point):
-        raise FileNotFoundError(f"Error: Could not resolve the path to the entry point - {entry_point}")
+    entry_point_value = os.fspath(entry_point)
+    if not validate_path(entry_point_value):
+        raise FileNotFoundError(f"Error: Could not resolve the path to the entry point - {entry_point_value}")
 
-    if not os.path.isfile(entry_point):
-        raise OSError(f"Error: entry point must be a file - {entry_point}")
+    if not os.path.isfile(entry_point_value):
+        raise OSError(f"Error: entry point must be a file - {entry_point_value}")
 
-    entry_point = os.path.abspath(entry_point)
+    entry_point = os.path.abspath(entry_point_value)
     supplement = load_source_supplement(source_supplement, os.path.dirname(entry_point))
     evaluation = SourceEvaluator(
         mode=mode,
         source_supplement=supplement,
-    ).evaluate(entry_point)
+    ).evaluate(entry_point, entrypoint_source_value=entry_point_value)
     context = context_from_source_events(evaluation.events, evaluation.disabled_sources, evaluation.line_replacements)
     if mode == "executable":
-        output = render_executable_script(entry_point, context)
+        output = render_executable_script(entry_point, context, entrypoint_source_value=entry_point_value)
     else:
         sources = context_paths_from_source_events(entry_point, evaluation.events)
         output = render_context_files(sources, entry_point, context)

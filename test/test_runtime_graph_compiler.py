@@ -961,6 +961,33 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertIn("observed environment drift: PATH", drifted.stdout)
         self.assertNotIn("two\n", drifted.stdout)
 
+    def test_runtime_compiler_records_inherited_sourcepath_path_dependency(self):
+        with ScriptProject() as project:
+            one = project.mkdir("lib1")
+            two = project.mkdir("lib2")
+            project.write("main.sh", "source dep.sh\nprintf 'done\\n'\n")
+            project.write("lib1/dep.sh", "printf 'one\\n'\n")
+            project.write("lib2/dep.sh", "printf 'two\\n'\n")
+            old_path = os.environ.get("PATH")
+            traced_path = f"{one}:{old_path or ''}"
+            try:
+                os.environ["PATH"] = traced_path
+                compiled, graph = self.compile_observed(project, "main.sh")
+            finally:
+                if old_path is None:
+                    os.environ.pop("PATH", None)
+                else:
+                    os.environ["PATH"] = old_path
+            matched = project.run(compiled, env={"PATH": traced_path})
+            drifted = project.run(compiled, env={"PATH": f"{two}:{old_path or ''}"})
+
+        self.assertEqual(graph["environment"]["values"]["PATH"], traced_path)
+        self.assertEqual(matched.returncode, 0, matched.stdout)
+        self.assertEqual(matched.stdout, "one\ndone\n")
+        self.assertEqual(drifted.returncode, 125, drifted.stdout)
+        self.assertIn("observed environment drift: PATH", drifted.stdout)
+        self.assertNotIn("two\n", drifted.stdout)
+
     def test_runtime_compiler_fails_closed_on_home_tilde_source_drift(self):
         with ScriptProject() as project:
             home1 = project.mkdir("home1")
@@ -1819,6 +1846,45 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, f"source:./dep.sh\nsource:{project.path('dep.sh')}\n")
+
+    def test_runtime_compiler_preserves_sourcepath_bash_source_spelling(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "PATH=./lib source dep.sh\n")
+            project.write(
+                "lib/dep.sh",
+                'printf "bs:%s\\n" "${BASH_SOURCE[0]}"\n'
+                'if [[ ${BASH_SOURCE[0]} == ./lib/dep.sh ]]; then\n'
+                "  printf 'ok\\n'\n"
+                "else\n"
+                "  printf 'bad\\n'\n"
+                "fi\n",
+            )
+            expected = project.run("main.sh")
+            compiled, graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(graph["edges"][0]["source_value"], "./lib/dep.sh")
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
+
+    def test_runtime_compiler_sourcepath_bash_source_controls_nested_source_selection(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "PATH=./lib source dep.sh\n")
+            project.write(
+                "lib/dep.sh",
+                'if [[ ${BASH_SOURCE[0]} == ./lib/dep.sh ]]; then\n'
+                "  printf 'ok\\n'\n"
+                "else\n"
+                "  source ./nested.sh\n"
+                "fi\n",
+            )
+            project.write("nested.sh", "printf 'nested\\n'\n")
+            expected = project.run("main.sh")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
 
     def test_runtime_compiler_preserves_top_level_return_status_from_sourced_file(self):
         with ScriptProject() as project:

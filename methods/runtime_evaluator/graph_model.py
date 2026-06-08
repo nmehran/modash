@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from methods.runtime_evaluator.observation_model import RuntimeSourceObservationError
 
-GRAPH_VERSION = 4
+GRAPH_VERSION = 5
 GRAPH_TOP_LEVEL_KEYS = frozenset({
     "version",
     "entrypoint",
@@ -22,6 +22,7 @@ GRAPH_EDGE_KEYS = frozenset({
     "from",
     "to",
     "resolved_path",
+    "source_value",
     "failure_kind",
     "source_entry_status",
     "status",

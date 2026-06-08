@@ -46,6 +46,7 @@ from methods.source_resolver import (
     parse_shell_words_preserving_quotes,
     strip_shell_word_quotes,
 )
+from methods.source_commands import source_command_invocation
 
 TRACE_VERSION = "runtime-wrapper-v12"
 PROCESS_MARKER = "MODASH_PROCESS_EVENT"
@@ -88,6 +89,7 @@ class _RawSourceEvent:
     caller_line: int
     cwd: str
     source_path: str
+    source_value: str
     resolved_path: str
     source_size: int | None
     source_mtime_ns: int | None
@@ -311,7 +313,9 @@ def _recorded_environment_values(run_env: dict[str, str], explicit_env, source_e
         for key, value in (explicit_env or {}).items()
     }
     for event in source_events:
-        payloads = (event.resolved_path, *event.arguments)
+        payloads = (event.resolved_path, event.source_value, *event.arguments)
+        if _sourcepath_depends_on_path(event.call_site.command, event.source_path, event.source_value) and "PATH" in run_env:
+            values.setdefault("PATH", str(run_env["PATH"]))
         for key in _source_relevant_variable_names(event.call_site.command):
             if key in values or key not in run_env or key in TRACE_OWNED_ENVIRONMENT_KEYS:
                 continue
@@ -368,6 +372,18 @@ def _source_relevant_variable_names(text: str) -> set[str]:
             continue
         index += 1
     return names
+
+
+def _sourcepath_depends_on_path(command: str, source_path: str, source_value: str) -> bool:
+    invocation = source_command_invocation(command, normalize_trace_wrappers=True)
+    if invocation is None:
+        return False
+    if not source_path or "/" in source_path or source_value == source_path:
+        return False
+    return not any(
+        re.match(r"^PATH(?:\+?=)", strip_shell_word_quotes(word))
+        for word in invocation.words[:invocation.source_index]
+    )
 
 
 def _environment_value_contributed_to_source(value: str, payloads: tuple[str, ...]) -> bool:
@@ -627,7 +643,9 @@ def _observation_events(
             ),
             function_stack=event.function_stack,
             function_call=function_calls_by_source_index.get(event.index),
+            source_path=event.source_path,
             resolved_path=event.resolved_path,
+            source_value=event.source_value,
             arguments=event.arguments,
             source_entry_status=event.source_entry_status,
             status=event.status,
@@ -884,14 +902,15 @@ def _parse_raw_trace(raw_trace: bytes):
         caller_line = _parse_int(fields[offset + 4], "source event caller line")
         cwd = fields[offset + 5]
         source_path = fields[offset + 6]
-        resolved_path = fields[offset + 7]
-        source_size = _parse_optional_int(fields[offset + 8], "source event source size")
-        source_mtime_ns = _parse_optional_int(fields[offset + 9], "source event source mtime_ns")
-        source_sha256 = fields[offset + 10] or None
-        status = _parse_int(fields[offset + 11], "source event status")
-        source_entry_status = _parse_int(fields[offset + 12], "source event source entry status")
-        function_count = _parse_int(fields[offset + 13], "source event function stack count")
-        offset += 14
+        source_value = fields[offset + 7]
+        resolved_path = fields[offset + 8]
+        source_size = _parse_optional_int(fields[offset + 9], "source event source size")
+        source_mtime_ns = _parse_optional_int(fields[offset + 10], "source event source mtime_ns")
+        source_sha256 = fields[offset + 11] or None
+        status = _parse_int(fields[offset + 12], "source event status")
+        source_entry_status = _parse_int(fields[offset + 13], "source event source entry status")
+        function_count = _parse_int(fields[offset + 14], "source event function stack count")
+        offset += 15
 
         if function_count < 0:
             raise RuntimeSourceTraceError("source event function stack count must be non-negative")
@@ -922,6 +941,7 @@ def _parse_raw_trace(raw_trace: bytes):
             caller_line=caller_line,
             cwd=cwd,
             source_path=source_path,
+            source_value=source_value,
             resolved_path=resolved_path,
             source_size=source_size,
             source_mtime_ns=source_mtime_ns,
