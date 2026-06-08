@@ -157,7 +157,7 @@ Useful options:
 Run the local verification suite:
 
 ```sh
-pytest -q
+python -m unittest discover -s . -p 'test_*.py'
 python -m py_compile $(find methods -name '*.py' -print) $(find test -name '*.py' -print) modash.py
 git diff --check
 ```
@@ -167,7 +167,7 @@ Optional packaging checks:
 ```sh
 python -m build --sdist --wheel --outdir dist
 python -m twine check dist/*
-MODASH_PACKAGING_SMOKE=1 pytest -q test/test_packaging_smoke.py
+MODASH_PACKAGING_SMOKE=1 python -m unittest test.test_packaging_smoke -v
 ```
 
 Design notes live in [docs](docs/README.md).

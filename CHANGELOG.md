@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.7.0 - 2026-06-03
+## v0.7.0 - 2026-06-08
 
 ### Added
 
@@ -213,7 +213,7 @@
 
 ### Validation
 
-- Full unit suite: `828` tests, `9` skipped.
+- Full unit suite: `900` tests, `9` skipped.
 - Runtime-focused graph/source/replay safety suites passed.
 - Opt-in real-world suite with runtime parity, trace, supplement replay,
   trusted graph replay, and observe-compile gates: `17` tests passed. Runtime

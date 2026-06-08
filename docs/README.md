@@ -17,12 +17,14 @@ by tests, changelog entries, and user-facing docs.
 - [Runtime Graph Compiler](runtime-graph-compiler.md): 0.7 trusted graph-tape
   compiler architecture for `compile-observed` / `observe-compile`, including
   replay groups, bundling, and fail-closed boundaries.
-- [0.6 Release Scope](roadmap-0.6.md): coverage-completion scope for broader
-  real-world observe-compile promotion, finite runtime-dynamic helpers,
-  recursive/runtime-dynamic dispatch, static edge semantics, and cleanup.
 - [Real-World Internal Test Suite](real-world-test-suite.md): opt-in pinned
   corpus, generated artifact, runtime parity, trace, and supplement replay
   gates.
+
+## Historical Scope
+
+- [0.6 Release Scope](roadmap-0.6.md): historical coverage-completion scope
+  retained as background for the 0.7 runtime compiler work.
 
 For release history, see [CHANGELOG.md](../CHANGELOG.md). For implementation
 details, prefer the code and regression tests over stale design snapshots.
