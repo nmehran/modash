@@ -52,6 +52,35 @@ class TestCompile(unittest.TestCase):
         self.assertEqual(execution_result.stdout, expected_output,
                          "The execution output did not match the expected result")
 
+    def test_executable_output_respects_umask(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            work = Path(tmp_dir)
+            entrypoint = work / "main.sh"
+            output_file = work / "compiled.sh"
+            entrypoint.write_text("printf 'ok\\n'\n", encoding="utf-8")
+
+            old_umask = os.umask(0o077)
+            try:
+                compile_result = subprocess.run(
+                    [sys.executable, COMPILE_SCRIPT, str(entrypoint), str(output_file), '--mode', 'executable'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+            finally:
+                os.umask(old_umask)
+
+            self.assertEqual(compile_result.returncode, 0, compile_result.stdout)
+            self.assertEqual(output_file.stat().st_mode & 0o777, 0o700)
+            execution_result = subprocess.run(
+                [str(output_file)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.assertEqual(execution_result.returncode, 0, execution_result.stdout)
+            self.assertEqual(execution_result.stdout, "ok\n")
+
 
 if __name__ == '__main__':
     unittest.main()
