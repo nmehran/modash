@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -784,6 +785,34 @@ class CompileRegressionTestCase(unittest.TestCase):
 
             project.assert_compiled_matches(self, "main.sh")
 
+    def test_static_embedded_source_payload_resolves_relative_path_helpers_absolutely(self):
+        from methods import compile_renderer
+
+        compile_renderer._TRUSTED_TOOL_CACHE.clear()
+        try:
+            with ScriptProject() as project:
+                project.write("tools/mktemp", "#!/bin/sh\nexec /usr/bin/mktemp \"$@\"\n", executable=True)
+                project.write("main.sh", "source ./dep.sh arg\nprintf 'done\\n'\n")
+                project.write("dep.sh", "printf 'dep:%s\\n' \"$1\"\n")
+                output = project.compile(
+                    "main.sh",
+                    output="compiled.sh",
+                    cwd=project.root,
+                    env={"PATH": f"tools:{os.environ['PATH']}"},
+                    mode="executable",
+                )
+                compiled = output.read_text()
+
+                self.assertIn(str(project.path("tools/mktemp")), compiled)
+                self.assertNotIn("'tools/mktemp'", compiled)
+                project.assert_compiled_matches(
+                    self,
+                    "main.sh",
+                    env={"PATH": f"tools:{os.environ['PATH']}"},
+                )
+        finally:
+            compile_renderer._TRUSTED_TOOL_CACHE.clear()
+
     def test_static_relative_entrypoint_spelling_matches_bash(self):
         with ScriptProject() as project:
             output = project.path("compiled.sh")
@@ -809,6 +838,48 @@ class CompileRegressionTestCase(unittest.TestCase):
         self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
         self.assertEqual(actual.stdout, expected.stdout)
 
+    def test_static_entrypoint_parameter_ops_match_bash(self):
+        with ScriptProject() as project:
+            output = project.path("compiled.sh")
+            project.write(
+                "main.sh",
+                'if [[ ${0##*/} == main.sh && ${0%/*} == . ]]; then\n'
+                "  source ./dep.sh\n"
+                "else\n"
+                "  printf 'no:%s:%s\\n' \"${0##*/}\" \"${0%/*}\"\n"
+                "fi\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+            project.compile("./main.sh", output=output, cwd=project.root, mode="executable")
+            expected = subprocess.run(
+                ["bash", "./main.sh"],
+                cwd=str(project.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            actual = project.run(output)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_static_unsupported_entrypoint_parameter_ops_fail_before_output(self):
+        with ScriptProject() as project:
+            output = project.path("compiled.sh")
+            project.write(
+                "main.sh",
+                'if [[ ${0/main/other} == other.sh ]]; then\n'
+                "  source ./dep.sh\n"
+                "fi\n",
+            )
+            project.write("dep.sh", "printf 'dep\\n'\n")
+
+            with self.assertRaisesRegex(NotImplementedError, r"\$0") as cm:
+                project.compile("main.sh", output=output, mode="executable")
+
+        self.assertEqual(cm.exception.code, "unsupported.source.runtime-reference")
+        self.assertFalse(output.exists())
+
     def test_static_relative_entrypoint_caller_bash_source_matches_bash(self):
         with ScriptProject() as project:
             output = project.path("compiled.sh")
@@ -833,6 +904,48 @@ class CompileRegressionTestCase(unittest.TestCase):
 
         self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
         self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_static_source_inside_function_preserves_funcname_with_real_source_payload(self):
+        cases = {
+            "top-level": 'printf "fn:%s\\n" "${FUNCNAME[0]-}"\n',
+            "called function body": 'g() { printf "fn:%s\\n" "${FUNCNAME[1]-}"; }\ng\n',
+        }
+        for name, dep_content in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write(
+                    "main.sh",
+                    "f() {\n"
+                    "  source ./dep.sh\n"
+                    "}\n"
+                    "f\n",
+                )
+                project.write("dep.sh", dep_content)
+
+                project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_source_inside_function_rejects_unpreservable_stack_metadata(self):
+        cases = {
+            "caller": "caller 0 || true\n",
+            "function caller": "g() { caller 0 || true; }\ng\n",
+            "bash-lineno": 'printf "line:%s\\n" "${BASH_LINENO[0]-}"\n',
+        }
+        for name, dep_content in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                output = project.path("compiled.sh")
+                project.write(
+                    "main.sh",
+                    "f() {\n"
+                    "  source ./dep.sh\n"
+                    "}\n"
+                    "f\n",
+                )
+                project.write("dep.sh", dep_content)
+
+                with self.assertRaisesRegex(NotImplementedError, "runtime stack metadata|BASH_LINENO") as cm:
+                    project.compile("main.sh", output=output, mode="executable")
+
+            self.assertEqual(cm.exception.code, "unsupported.source.runtime-reference")
+            self.assertFalse(output.exists())
 
     def test_static_dot_relative_entrypoint_spelling_matches_bash(self):
         with ScriptProject() as project:

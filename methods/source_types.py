@@ -19,6 +19,7 @@ class ResolvedSource:
     sync_positionals: bool = False
     source_location_path: str | None = None
     source_location_line: int | None = None
+    function_call_stack: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

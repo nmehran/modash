@@ -123,6 +123,10 @@
   the generated source site instead of being frozen during dependency
   discovery, preserving loop variables, runtime `"$@"`, command substitutions,
   and assignment-prefixed source positional mutation.
+- Fixed review-found static/runtime parity gaps for exact `${0##*/}` and
+  `${0%/*}` entrypoint operations, function-context `FUNCNAME` in sourced files,
+  unpreservable `caller` / `BASH_LINENO` stack metadata, and relative
+  compile-time helper paths in embedded source payload replay.
 
 ### Changed
 

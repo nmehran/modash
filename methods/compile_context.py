@@ -137,6 +137,11 @@ def context_from_source_events(events, disabled_sources=(), line_replacements=()
             sync_positionals=event.sync_positionals,
             source_location_path=str(event.location.path),
             source_location_line=event.location.line,
+            function_call_stack=(
+                event.state_before.function_call_stack
+                if event.state_before
+                else ()
+            ),
         ))
 
     for disabled_source in disabled_sources:

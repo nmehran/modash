@@ -148,6 +148,17 @@ def parameter_expansion_value(reference, context):
         return None
 
     body = reference[2:-1]
+    for operator, suffix, transform in (
+        ("##", "*/", _shell_hash_hash_slash_star),
+        ("%", "/*", _shell_percent_slash_star),
+    ):
+        if operator in body and body.endswith(suffix):
+            name = body[:-(len(operator) + len(suffix))]
+            if name and re.fullmatch(r'[a-zA-Z_]\w*|[0-9]+', name):
+                value = context['vars'].get(name, os.environ.get(name))
+                if value is not None:
+                    return transform(value)
+
     match = re.fullmatch(r'([a-zA-Z_]\w*|[0-9]+)(:?)([-+])(.*)', body, re.S)
     if not match:
         return None
@@ -162,6 +173,18 @@ def parameter_expansion_value(reference, context):
     if is_set:
         return resolve_variable_references(word, context)
     return ""
+
+
+def _shell_hash_hash_slash_star(value: str):
+    if "/" not in value:
+        return value
+    return value.rsplit("/", 1)[1]
+
+
+def _shell_percent_slash_star(value: str):
+    if "/" not in value:
+        return value
+    return value.rsplit("/", 1)[0]
 
 
 def resolve_variable_references(command, context):

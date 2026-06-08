@@ -4376,7 +4376,6 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
             "caller": 'printf "caller:%s\\n" "${BASH_SOURCE[1]}"\n',
             "parameter op": 'printf "dir:%s\\n" "${BASH_SOURCE[0]%/*}"\n',
             "array": 'printf "all:%s\\n" "${BASH_SOURCE[@]}"\n',
-            "zero op": 'printf "zero-base:%s\\n" "${0##*/}"\n',
         }
         for name, dep_script in cases.items():
             with self.subTest(name=name), ScriptProject() as project:
@@ -4387,6 +4386,17 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                     "main.sh",
                     code="runtime.compile.runtime_reference",
                 )
+
+    def test_runtime_compiler_rewrites_supported_zero_parameter_ops(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "source ./dep.sh\n")
+            project.write("dep.sh", 'printf "zero:%s:%s\\n" "${0##*/}" "${0%/*}"\n')
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            expected = project.run("main.sh")
+            actual = project.run(compiled)
+
+        self.assertEqual(actual.returncode, expected.returncode, actual.stdout)
+        self.assertEqual(actual.stdout, expected.stdout)
 
     def test_runtime_compiler_rejects_source_entry_sensitive_state_references(self):
         cases = {

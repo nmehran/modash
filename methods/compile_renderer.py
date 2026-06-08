@@ -4,6 +4,7 @@ import re
 import shutil
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 
 from methods.compile_context import (
     construct_file_separator,
@@ -36,7 +37,7 @@ from methods.source_resolver import (
     parse_shell_words_preserving_quotes,
     strip_shell_word_quotes,
 )
-from methods.source_traits import file_top_level_source_traits
+from methods.source_traits import file_top_level_function_context_traits, file_top_level_source_traits
 
 SET_SHEBANG = "#!/bin/bash"
 
@@ -62,8 +63,9 @@ def trusted_tool_path(name: str) -> str:
     ]
     for candidate in candidates:
         if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            _TRUSTED_TOOL_CACHE[name] = candidate
-            return candidate
+            resolved_candidate = str(Path(candidate).resolve(strict=True))
+            _TRUSTED_TOOL_CACHE[name] = resolved_candidate
+            return resolved_candidate
     raise UnsupportedSourceError(
         f"unable to find required executable helper for generated source replay: {name}",
         code="unsupported.source.helper-missing",
@@ -139,16 +141,29 @@ def _replace_runtime_source_references_segment(
         segment = _replace_shell_word_token(segment, token, bash_source)
 
     if include_zero:
+        segment = _replace_entrypoint_parameter_ops(segment, entry_point_value or os.path.abspath(entry_point))
         for token in ('"${0}"', '"$0"', '${0}'):
             segment = _replace_shell_word_token(segment, token, entry_source)
 
     if include_zero:
         segment = re.sub(r'\$0(?![0-9])', entry_source, segment)
+    if include_zero and re.search(r'\$\{0[^}]+\}', segment):
+        raise UnsupportedSourceError(
+            f"unsupported $0 runtime reference in executable output: {segment.strip()}",
+            code="unsupported.source.runtime-reference",
+            hint="Use simple $0, ${0}, ${0##*/}, or ${0%/*} forms.",
+        )
     if reject_unsupported_bash_source and re.search(r'\$(?:\{BASH_SOURCE(?:[^}]*)?\}|BASH_SOURCE\b)', segment):
         raise UnsupportedSourceError(
             f"unsupported BASH_SOURCE runtime reference in executable output: {segment.strip()}",
             code="unsupported.source.runtime-reference",
             hint="Use simple BASH_SOURCE scalar indexes or a standalone BASH_SOURCE[@] expansion.",
+        )
+    if reject_unsupported_bash_source and re.search(r'\$(?:\{BASH_LINENO(?:[^}]*)?\}|BASH_LINENO\b)', segment):
+        raise UnsupportedSourceError(
+            f"unsupported BASH_LINENO runtime reference in executable output: {segment.strip()}",
+            code="unsupported.source.runtime-reference",
+            hint="Use observe-compile when runtime stack line metadata is required.",
         )
     return segment
 
@@ -179,6 +194,24 @@ def _shell_percent_slash_star(value: str):
     if "/" not in value:
         return value
     return value.rsplit("/", 1)[0]
+
+
+def _shell_hash_hash_slash_star(value: str):
+    if "/" not in value:
+        return value
+    return value.rsplit("/", 1)[1]
+
+
+def _replace_entrypoint_parameter_ops(segment: str, entry_point_value: str):
+    replacements = {
+        '${0##*/}': _shell_hash_hash_slash_star(entry_point_value),
+        '${0%/*}': _shell_percent_slash_star(entry_point_value),
+    }
+    for parameter_op, value in replacements.items():
+        quoted_value = shell_quote(value)
+        for token in (f'"{parameter_op}"', parameter_op):
+            segment = _replace_shell_word_token(segment, token, quoted_value)
+    return segment
 
 
 def _replace_shell_word_token(segment: str, token: str, replacement: str):
@@ -777,7 +810,21 @@ def render_source_site_replacement(
 
 
 def source_site_needs_embedded_payload(declaration):
-    return declaration.source_arguments is not None or declaration.source_argument_words is not None
+    if declaration.source_arguments is not None or declaration.source_argument_words is not None:
+        return True
+    if declaration.replacement_kind != "source" or not declaration.function_call_stack:
+        return False
+    if not declaration.path or not os.path.isfile(declaration.path):
+        return False
+
+    traits = file_top_level_function_context_traits(declaration.path, read_file(declaration.path))
+    if traits.invokes_caller or traits.references_bash_lineno:
+        raise UnsupportedSourceError(
+            f"unsupported function-context runtime stack metadata in sourced file: {declaration.path}",
+            code="unsupported.source.runtime-reference",
+            hint="Use observe-compile when caller or BASH_LINENO metadata must match the traced Bash run.",
+        )
+    return traits.references_funcname
 
 
 def source_site_argument_replay(

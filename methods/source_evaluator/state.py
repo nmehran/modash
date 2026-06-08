@@ -152,6 +152,7 @@ class EvaluationState:
             shell_options=frozenset(self.shell_options),
             glob_options=frozenset(self.glob_options),
             bash_source_stack=self.bash_source_stack,
+            function_call_stack=self.function_call_stack,
             positional_assignment_generation=self.positional_assignment_generation,
         )
 
