@@ -89,6 +89,7 @@ class SourceEvaluator(
         stack: tuple[Path, ...],
         *,
         as_source: bool = False,
+        bash_source_value: str | None = None,
     ):
         path = path.resolve()
         if path in stack:
@@ -103,9 +104,10 @@ class SourceEvaluator(
         previous_stack = state.bash_source_stack
         previous_source_depth = state.source_depth
         previous_function_body_depth = state.function_body_depth
-        state.variables['BASH_SOURCE'] = str(path)
-        state.runtime_variables['BASH_SOURCE'] = str(path)
-        state.bash_source_stack = (*previous_stack, path) if previous_stack[-1:] != (path,) else previous_stack
+        bash_source = bash_source_value or str(path)
+        state.variables['BASH_SOURCE'] = bash_source
+        state.runtime_variables['BASH_SOURCE'] = bash_source
+        state.bash_source_stack = (*previous_stack, Path(bash_source)) if previous_stack[-1:] != (Path(bash_source),) else previous_stack
         if as_source:
             state.source_depth += 1
             state.function_body_depth = 0

@@ -194,9 +194,12 @@ dynamic commands may receive inert text that looks like shell source syntax;
 only replay-critical command identities and shell `-c` payloads are treated as
 source execution risk.
 
-Bundled files rewrite `$0` and `BASH_SOURCE` references to stable original
-physical paths. Exact relative-path spelling and symlink spelling are not part
-of the 0.7 runtime graph compiler contract.
+Bundled files rewrite `$0` to the original entrypoint path. Simple
+`BASH_SOURCE[0]`, `BASH_SOURCE`, and `$BASH_SOURCE` references in replayed
+sourced files read from the trusted observed source stack, so relative source
+spelling such as `./dep.sh` remains visible to the sourced file when that is
+what the traced run used. More complex `BASH_SOURCE` parameter operations and
+array forms remain fail-closed unless explicitly supported.
 
 Graph construction also rejects sourced files with top-level
 function-context-sensitive Bash such as `local`, `caller`, `declare`,

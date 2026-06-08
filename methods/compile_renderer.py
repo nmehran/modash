@@ -54,6 +54,7 @@ def replace_runtime_source_references(
     *,
     include_zero: bool = True,
     bash_source_stack: tuple[str, ...] | None = None,
+    bash_source_stack_array: str | None = None,
     support_extended_bash_source: bool = True,
     reject_unsupported_bash_source: bool = True,
 ):
@@ -66,6 +67,7 @@ def replace_runtime_source_references(
             entry_point,
             include_zero=include_zero,
             bash_source_stack=bash_source_stack,
+            bash_source_stack_array=bash_source_stack_array,
             support_extended_bash_source=support_extended_bash_source,
             reject_unsupported_bash_source=reject_unsupported_bash_source,
         )
@@ -82,10 +84,15 @@ def _replace_runtime_source_references_segment(
     *,
     include_zero: bool,
     bash_source_stack: tuple[str, ...],
+    bash_source_stack_array: str | None,
     support_extended_bash_source: bool,
     reject_unsupported_bash_source: bool,
 ):
-    bash_source = shell_quote(bash_source_stack[0] if bash_source_stack else os.path.abspath(filepath))
+    bash_source = (
+        f'"${{{bash_source_stack_array}[0]}}"'
+        if bash_source_stack_array is not None
+        else shell_quote(bash_source_stack[0] if bash_source_stack else os.path.abspath(filepath))
+    )
     entry_source = shell_quote(os.path.abspath(entry_point))
 
     if support_extended_bash_source:
@@ -95,7 +102,11 @@ def _replace_runtime_source_references_segment(
     else:
         stack_indexes = range(min(len(bash_source_stack), 1))
     for index in stack_indexes:
-        quoted_source = shell_quote(bash_source_stack[index])
+        quoted_source = (
+            f'"${{{bash_source_stack_array}[{index}]}}"'
+            if bash_source_stack_array is not None
+            else shell_quote(bash_source_stack[index])
+        )
         for token in (f'"${{BASH_SOURCE[{index}]}}"', f"${{BASH_SOURCE[{index}]}}"):
             segment = _replace_shell_word_token(segment, token, quoted_source)
     for token in ('"${BASH_SOURCE}"', '"$BASH_SOURCE"', '${BASH_SOURCE}', '$BASH_SOURCE'):
@@ -211,6 +222,22 @@ def _split_shell_comment(line: str):
         ):
             return line[:index], line[index:]
     return line, ""
+
+
+def replace_lineno_references(line: str, line_index: int):
+    from methods.runtime_evaluator.compiler_rewrite import (  # Local import avoids a renderer/runtime import cycle.
+        _line_has_lineno_reference,
+        _replace_lineno_references,
+    )
+
+    line = _replace_lineno_references(line, line_index)
+    if _line_has_lineno_reference(line):
+        raise UnsupportedSourceError(
+            f"unsupported LINENO runtime reference in executable output: {line.strip()}",
+            code="unsupported.source.runtime-reference",
+            hint="Use simple LINENO scalar, arithmetic, test, let, or array-subscript forms.",
+        )
+    return line
 
 
 def _single_quote_aware_segments(line: str):
@@ -377,7 +404,7 @@ def render_source_dispatch(
                     source_argument_words=source_declaration.source_argument_words,
                     source_state_generation=source_declaration.positional_assignment_generation,
                     sync_positionals=source_declaration.sync_positionals,
-                    bash_source_value=source_declaration.path,
+                    bash_source_value=source_declaration.source_value or source_declaration.path,
                 ),
                 f"{indent}    ",
             )
@@ -440,7 +467,7 @@ def render_retained_source_dispatch(
                 source_argument_words=source_declaration.source_argument_words,
                 source_state_generation=source_declaration.positional_assignment_generation,
                 sync_positionals=source_declaration.sync_positionals,
-                bash_source_value=source_declaration.path,
+                bash_source_value=source_declaration.source_value or source_declaration.path,
             ),
             f"{indent}      ",
         )
@@ -541,7 +568,7 @@ def replace_command_source_sites(
                     source_argument_words=source_declaration.source_argument_words,
                     source_state_generation=source_declaration.positional_assignment_generation,
                     sync_positionals=source_declaration.sync_positionals,
-                    bash_source_value=source_declaration.path,
+                    bash_source_value=source_declaration.source_value or source_declaration.path,
                 ),
                 indent,
             )
@@ -583,7 +610,7 @@ def render_bash_c_source_command(
             source_argument_words=source_declaration.source_argument_words,
             source_state_generation=source_declaration.positional_assignment_generation,
             sync_positionals=source_declaration.sync_positionals,
-            bash_source_value=source_declaration.path,
+            bash_source_value=source_declaration.source_value or source_declaration.path,
         ),
         "",
     )
@@ -699,11 +726,7 @@ def render_source_site_replacement(
         sync_positionals=declaration.sync_positionals,
         wrap_source_call=not force_embedded_payload,
         force_source_site_payloads=force_embedded_payload,
-        bash_source_value=(
-            declaration.source_value
-            if force_embedded_payload and declaration.source_value is not None
-            else declaration.path
-        ),
+        bash_source_value=declaration.source_value or declaration.path,
     )
     if force_embedded_payload:
         replacement = rendered_source
@@ -1337,6 +1360,7 @@ def render_executable_script(entry_point: str, context: dict):
                     entry_point,
                     bash_source_stack=bash_source_stack,
                 )
+                line = replace_lineno_references(line, num + 1)
                 command_sources = [
                     source_declaration for source_declaration in source_declarations
                     if source_declaration.replacement_kind in {"command", "noop-command", "bash-c-source"}
@@ -1390,6 +1414,8 @@ def render_executable_script(entry_point: str, context: dict):
 
     # Build from the entry point so sourced files execute at their source sites.
     output = [SET_SHEBANG, '']
+    output.append(f"cd -- {shell_quote(os.path.dirname(os.path.abspath(entry_point)))} || exit 1")
+    output.append('')
     output.append(construct_file_separator(entry_point, entry_point))
     rendered_entry = render_file(os.path.abspath(entry_point))
     assert_no_unresolved_source_sites(rendered_entry)

@@ -125,10 +125,11 @@ class SourceEvaluatorSourceSiteMixin:
                 source_arguments=source_arguments,
                 source_argument_words=source_argument_words,
             )
-            branch_state.last_status = self._evaluate_sourced_file(
+            branch_state.last_status, _sync_positionals = self._evaluate_sourced_file(
                 source_path,
                 branch_state,
                 stack,
+                source_value=source_value,
                 source_arguments=source_arguments,
                 source_arguments_dynamic=source_arguments_dynamic,
             )
@@ -220,11 +221,12 @@ class SourceEvaluatorSourceSiteMixin:
             )
             return self._resolve_expanded_source_invocation(expanded_expression, node, state)
 
+        resolver_context = self._source_site_resolver_context(source_site, state)
         try:
             resolved_source = SOURCE_RESOLVER.resolve_source_expression(
                 path_expression,
                 source_site,
-                state.resolver_context(),
+                resolver_context,
             )
         except UnsupportedSourceError as exc:
             raise with_source_diagnostic(
@@ -265,6 +267,44 @@ class SourceEvaluatorSourceSiteMixin:
             ),
             source_arguments_dynamic=source_arguments_dynamic,
         )
+
+    def _source_site_resolver_context(self, source_site: str, state: EvaluationState):
+        context = state.resolver_context()
+        invocation = source_command_invocation(source_site, stop_at_shell_control=True)
+        if invocation is None:
+            return context
+        assignment_words = [
+            word for word in invocation.words[:invocation.source_index]
+            if ASSIGNMENT_WORD_PATTERN.match(word)
+        ]
+        if not assignment_words:
+            return context
+
+        variables = dict(context["vars"])
+        runtime_variables = dict(context["runtime_vars"])
+        runtime_context = state.runtime_context()
+        runtime_context = {
+            **runtime_context,
+            "vars": {
+                **runtime_context["vars"],
+                "PWD": str(state.cwd),
+            },
+        }
+        for assignment in assignment_words:
+            name, value = assignment.split("=", 1)
+            if name.endswith("+"):
+                continue
+            resolved = resolve_variable_references(value, runtime_context)
+            if "$" in resolved:
+                continue
+            resolved = strip_matching_quotes(os.path.expandvars(resolved))
+            variables[name] = resolved
+            runtime_variables[name] = resolved
+        return {
+            **context,
+            "vars": variables,
+            "runtime_vars": runtime_variables,
+        }
 
     def _resolve_expanded_source_invocation(
         self,

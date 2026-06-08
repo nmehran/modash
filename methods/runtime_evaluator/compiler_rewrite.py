@@ -62,6 +62,15 @@ def _source_with_entry_status(command: str) -> str:
     )
 
 
+def _source_with_replay_bash_source(command: str) -> str:
+    return (
+        "__modash_bash_source_stack=(\"$__modash_replay_source_value\" \"${__modash_bash_source_stack[@]}\"); "
+        + _source_with_entry_status(command)
+        + "__modash_replay_actual_status=$?; "
+        "__modash_bash_source_stack=(\"${__modash_bash_source_stack[@]:1}\"); "
+    )
+
+
 def _command_with_restored_status(status_variable: str, command: str) -> str:
     return (
         f"if (( {status_variable} == 0 )); then "
@@ -118,6 +127,7 @@ def _rewrite_process_payloads(plan: _CompilePlan) -> None:
                 environment_values=plan.graph["environment"].get("values", {}),
             ).rstrip("\n")
             + "\n"
+            + _process_bash_source_stack_initializer(unit)
             + unit.transformed.rstrip("\n")
             + "\n"
         )
@@ -140,6 +150,12 @@ def _process_payload_unit(process_plan, process_node: dict) -> _RewriteUnit:
                 if unit.physical_path == entrypoint_path:
                     return unit
     return process_plan.units[_process_logical_path(process_plan.process_index)]
+
+
+def _process_bash_source_stack_initializer(unit: _RewriteUnit) -> str:
+    if unit.physical_path is None:
+        return "__modash_bash_source_stack=()\n"
+    return f"__modash_bash_source_stack=({shlex.quote(unit.physical_path)})\n"
 
 
 def _process_payload_identity(unit: _RewriteUnit, process_node: dict) -> str:
@@ -240,6 +256,7 @@ def _rewrite_content(
                     unit.physical_path,
                     str(entrypoint),
                     include_zero=rewrite_runtime_zero,
+                    bash_source_stack_array="__modash_bash_source_stack",
                     support_extended_bash_source=False,
                     reject_unsupported_bash_source=False,
                 )
@@ -381,10 +398,9 @@ def _render_replay_group(
             "__modash_validate_source_argv \"$__modash_source_entry_status\" \"${__modash_source_argv[@]}\"; "
         )
     file_source_operation = redirected_validation + (
-        _source_with_entry_status(
+        _source_with_replay_bash_source(
             "command source <(__modash_emit_embedded_file \"$__modash_replay_target\") \"${__modash_replay_args[@]}\""
         )
-        + "__modash_replay_actual_status=$?; "
     )
     missing_source_operation = redirected_validation + (
         "builtin printf '%s: line %s: %s\\n' \"$__modash_replay_diag_file\" \"$__modash_replay_diag_line\" \"$__modash_replay_diag_message\" >&2; "
@@ -491,8 +507,7 @@ def _render_process_substitution_argument_replay_group(
     live_arguments = f" {argument_expression}" if argument_expression else ""
     file_source_operation = redirected_validation + (
         "__modash_live_source_path=$(__modash_materialize_embedded_file \"$__modash_replay_target\"); "
-        + _source_with_entry_status(f"command source \"$__modash_live_source_path\"{live_arguments}")
-        + "__modash_replay_actual_status=$?; "
+        + _source_with_replay_bash_source(f"command source \"$__modash_live_source_path\"{live_arguments}")
     )
     missing_source_operation = redirected_validation + (
         "builtin printf '%s: line %s: %s\\n' \"$__modash_replay_diag_file\" \"$__modash_replay_diag_line\" \"$__modash_replay_diag_message\" >&2; "
@@ -586,8 +601,7 @@ def _render_assignment_prefixed_process_substitution_argument_replay_group(
     assignment_prefix = " ".join(assignment_words)
     file_source_operation = redirected_validation + (
         "__modash_live_source_path=$(__modash_materialize_embedded_file \"$__modash_replay_target\"); "
-        + _source_with_entry_status(f"{assignment_prefix} command source \"$__modash_live_source_path\"{live_arguments}")
-        + "__modash_replay_actual_status=$?; "
+        + _source_with_replay_bash_source(f"{assignment_prefix} command source \"$__modash_live_source_path\"{live_arguments}")
     )
     missing_source_operation = redirected_validation + (
         "builtin printf '%s: line %s: %s\\n' \"$__modash_replay_diag_file\" \"$__modash_replay_diag_line\" \"$__modash_replay_diag_message\" >&2; "
@@ -745,10 +759,9 @@ def _render_assignment_prefixed_replay_shim(
         )
     file_source = (
         f"{redirected_validation}"
-        + _source_with_entry_status(
+        + _source_with_replay_bash_source(
             "command source <(__modash_emit_embedded_file \"$__modash_replay_target\") \"${__modash_replay_args[@]}\""
         )
-        + "__modash_replay_actual_status=$?"
     )
     missing_source = (
         f"{redirected_validation}"

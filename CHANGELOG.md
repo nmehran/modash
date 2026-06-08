@@ -15,12 +15,13 @@
   graph edges by executing Bash `source` at the rewritten source site,
   including caller locals, inherited no-argument source positionals, explicit
   source arguments, top-level `return`, nested observed sources, child
-  `bash -c` payload arguments, and stable original physical-path `$0` /
-  `BASH_SOURCE` references in bundled files.
+  `bash -c` payload arguments, stable original `$0`, and observed
+  `BASH_SOURCE[0]` source spelling in bundled files.
 - Added synthetic coverage for runtime-selected helpers, same-relative-path
-  identical helper files, stable physical-path `$0` / `BASH_SOURCE` reference
-  rewriting, top-level return propagation, and fail-closed unobserved graph-tape
-  drift.
+  identical helper files, stable `$0` / observed `BASH_SOURCE` reference
+  rewriting, static sourced-file `LINENO` rewriting, static assignment-prefixed
+  `sourcepath` lookup, top-level return propagation, and fail-closed unobserved
+  graph-tape drift.
 - Added adversarial runtime graph compiler coverage for computed generated-state
   mutation, `exec`, EXIT trap manipulation, trace-instrumentation-sensitive
   probes, command/builtin `eval`, live unobserved source dispatch, child

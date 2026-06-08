@@ -1756,7 +1756,7 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "a\nb\n")
 
-    def test_runtime_compiler_rewrites_bash_source_references_to_original_paths(self):
+    def test_runtime_compiler_rewrites_bash_source_references_to_observed_spelling(self):
         with ScriptProject() as project:
             dep = project.write(
                 "dep.sh",
@@ -1771,6 +1771,54 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn(f"source:{dep}\n", result.stdout)
         self.assertIn(f"zero:{project.path('main.sh')}\n", result.stdout)
+
+    def test_runtime_compiler_preserves_relative_bash_source_spelling(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "source ./dep.sh\n")
+            project.write(
+                "dep.sh",
+                'if [[ ${BASH_SOURCE[0]} == "$PWD/dep.sh" ]]; then\n'
+                "  printf 'abs\\n'\n"
+                "else\n"
+                "  printf 'rel\\n'\n"
+                "fi\n",
+            )
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "rel\n")
+
+    def test_runtime_compiler_bash_source_spelling_controls_nested_source_selection(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "source ./dep.sh\n")
+            project.write(
+                "dep.sh",
+                'if [[ ${BASH_SOURCE[0]} == "$PWD/dep.sh" ]]; then\n'
+                "  source ./nested.sh\n"
+                "fi\n"
+                "printf 'depdone\\n'\n",
+            )
+            project.write("nested.sh", "printf 'nested\\n'\n")
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "depdone\n")
+
+    def test_runtime_compiler_preserves_multiple_bash_source_spellings_for_same_file(self):
+        with ScriptProject() as project:
+            project.write(
+                "main.sh",
+                "source ./dep.sh\n"
+                'source "$PWD/dep.sh"\n',
+            )
+            project.write("dep.sh", 'printf "source:%s\\n" "${BASH_SOURCE[0]}"\n')
+            compiled, _graph = self.compile_observed(project, "main.sh")
+            result = project.run(compiled)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, f"source:./dep.sh\nsource:{project.path('dep.sh')}\n")
 
     def test_runtime_compiler_preserves_top_level_return_status_from_sourced_file(self):
         with ScriptProject() as project:
@@ -3909,12 +3957,12 @@ class RuntimeGraphCompilerTestCase(unittest.TestCase):
                 "printf 'zero:%s\\n' \"$0\"\n",
             )
             project.write("main.sh", "bash -c 'source ./dep.sh' child0\n")
+            expected = project.run("main.sh")
             compiled, _graph = self.compile_observed(project, "main.sh")
             result = project.run(compiled)
 
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn(f"bs:{dep}\n", result.stdout)
-        self.assertIn("zero:child0\n", result.stdout)
+        self.assertEqual(result.returncode, expected.returncode, result.stdout)
+        self.assertEqual(result.stdout, expected.stdout)
 
     def test_runtime_compiler_replays_child_bash_script_invocation_sources(self):
         with ScriptProject() as project:

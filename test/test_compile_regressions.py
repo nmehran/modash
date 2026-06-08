@@ -648,6 +648,54 @@ class CompileRegressionTestCase(unittest.TestCase):
 
                 project.assert_compiled_matches(self, "main.sh")
 
+    def test_static_bash_source_preserves_source_spelling_in_branches(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "source ./dep.sh\n")
+            project.write(
+                "dep.sh",
+                'if [[ ${BASH_SOURCE[0]} == "$PWD/dep.sh" ]]; then\n'
+                "  printf 'abs\\n'\n"
+                "else\n"
+                "  printf 'rel\\n'\n"
+                "fi\n",
+            )
+
+            project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_bash_source_spelling_controls_nested_source_selection(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "source ./dep.sh\n")
+            project.write(
+                "dep.sh",
+                'if [[ ${BASH_SOURCE[0]} == "$PWD/dep.sh" ]]; then\n'
+                "  source ./nested.sh\n"
+                "fi\n"
+                "printf 'depdone\\n'\n",
+            )
+            project.write("nested.sh", "printf 'nested\\n'\n")
+
+            project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_sourced_lineno_forms_match_bash(self):
+        cases = {
+            "scalar": "printf 'line:%s\\n' \"$LINENO\"\n",
+            "arithmetic expansion": "printf 'calc:%s\\n' \"$((LINENO + 1))\"\n",
+            "arithmetic command branch": (
+                "if (( LINENO > 5 )); then\n"
+                "  source ./nested.sh\n"
+                "fi\n"
+                "printf 'depdone:%s\\n' \"$LINENO\"\n"
+            ),
+            "double bracket arithmetic": "[[ LINENO -eq 1 ]] && printf 'line-one\\n' || printf 'line-other:%s\\n' \"$LINENO\"\n",
+        }
+        for name, dep_content in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("main.sh", "source ./dep.sh\n")
+                project.write("dep.sh", dep_content)
+                project.write("nested.sh", "printf 'nested\\n'\n")
+
+                project.assert_compiled_matches(self, "main.sh")
+
     def test_static_unsupported_bash_source_forms_fail_before_output(self):
         cases = {
             "embedded scalar": 'printf "caller:prefix-${BASH_SOURCE[1]}\\n"\n',
@@ -675,6 +723,26 @@ class CompileRegressionTestCase(unittest.TestCase):
                 "# ${BASH_SOURCE[0]##*/}\n"
                 "printf 'after\\n'\n",
             )
+
+            project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_assignment_prefixed_sourcepath_lookup_matches_bash(self):
+        cases = {
+            "relative path": "PATH=./lib source dep.sh\n",
+            "expanded path": 'PATH="$PWD/lib" source dep.sh\n',
+        }
+        for name, source_line in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("main.sh", source_line + "printf 'done\\n'\n")
+                project.write("lib/dep.sh", "printf 'dep\\n'\n")
+
+                project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_sourcepath_lookup_prefers_path_before_current_directory(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "PATH=./lib source dep.sh\n")
+            project.write("dep.sh", "printf 'cwd\\n'\n")
+            project.write("lib/dep.sh", "printf 'lib\\n'\n")
 
             project.assert_compiled_matches(self, "main.sh")
 

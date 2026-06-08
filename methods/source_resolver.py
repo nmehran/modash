@@ -406,6 +406,16 @@ class SourceResolver:
                     MISSING_SOURCE,
                 )
 
+        if resolved_path := self.resolve_sourcepath(source_expression, context):
+            return ResolvedSource(
+                path=resolved_path,
+                source_expression=source_expression.strip(),
+                source_site=source_site.strip(),
+                execution_model=execution_model,
+                replacement_kind=replacement_kind,
+                source_value=strip_matching_quotes(self.resolve_variable_references(source_expression, context)),
+            )
+
         if resolved_path := self.resolve_path(source_expression, context):
             return ResolvedSource(
                 path=resolved_path,
@@ -431,6 +441,26 @@ class SourceResolver:
         if is_unsupported_dynamic_source(source_site, source_expression):
             raise UnsupportedSourceError(f"unsupported dynamic source command: {source_site.strip()}")
 
+        return None
+
+    def resolve_sourcepath(self, source_expression: str, context: dict):
+        if "sourcepath" not in context.get("shell_options", set()):
+            return None
+        resolved_word = self.resolve_variable_references(source_expression, context)
+        resolved_word = os.path.expandvars(strip_matching_quotes(resolved_word))
+        if not resolved_word or "/" in resolved_word or "$" in resolved_word:
+            return None
+        path_value = context.get("vars", {}).get("PATH", os.environ.get("PATH", ""))
+        current_directory = context.get("current_directory") or os.getcwd()
+        for directory in path_value.split(":"):
+            directory = directory or "."
+            candidate = (
+                os.path.join(directory, resolved_word)
+                if os.path.isabs(directory)
+                else os.path.join(current_directory, directory, resolved_word)
+            )
+            if os.path.isfile(candidate):
+                return os.path.abspath(candidate)
         return None
 
     def resolve_single_source_payload(self, payload: str, source_site: str, context: dict,

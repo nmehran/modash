@@ -60,6 +60,7 @@ class SourceEvaluatorSupportMixin:
             source_path,
             state,
             stack,
+            source_value=source_value,
             source_arguments=source_arguments,
             source_arguments_dynamic=source_arguments_dynamic,
         )
@@ -73,6 +74,7 @@ class SourceEvaluatorSupportMixin:
         source_path: Path,
         state: EvaluationState,
         stack: tuple[Path, ...],
+        source_value: str | None = None,
         source_arguments: tuple[str, ...] | None = None,
         source_arguments_dynamic: bool = False,
     ):
@@ -97,7 +99,13 @@ class SourceEvaluatorSupportMixin:
             state.push_source_argument_frame()
         try:
             try:
-                had_nodes = self._evaluate_file(source_path, state, stack, as_source=True)
+                had_nodes = self._evaluate_file(
+                    source_path,
+                    state,
+                    stack,
+                    as_source=True,
+                    bash_source_value=source_value,
+                )
             except SourceReturnSignal as signal:
                 return_status = signal.status
             else:

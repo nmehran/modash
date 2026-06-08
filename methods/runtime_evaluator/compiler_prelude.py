@@ -341,6 +341,7 @@ declare -a __modash_edge_keys=({" ".join(shlex.quote(key) for key in edge_keys)}
 declare -a __modash_process_keys=({" ".join(shlex.quote(key) for key in process_keys)})
 declare -A __modash_edge_target=()
 declare -A __modash_edge_resolved_path=()
+declare -A __modash_edge_source_value=()
 declare -A __modash_edge_kind=()
 declare -A __modash_edge_failure_kind=()
 declare -A __modash_edge_source_entry_status=()
@@ -358,6 +359,7 @@ declare -A __modash_process_consumed=()
 __modash_replay_kind=
 __modash_replay_failure_kind=
 __modash_replay_resolved_path=
+__modash_replay_source_value=
 __modash_replay_source_entry_status=0
 __modash_replay_status=0
 __modash_replay_argc=0
@@ -368,11 +370,12 @@ __modash_replay_diag_message=
 __modash_replay_target=
 __modash_replay_select_active=0
 __modash_verify_trap_active=0
+__modash_bash_source_stack=()
 
 {chr(10).join(map_setup)}
 {chr(10).join(f"__modash_process_expected[{shlex.quote(key)}]=1" for key in process_keys)}
 readonly -a __modash_edge_keys __modash_process_keys
-readonly -A __modash_edge_target __modash_edge_resolved_path __modash_edge_kind __modash_edge_failure_kind __modash_edge_source_entry_status __modash_edge_status __modash_edge_argc __modash_edge_arg
+readonly -A __modash_edge_target __modash_edge_resolved_path __modash_edge_source_value __modash_edge_kind __modash_edge_failure_kind __modash_edge_source_entry_status __modash_edge_status __modash_edge_argc __modash_edge_arg
 readonly -A __modash_edge_diag_file __modash_edge_diag_line __modash_edge_diag_message __modash_process_expected
 
 __modash_resolve_source_path() {{
@@ -450,6 +453,7 @@ __modash_select_source_edge() {{
   __modash_replay_kind=
   __modash_replay_failure_kind=
   __modash_replay_resolved_path=
+  __modash_replay_source_value=
   __modash_replay_source_entry_status=0
   __modash_replay_status=0
   __modash_replay_argc=0
@@ -468,6 +472,7 @@ __modash_select_source_edge() {{
   __modash_replay_kind=${{__modash_edge_kind[$key]}}
   __modash_replay_failure_kind=${{__modash_edge_failure_kind[$key]:-$__modash_replay_kind}}
   __modash_replay_resolved_path=${{__modash_edge_resolved_path[$key]}}
+  __modash_replay_source_value=${{__modash_edge_source_value[$key]}}
   __modash_replay_source_entry_status=${{__modash_edge_source_entry_status[$key]:-0}}
   __modash_replay_status=${{__modash_edge_status[$key]:-0}}
   __modash_replay_target=${{__modash_edge_target[$key]}}
@@ -764,6 +769,7 @@ def _edge_map_lines(base_id: str, occurrence: int, edge: _ReplayEdge, target_log
         f"__modash_edge_kind[{shlex.quote(key)}]={shlex.quote('file' if edge.is_file else 'missing')}",
         f"__modash_edge_failure_kind[{shlex.quote(key)}]={shlex.quote(edge.failure_kind)}",
         f"__modash_edge_resolved_path[{shlex.quote(key)}]={shlex.quote(edge.resolved_path)}",
+        f"__modash_edge_source_value[{shlex.quote(key)}]={shlex.quote(edge.source_value)}",
         f"__modash_edge_source_entry_status[{shlex.quote(key)}]={edge.source_entry_status}",
         f"__modash_edge_status[{shlex.quote(key)}]={edge.status}",
         f"__modash_edge_argc[{shlex.quote(key)}]={len(edge.arguments)}",

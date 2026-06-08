@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 from pathlib import Path
 
 from methods.runtime_evaluator.compiler_model import (
@@ -58,6 +59,7 @@ def render_runtime_graph_script(entrypoint: str | os.PathLike, graph_payload: di
     entrypoint_unit = plan.file_units[ENTRYPOINT_LOGICAL_PATH]
     return (
         prelude
+        + f"\n__modash_bash_source_stack=({shlex.quote(str(entrypoint_path))})\n"
         + "\n{\n"
         + (entrypoint_unit.transformed or entrypoint_unit.content).rstrip("\n")
         + "\n}\n"
