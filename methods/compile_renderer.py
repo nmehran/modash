@@ -47,40 +47,170 @@ class SourceArgumentReplay:
     cleanup_lines: tuple[str, ...] = ()
     outer_words: tuple[str, ...] = ()
 
-def replace_runtime_source_references(line: str, filepath: str, entry_point: str, *, include_zero: bool = True):
+def replace_runtime_source_references(
+    line: str,
+    filepath: str,
+    entry_point: str,
+    *,
+    include_zero: bool = True,
+    bash_source_stack: tuple[str, ...] | None = None,
+    support_extended_bash_source: bool = True,
+    reject_unsupported_bash_source: bool = True,
+):
+    bash_source_stack = bash_source_stack or (os.path.abspath(filepath),)
+    code, comment = _split_shell_comment(line)
     return ''.join(
-        _replace_runtime_source_references_segment(segment, filepath, entry_point, include_zero=include_zero)
+        _replace_runtime_source_references_segment(
+            segment,
+            filepath,
+            entry_point,
+            include_zero=include_zero,
+            bash_source_stack=bash_source_stack,
+            support_extended_bash_source=support_extended_bash_source,
+            reject_unsupported_bash_source=reject_unsupported_bash_source,
+        )
         if expandable
         else segment
-        for segment, expandable in _single_quote_aware_segments(line)
-    )
+        for segment, expandable in _single_quote_aware_segments(code)
+    ) + comment
 
 
-def _replace_runtime_source_references_segment(segment: str, filepath: str, entry_point: str, *, include_zero: bool):
-    bash_source = shell_quote(os.path.abspath(filepath))
+def _replace_runtime_source_references_segment(
+    segment: str,
+    filepath: str,
+    entry_point: str,
+    *,
+    include_zero: bool,
+    bash_source_stack: tuple[str, ...],
+    support_extended_bash_source: bool,
+    reject_unsupported_bash_source: bool,
+):
+    bash_source = shell_quote(bash_source_stack[0] if bash_source_stack else os.path.abspath(filepath))
     entry_source = shell_quote(os.path.abspath(entry_point))
 
-    replacements = {
-        '"${BASH_SOURCE[0]}"': bash_source,
-        '"${BASH_SOURCE}"': bash_source,
-        '"$BASH_SOURCE"': bash_source,
-        '${BASH_SOURCE[0]}': bash_source,
-        '${BASH_SOURCE}': bash_source,
-        '$BASH_SOURCE': bash_source,
-    }
-    if include_zero:
-        replacements.update({
-            '"${0}"': entry_source,
-            '"$0"': entry_source,
-            '${0}': entry_source,
-        })
+    if support_extended_bash_source:
+        segment = _replace_bash_source_array_word(segment, bash_source_stack)
+        segment = _replace_bash_source_dirname_ops(segment, bash_source_stack)
+        stack_indexes = range(len(bash_source_stack))
+    else:
+        stack_indexes = range(min(len(bash_source_stack), 1))
+    for index in stack_indexes:
+        quoted_source = shell_quote(bash_source_stack[index])
+        for token in (f'"${{BASH_SOURCE[{index}]}}"', f"${{BASH_SOURCE[{index}]}}"):
+            segment = _replace_shell_word_token(segment, token, quoted_source)
+    for token in ('"${BASH_SOURCE}"', '"$BASH_SOURCE"', '${BASH_SOURCE}', '$BASH_SOURCE'):
+        segment = _replace_shell_word_token(segment, token, bash_source)
 
-    for old, new in replacements.items():
-        segment = segment.replace(old, new)
+    if include_zero:
+        for token in ('"${0}"', '"$0"', '${0}'):
+            segment = _replace_shell_word_token(segment, token, entry_source)
 
     if include_zero:
         segment = re.sub(r'\$0(?![0-9])', entry_source, segment)
+    if reject_unsupported_bash_source and re.search(r'\$(?:\{BASH_SOURCE(?:[^}]*)?\}|BASH_SOURCE\b)', segment):
+        raise UnsupportedSourceError(
+            f"unsupported BASH_SOURCE runtime reference in executable output: {segment.strip()}",
+            code="unsupported.source.runtime-reference",
+            hint="Use simple BASH_SOURCE scalar indexes or a standalone BASH_SOURCE[@] expansion.",
+        )
     return segment
+
+
+def _replace_bash_source_array_word(segment: str, bash_source_stack: tuple[str, ...]):
+    replacement = " ".join(shell_quote(source) for source in bash_source_stack)
+    for token in ('"${BASH_SOURCE[@]}"', '${BASH_SOURCE[@]}'):
+        segment = _replace_shell_word_token(segment, token, replacement)
+    return segment
+
+
+def _replace_bash_source_dirname_ops(segment: str, bash_source_stack: tuple[str, ...]):
+    for index, source_value in enumerate(bash_source_stack):
+        dirname = _shell_percent_slash_star(source_value)
+        quoted_dirname = shell_quote(dirname)
+        for token in (
+            f'"${{BASH_SOURCE[{index}]%/*}}"',
+            f"${{BASH_SOURCE[{index}]%/*}}",
+        ):
+            segment = _replace_shell_word_token(segment, token, quoted_dirname)
+    dirname = _shell_percent_slash_star(bash_source_stack[0]) if bash_source_stack else ""
+    for token in ('"${BASH_SOURCE%/*}"', '${BASH_SOURCE%/*}'):
+        segment = _replace_shell_word_token(segment, token, shell_quote(dirname))
+    return segment
+
+
+def _shell_percent_slash_star(value: str):
+    if "/" not in value:
+        return value
+    return value.rsplit("/", 1)[0]
+
+
+def _replace_shell_word_token(segment: str, token: str, replacement: str):
+    pattern = rf"(?<![A-Za-z0-9_./:}}]){re.escape(token)}(?![A-Za-z0-9_./:{{])"
+    if token.startswith('"'):
+        return re.sub(pattern, lambda _match: replacement, segment)
+    return ''.join(
+        re.sub(pattern, lambda _match: replacement, part) if not in_double_quote else part
+        for part, in_double_quote in _double_quote_aware_segments(segment)
+    )
+
+
+def _double_quote_aware_segments(segment: str):
+    segments = []
+    current = []
+    in_double_quote = False
+    escaped = False
+
+    def flush():
+        nonlocal current
+        if current:
+            segments.append((''.join(current), in_double_quote))
+            current = []
+
+    for char in segment:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            current.append(char)
+            escaped = True
+            continue
+        if char == '"':
+            flush()
+            current.append(char)
+            in_double_quote = not in_double_quote
+            flush()
+            continue
+        current.append(char)
+    flush()
+    return segments
+
+
+def _split_shell_comment(line: str):
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and not in_single_quote:
+            escaped = True
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            continue
+        if (
+            char == "#"
+            and not in_single_quote
+            and not in_double_quote
+            and (index == 0 or line[index - 1].isspace() or line[index - 1] in ";&|(")
+        ):
+            return line[:index], line[index:]
+    return line, ""
 
 
 def _single_quote_aware_segments(line: str):
@@ -247,6 +377,7 @@ def render_source_dispatch(
                     source_argument_words=source_declaration.source_argument_words,
                     source_state_generation=source_declaration.positional_assignment_generation,
                     sync_positionals=source_declaration.sync_positionals,
+                    bash_source_value=source_declaration.path,
                 ),
                 f"{indent}    ",
             )
@@ -309,6 +440,7 @@ def render_retained_source_dispatch(
                 source_argument_words=source_declaration.source_argument_words,
                 source_state_generation=source_declaration.positional_assignment_generation,
                 sync_positionals=source_declaration.sync_positionals,
+                bash_source_value=source_declaration.path,
             ),
             f"{indent}      ",
         )
@@ -409,6 +541,7 @@ def replace_command_source_sites(
                     source_argument_words=source_declaration.source_argument_words,
                     source_state_generation=source_declaration.positional_assignment_generation,
                     sync_positionals=source_declaration.sync_positionals,
+                    bash_source_value=source_declaration.path,
                 ),
                 indent,
             )
@@ -450,6 +583,7 @@ def render_bash_c_source_command(
             source_argument_words=source_declaration.source_argument_words,
             source_state_generation=source_declaration.positional_assignment_generation,
             sync_positionals=source_declaration.sync_positionals,
+            bash_source_value=source_declaration.path,
         ),
         "",
     )
@@ -565,6 +699,11 @@ def render_source_site_replacement(
         sync_positionals=declaration.sync_positionals,
         wrap_source_call=not force_embedded_payload,
         force_source_site_payloads=force_embedded_payload,
+        bash_source_value=(
+            declaration.source_value
+            if force_embedded_payload and declaration.source_value is not None
+            else declaration.path
+        ),
     )
     if force_embedded_payload:
         replacement = rendered_source
@@ -703,8 +842,11 @@ def wrap_source_site_embedded_payload(
         replacement,
         delimiter,
         *setup_lines,
-        f"{inner_indent}( exit \"${{{entry_status_variable}}}\" )",
-        f"{inner_indent}{source_call}",
+        f"{inner_indent}if (( {entry_status_variable} == 0 )); then",
+        f"{inner_indent}  {source_call}",
+        f"{inner_indent}else",
+        f"{inner_indent}  ( exit \"${{{entry_status_variable}}}\" ) || {source_call}",
+        f"{inner_indent}fi",
         f"{inner_indent}{status_variable}=$?",
         *cleanup_lines,
         f"{inner_indent}command rm -f -- \"${{{payload_variable}}}\"",
@@ -888,11 +1030,21 @@ def find_unquoted_source_site_span(line: str, source_site: str, occupied_spans):
     return None
 
 
-def source_declaration_site_candidates(source_declaration, runtime_reference_path: str | None, entry_point: str | None):
+def source_declaration_site_candidates(
+    source_declaration,
+    runtime_reference_path: str | None,
+    entry_point: str | None,
+    bash_source_stack: tuple[str, ...] | None = None,
+):
     source_site = source_declaration.source_site.strip()
     candidates = [source_site]
     if runtime_reference_path is not None and entry_point is not None:
-        rewritten = replace_runtime_source_references(source_site, runtime_reference_path, entry_point)
+        rewritten = replace_runtime_source_references(
+            source_site,
+            runtime_reference_path,
+            entry_point,
+            bash_source_stack=bash_source_stack,
+        )
         if rewritten not in candidates:
             candidates.append(rewritten)
     return tuple(candidates)
@@ -905,12 +1057,18 @@ def find_source_declaration_span(
     *,
     runtime_reference_path: str | None = None,
     entry_point: str | None = None,
+    bash_source_stack: tuple[str, ...] | None = None,
 ):
     source_column = source_declaration.source_column
     if source_column is not None:
         source_index = source_column - 1
         if source_index >= 0:
-            for source_site in source_declaration_site_candidates(source_declaration, runtime_reference_path, entry_point):
+            for source_site in source_declaration_site_candidates(
+                source_declaration,
+                runtime_reference_path,
+                entry_point,
+                bash_source_stack,
+            ):
                 span = (source_index, source_index + len(source_site))
                 if (
                     line.startswith(source_site, source_index)
@@ -918,7 +1076,12 @@ def find_source_declaration_span(
                 ):
                     return span
 
-    for source_site in source_declaration_site_candidates(source_declaration, runtime_reference_path, entry_point):
+    for source_site in source_declaration_site_candidates(
+        source_declaration,
+        runtime_reference_path,
+        entry_point,
+        bash_source_stack,
+    ):
         span = find_unquoted_source_site_span(line, source_site, occupied_spans)
         if span is not None:
             return span
@@ -967,6 +1130,7 @@ def replace_source_site_declarations(
     runtime_reference_path: str | None = None,
     entry_point: str | None = None,
     force_source_site_payloads: bool = False,
+    bash_source_stack: tuple[str, ...] | None = None,
 ):
     if not source_declarations:
         return line
@@ -982,6 +1146,7 @@ def replace_source_site_declarations(
             occupied_spans,
             runtime_reference_path=runtime_reference_path,
             entry_point=entry_point,
+            bash_source_stack=bash_source_stack,
         )
         if span is None:
             source_site = grouped_declarations[0].source_site.strip()
@@ -1067,8 +1232,10 @@ def render_executable_script(entry_point: str, context: dict):
         sync_positionals=False,
         wrap_source_call=True,
         force_source_site_payloads=False,
+        bash_source_stack=None,
     ):
         filepath = os.path.abspath(filepath)
+        bash_source_stack = bash_source_stack or (os.path.abspath(entry_point),)
         if filepath in render_stack:
             chain = " -> ".join([*render_stack, filepath])
             raise RecursionError(f"Circular source dependency while rendering: {chain}")
@@ -1086,6 +1253,7 @@ def render_executable_script(entry_point: str, context: dict):
                 sync_positionals=False,
                 wrap_source_call=True,
                 force_source_site_payloads=False,
+                bash_source_value=None,
             ):
                 return render_file(
                     source_filepath,
@@ -1096,6 +1264,10 @@ def render_executable_script(entry_point: str, context: dict):
                     sync_positionals=sync_positionals,
                     wrap_source_call=wrap_source_call,
                     force_source_site_payloads=force_source_site_payloads,
+                    bash_source_stack=(
+                        bash_source_value or os.path.abspath(source_filepath),
+                        *bash_source_stack,
+                    ),
                 )
 
             content = get_content(filepath)
@@ -1159,7 +1331,12 @@ def render_executable_script(entry_point: str, context: dict):
                     source_site = unsupported_sources[0].source_site
                     raise NotImplementedError(f"unsupported non-parent source in executable mode: {source_site}")
 
-                line = replace_runtime_source_references(line, filepath, entry_point)
+                line = replace_runtime_source_references(
+                    line,
+                    filepath,
+                    entry_point,
+                    bash_source_stack=bash_source_stack,
+                )
                 command_sources = [
                     source_declaration for source_declaration in source_declarations
                     if source_declaration.replacement_kind in {"command", "noop-command", "bash-c-source"}
@@ -1187,6 +1364,7 @@ def render_executable_script(entry_point: str, context: dict):
                         runtime_reference_path=filepath,
                         entry_point=entry_point,
                         force_source_site_payloads=force_source_site_payloads,
+                        bash_source_stack=bash_source_stack,
                     )
                 output.append(line)
 

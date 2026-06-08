@@ -240,6 +240,8 @@ def _rewrite_content(
                     unit.physical_path,
                     str(entrypoint),
                     include_zero=rewrite_runtime_zero,
+                    support_extended_bash_source=False,
+                    reject_unsupported_bash_source=False,
                 )
                 if _line_has_runtime_reference(line, include_zero=rewrite_runtime_zero):
                     raise RuntimeObservedCompileError(

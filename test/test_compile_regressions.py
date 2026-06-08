@@ -616,6 +616,68 @@ class CompileRegressionTestCase(unittest.TestCase):
         self.assertEqual(cm.exception.diagnostic.code, "unsupported.source.array-index")
         self.assertFalse(output.exists())
 
+    def test_embedded_source_payload_preserves_prior_status_under_errexit(self):
+        cases = {
+            "explicit source arguments": "source ./dep.sh arg\n",
+            "assignment-prefixed source": "VAR=foo source ./dep.sh arg\n",
+            "command source arguments": "command source ./dep.sh arg\n",
+        }
+        for name, source_line in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write(
+                    "main.sh",
+                    "set -e\n"
+                    "! true\n"
+                    f"{source_line}"
+                    "printf 'after\\n'\n",
+                )
+                project.write("dep.sh", "printf 'depstatus:%s var:%s arg:%s\\n' \"$?\" \"${VAR-}\" \"$1\"\n")
+
+                project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_bash_source_stack_forms_match_bash(self):
+        cases = {
+            "caller frame": 'printf "caller:%s\\n" "${BASH_SOURCE[1]}"\n',
+            "current dir parameter op": 'printf "dir:%s\\n" "${BASH_SOURCE[0]%/*}"\n',
+            "array expansion": 'printf "all:%s\\n" "${BASH_SOURCE[@]}"\n',
+        }
+        for name, dep_content in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("main.sh", "source ./dep.sh arg\n")
+                project.write("dep.sh", dep_content)
+
+                project.assert_compiled_matches(self, "main.sh")
+
+    def test_static_unsupported_bash_source_forms_fail_before_output(self):
+        cases = {
+            "embedded scalar": 'printf "caller:prefix-${BASH_SOURCE[1]}\\n"\n',
+            "star array": 'printf "all:%s\\n" "${BASH_SOURCE[*]}"\n',
+            "unsupported parameter op": 'printf "base:%s\\n" "${BASH_SOURCE[0]##*/}"\n',
+        }
+        for name, dep_content in cases.items():
+            with self.subTest(name=name), ScriptProject() as project:
+                project.write("main.sh", "source ./dep.sh arg\n")
+                project.write("dep.sh", dep_content)
+                output = project.path("compiled.sh")
+
+                with self.assertRaisesRegex(NotImplementedError, "BASH_SOURCE") as cm:
+                    project.compile("main.sh", output=output, mode="executable")
+
+            self.assertEqual(cm.exception.code, "unsupported.source.runtime-reference")
+            self.assertFalse(output.exists())
+
+    def test_static_bash_source_text_in_comments_does_not_fail(self):
+        with ScriptProject() as project:
+            project.write("main.sh", "source ./dep.sh\n")
+            project.write(
+                "dep.sh",
+                "printf 'before\\n' # ${BASH_SOURCE[*]}\n"
+                "# ${BASH_SOURCE[0]##*/}\n"
+                "printf 'after\\n'\n",
+            )
+
+            project.assert_compiled_matches(self, "main.sh")
+
     def test_dynamic_bash_c_source_remains_fail_closed(self):
         cases = {
             "dynamic source path": 'DEP=./dep.sh\nbash -c "source $DEP"\n',
